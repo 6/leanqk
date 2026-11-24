@@ -1,698 +1,1036 @@
 //! Fingerprints of the prelude declarations with built-in arithmetic and
-//! of everything they depend on, from Lean v4.36.0. Written by
-//! `cargo run --release --example fingerprints -- init.ndjson`.
+//! of everything they depend on, per Lean version. Written by
+//! `cargo run --release --example fingerprints -- VERSION=EXPORT...`
+//! (see `examples/fingerprints.rs`).
 
-pub static TABLE: &[(&str, &str)] = &[
+/// The Lean versions, in the order of the bits of `TABLE`'s masks.
+pub static VERSIONS: &[&str] = &["v4.36.0", "v4.34.0", "v4.30.0"];
+
+/// (key, digest, versions): sorted by key, then digest.
+pub static TABLE: &[(&str, &str, u32)] = &[
     (
         "sAdd",
         "d7a1589810a8928c6ed7e00759fe36428550981d32692d953eaf3abdf3360729",
+        0x7,
     ),
     (
         "sAdd.sadd",
         "18dbecc7c87ef9bf733dd3dc65f4a5fb40a385dc4dcad9112bdc83f12465a2f9",
+        0x7,
     ),
     (
         "sAdd.smk",
         "0c7b8411d11d64f2f7ea63431a3512b9c68dedfaf0a022882223a3bb260df5c3",
+        0x7,
     ),
     (
         "sBEq",
         "301db946db412f32e984667fd3fc57d30e20a73d5644fef7d0a110e593a72014",
+        0x7,
     ),
     (
         "sBEq.sbeq",
         "353172fa3a29f4e1f31fac84b07e3bcfe8853590ebc05dde3098008b52af275a",
+        0x7,
     ),
     (
         "sBEq.smk",
         "4848427052ca4aae670147fdf15c016896b65bac844087cf5783751f2c12fec7",
+        0x7,
     ),
     (
         "sBool",
         "1455dfecc181976c2c28a6c4c96ae0a4e6d80c1576cd979ade67cb0eeb422cb9",
+        0x7,
     ),
     (
         "sBool.sInternal.sand.smatch_1",
         "aa694e33abefaaf015bea606b281e03f99b83b0cc4ead905f710b3d22d71b737",
+        0x1,
     ),
     (
         "sBool.sReflects",
         "d30087801ae7dc6951ff3bc5666e3fbba13b74886fec7f8bd72634b712cd322b",
+        0x1,
     ),
     (
         "sBool.sReflects.smatch_1",
         "85e3954466fdef6ffe9df3d5b299b8ca64b2916799ed5fc728c7381646be7e06",
+        0x1,
     ),
     (
         "sBool.sand",
         "66fba8263a8f59a3ef8638c8737628c8608d208d8fbab3c0ecdc613ee23ba33d",
+        0x3,
+    ),
+    (
+        "sBool.sand",
+        "bffa633479c1554f9796103a4635b4f9e2747fc9900487e1a6eebbb60b1b9d0d",
+        0x4,
+    ),
+    (
+        "sBool.sand.smatch_1",
+        "314b6a92dd82bb28db4e3a14a0c1c8a87d64f3a9a8e3a50b86721c376984ffb9",
+        0x4,
     ),
     (
         "sBool.sbeq",
         "e413fd02fb0055693a97aa52e2687cedbc7c0a7b9c175fce494a764a092de6e3",
+        0x1,
     ),
     (
         "sBool.scasesOn",
         "b9bfb2adc10d0c5fd858d853b592783cccb0d2a2e3cd1bbcfaec92ac1ff1b251",
+        0x7,
     ),
     (
         "sBool.sdecEq",
         "35ff9dac0432f6bdb9c8975572ca355aa3305b678e8e5a0efcb4682da29384fa",
+        0x1,
+    ),
+    (
+        "sBool.sdecEq",
+        "eb3f51a8cd88c261a8d68a7825582e425c9b44ba7cab0fc77d450aefe827dc13",
+        0x6,
     ),
     (
         "sBool.sdecEq.s_proof_1",
         "ca81816bc3eab04c2cbf00e16dd216d133e41daff683a13916399f790382d4e5",
+        0x1,
+    ),
+    (
+        "sBool.sdecEq.smatch_1",
+        "5437f2b99506369f6baca1449fd71fb43223c8f316bc2c02fef05d860d924e3d",
+        0x6,
     ),
     (
         "sBool.sfalse",
         "1a8b6f70686b1d186568a08108345a3d5e4c1a3c5a65020a5c1ee2ddecddbe64",
+        0x7,
+    ),
+    (
+        "sBool.snoConfusion",
+        "d155ebe848d2f460c58903be5cd387c0e78a4b6b8a3a5f895b5c897ccd199ba3",
+        0x6,
+    ),
+    (
+        "sBool.snoConfusionType",
+        "ecf10f968e2005c86b550a3ecd45ba81fd6dddb72a513ab4628f32809097a734",
+        0x6,
+    ),
+    (
+        "sBool.snot",
+        "888c497f8f6dd411946ac035f42b42b259dd76074e8dd6213b4731e8fc86290e",
+        0x4,
     ),
     (
         "sBool.snot",
         "b011ab8795c04f8c7f473ecf5c3e22cd8de68fa3c13cf2814e3928cc20a861a6",
+        0x3,
+    ),
+    (
+        "sBool.sor",
+        "01cbaec2e9b2f973ad943ad340b4808236ba8bfbb7176013e0d49546d6d550cd",
+        0x4,
     ),
     (
         "sBool.sor",
         "316496220e817e4b8303c8ad638a7e7b749dea7ee19685c0b800de9e7daaf70c",
+        0x3,
     ),
     (
         "sBool.srec",
         "251ab7b222769ab38eb1bed66a5cc29d82d9a6ac123a7ec168b13d6447e8d2d0",
+        0x7,
     ),
     (
         "sBool.strue",
         "811d9d2c7a8ea942c8a79968b2bdd2f5f22f2510185dd70ce89c49d020d87f49",
+        0x7,
     ),
     (
         "sDecidable",
         "5092084929d02fb7f31ed5b24b2d8f4459f537486836a8aee7b67f7f89ed5949",
+        0x1,
+    ),
+    (
+        "sDecidable",
+        "8678cbf52f796d9a9a2ddd54833852f06a733d972bdae3009843e8483c16cd9e",
+        0x6,
+    ),
+    (
+        "sDecidable.scasesOn",
+        "6cc517d0e1d0b6f0c05a04a93d6172b62d20c3859f38e07effac075d3e28aaa3",
+        0x6,
+    ),
+    (
+        "sDecidable.sdecide",
+        "174629078d118e7f6edecfdf22b2a92f1efe1c75ae1cbcfbaeb174006aa96e01",
+        0x6,
     ),
     (
         "sDecidable.sdecide",
         "25a4866ecbb5f81551a7080a1875abec0986409e4692f6c1b425d2355f1cdbca",
+        0x1,
     ),
     (
         "sDecidable.sintro",
         "befc4265117fc6ed374a26e9f1186299fc14333709a2504787207f66037af918",
+        0x1,
+    ),
+    (
+        "sDecidable.sisFalse",
+        "90e5b464e28de506677c5e51b84a4a4c4a60cd60e9c085e04db5b33d95dd76eb",
+        0x6,
+    ),
+    (
+        "sDecidable.sisTrue",
+        "24a7cec4ef8070e297222963c76001a35ce8766de8a7074ac1526e56120314f7",
+        0x6,
+    ),
+    (
+        "sDecidable.srec",
+        "9593dad3aeef096e86eec8417d44200ae40b3cd9bb66c7aee1896e9f94ae3a3d",
+        0x6,
     ),
     (
         "sDecidable.sreflects_decide",
         "2a846a8b2dc7c19c32c8f6bea16ac11b1748211e27cabb5e640803d5dc334196",
+        0x1,
     ),
     (
         "sDecidableEq",
         "d581e90347e0c1b28ad2efdb9595f7f74640fbdaed66d8f3afd609230aa59a44",
+        0x7,
     ),
     (
         "sDiv",
         "c401a7c746f050150e810da9fc225769c06606bd4db55c56923b8d8345c4f587",
+        0x7,
     ),
     (
         "sDiv.sdiv",
         "96b19c486a0c7fcfbf412aac3872d0c60607301495e951ea91353f29a9b4a1b8",
+        0x7,
     ),
     (
         "sDiv.smk",
         "75b61b9670d6790bd63be6043caa0602b84b9a545f4ee72be26d8c59fdcc8634",
+        0x7,
     ),
     (
         "sEq",
         "aeb8bbbea4d5c0767a44a662cb7dbe20fdc73b8314d64f73fa8a71cedb3d350b",
+        0x7,
+    ),
+    (
+        "sEq.sndrec",
+        "c5b693acc591e05df5e42992d21d0adf26e9175ea1c54c511a87de12c7607efc",
+        0x6,
+    ),
+    (
+        "sEq.srec",
+        "850ab54fbfb734864483ba623058f023c7dcbb396ee3f8f51bfbbc7917855d5f",
+        0x6,
     ),
     (
         "sEq.srefl",
         "35eb44563b53a109d345ce6d05d474ffa6e107fda21714f32585027d6a1fea71",
+        0x7,
     ),
     (
         "sFalse",
         "28154900230938ae50262e4db049b5c10720fd3fef92bd90cd70d222302edba8",
+        0x7,
     ),
     (
         "sFalse.selim",
         "12e6c65d57cb95822435df25fe474bcb21a4e16bf364659abd3574c942443930",
+        0x7,
     ),
     (
         "sFalse.srec",
         "f70d6a6d1afce3ac8080d5fd3793b0b2b59228950d39180e81c52703dd7de353",
+        0x7,
     ),
     (
         "sHAdd",
         "c399b14291c729b89d710abffc652b24c5310931a37c3c4d9aa052b3b912c3dd",
+        0x7,
     ),
     (
         "sHAdd.shAdd",
         "514b379e590225f9084023dd3653c8fe00262921d4bdaed3d468f99c99663a1b",
+        0x7,
     ),
     (
         "sHAdd.smk",
         "5c34a4fa6b5a61216400047ac7fdfe09686cb9ad5aae9597c2accc54d832ba4d",
+        0x7,
     ),
     (
         "sHDiv",
         "2bc716fd792f5d7262ca66933efa0697ea0f1c5ffb1f020fcb5845ef660c63a0",
+        0x7,
     ),
     (
         "sHDiv.shDiv",
         "64bad8d1161656a9b7d1eeeb80017db6a641f64799bc30fb7a2bf2a11d595883",
+        0x7,
     ),
     (
         "sHDiv.smk",
         "e42c69e592047c569c519a18807f5f1ff29260aa0ad875f73148879db1d9b900",
+        0x7,
     ),
     (
         "sHEq",
         "686f81015106fe265cffa4ef6d07fbd380a558ff2b3eb684b8b1d026f14de7c3",
+        0x7,
     ),
     (
         "sHEq.srefl",
         "a9c4d56bae60a39bb32efb253ab5e376a0fb91759ddf988864482c6451ca9a15",
+        0x7,
     ),
     (
         "sHMod",
         "ea0068c176c0d46222a061b35e30d03e94daa0e8e8ba401a430284d945fe3dd3",
+        0x7,
     ),
     (
         "sHMod.shMod",
         "9a184f6d577616902740dc5e819b6b14753217a9b52a1e298a57d7ca828a8b6b",
+        0x7,
     ),
     (
         "sHMod.smk",
         "63bca024a64b1ebded0e9ab320f009f22ac08d0d34f3a7dc8cfdb38d35505ca0",
+        0x7,
     ),
     (
         "sHMul",
         "7e64b9ed336a9fa5303bd91602e5d7d38159c65bf22c96f312d670c5479f21eb",
+        0x7,
     ),
     (
         "sHMul.shMul",
         "a76f4db448521af1a902a951c834a6b2fdc282ce6dbb5507335de9df0bdd6d49",
+        0x7,
     ),
     (
         "sHMul.smk",
         "3a4673c7dbcfce76e9e238e749ad4314fa7e012822f736b75b9fe22d2d4efeb7",
+        0x7,
     ),
     (
         "sHSub",
         "ef84e806739ac6b37391f7c68ea928829c75f9a6b08a28a32a23e2576d6206ad",
+        0x7,
     ),
     (
         "sHSub.shSub",
         "0fd6a23df72cdab26c61cb5ef0ffbe9923d949e7c8da74a474d3217167b39ce1",
+        0x7,
     ),
     (
         "sHSub.smk",
         "26a7c6e4e28b7d69993a081098a61d5f20ed2213b95a062b5d334e0f5b1a1c95",
+        0x7,
     ),
     (
         "sInvImage",
         "6c2a6c487af1cd76319ecfb710278fa8003b553ba9879333e27282ea620d98d2",
+        0x7,
     ),
     (
         "sLE",
         "e67d9049ce7154b95e957e62993327ed6d5dd28f0f355fe423a4a874f8deb712",
+        0x7,
     ),
     (
         "sLE.sle",
         "bb6db6d210d265a1933b06dcca2f60813ad502804660d22fe64b2f714ebd3856",
+        0x7,
     ),
     (
         "sLE.smk",
         "f7a00f04d31efb4c16ba169f8642ad5d22e7e15d61565bd51252c670a4bd2e6d",
+        0x7,
     ),
     (
         "sLT",
         "c926257a4de69f93352942ddaba384008798cbe43f2a65f8451e4264460a581c",
+        0x7,
     ),
     (
         "sLT.slt",
         "8521a6a39545be3a343f848f9db255a5ee9f16f21e3a1542c0e36b4c874aca18",
+        0x7,
     ),
     (
         "sLT.smk",
         "996d9442bad92edf81e5f3bd8996b47add1ca947be31c24592a684e7f9177aa8",
+        0x7,
     ),
     (
         "sMod",
         "7e55479f4f059acedfaf908b5f9994046bb8422ff5336be3d0d0914ba2c87188",
+        0x7,
     ),
     (
         "sMod.smk",
         "b0e9f111ebb4706eeea0b44838bb29fa3f17c918966f66205ddf33357d239278",
+        0x7,
     ),
     (
         "sMod.smod",
         "c6a4c5c32829d8e76e2c5adfd18ec785bcbd8457433d263f4687aa5e8ed069aa",
+        0x7,
     ),
     (
         "sMul",
         "748a991ad910078001eed254323afacf2da0e880450bc327135883c5a9f49a91",
+        0x7,
     ),
     (
         "sMul.smk",
         "706c9bcce26fae0d35ea21db033d1e4a86416ded3807835c23cbcb25ba356456",
+        0x7,
     ),
     (
         "sMul.smul",
         "7b6b67c6d0ecf223d68bec68966fea2384751a18736cde921832c07186f44aeb",
+        0x7,
     ),
     (
         "sNat",
         "a449d8cce847ec96df75b751bd91a080c598be3f9990fee8140da857ab9f967d",
+        0x7,
     ),
     (
         "sNat.sadd",
         "25df2e139c6f24cee703a86d21d960d684c5e321c69204581ee20d4d10119707",
+        0x7,
     ),
     (
         "sNat.sadd.s_f",
         "36cd9ea47178b70fc0b9037a8ff872788867626cd030bfbc4377a750d43d6f27",
+        0x7,
     ),
     (
         "sNat.sadd.smatch_1",
         "b4a2984fb836b86b64eff19fe665e758e2f3814e474defa9cdc6772a5b29c5b9",
+        0x7,
     ),
     (
         "sNat.sbelow",
         "eaec0f9606230a4cb55b02f3d77a72d994a7cc11a100737d65c53eba5ee9edce",
+        0x7,
     ),
     (
         "sNat.sbeq",
         "9b5dae7aed589940ad604a077c0c25ca533f3663e69954f35d9697822cc6561b",
+        0x7,
     ),
     (
         "sNat.sbeq.s_f",
         "035fcd48dddf3b0327a61e2e3e4f42a8be4b206c824584d9cc5857f0273f082e",
+        0x7,
     ),
     (
         "sNat.sbeq.smatch_1",
         "a72069606a1edd0b2448014a009cbff26f900dd47ade224086c6682434e19e35",
+        0x7,
     ),
     (
         "sNat.sbitwise",
         "48f13002e51a34881530ffc4b64120134754f27786d3f9ba4532a1537da9a8ad",
+        0x7,
     ),
     (
         "sNat.sbitwise.s_unary",
         "19dfb6ac675d1addd605b82526174775d694ced7c731b4021df91ea6ae3b71ec",
+        0x7,
     ),
     (
         "sNat.sble",
         "7d703addb3ece345d8f780ee70b2f3abb42774d132a7dba56c5a9c985cbb6580",
+        0x7,
     ),
     (
         "sNat.sble.s_f",
         "2d6f05b2d1de814f486321f9ef39abc83652adeda51cabbab0b5f76b13f31a6b",
+        0x7,
     ),
     (
         "sNat.sble.smatch_1",
         "ab70e63183b2f5127f0b58593f5d0b1b0fc891962a9e36b6eb6b49311487d8d0",
+        0x7,
     ),
     (
         "sNat.sbrecOn",
         "14eb21b4a3c90abfa7a36e94f210ff1bdc71c5fef012c7367dfa3c4001f556e4",
+        0x7,
     ),
     (
         "sNat.sbrecOn.sgo",
         "4499e987406e6db931b73da004e05e0202060428f716049d3b42f4a05f16e726",
+        0x7,
     ),
     (
         "sNat.scasesOn",
         "6cb332f7ab9cc027730c1b329be5cd682973ec45680fdfb72b12611755f00dba",
+        0x7,
     ),
     (
         "sNat.sctorIdx",
         "c128db4c2d0fdd237f05da106829a5903b5bce2dd306240b6683d3e7c1290b1a",
+        0x7,
     ),
     (
         "sNat.sdecEq",
         "221095001e9095bf4fa121bedf52ab81a004fc6c13bab7709d25b870e7ce8984",
+        0x1,
+    ),
+    (
+        "sNat.sdecEq",
+        "49984466662901f689acac4c82b9c7ce7991822f18f64bd4ebaa7e432fa18a88",
+        0x6,
     ),
     (
         "sNat.sdecEq.s_proof_1",
         "bcdf7179f4acc63712883ba92617cee8f2bd6b720ed6428415a57193a20ae8ac",
+        0x1,
+    ),
+    (
+        "sNat.sdecEq.smatch_1",
+        "8915b7a178994d28b616e967ca1f60a37e3adb34b0a29d48c05e175a93d667fd",
+        0x6,
+    ),
+    (
+        "sNat.sdecLe",
+        "e376346751f7ef974fcdde203a30dd8dcd2d67cd1f0b1390d9d0f70641735a1c",
+        0x6,
     ),
     (
         "sNat.sdecLe",
         "fa9ce7fd1a3910153d07ec46dc5a13c8513bc6dd33f9540f94d6a84e653f572b",
+        0x1,
     ),
     (
         "sNat.sdecLe.s_proof_1",
         "0ca58bb91ea9c675c31e75555dc5ef4f35e51beaa06b05e74e6c3c8ed1bb283b",
+        0x1,
+    ),
+    (
+        "sNat.sdecLt",
+        "cf0d9c7125129d344a96ac4d22542ef0faceb57b76ed561965a707cf20fbf648",
+        0x6,
     ),
     (
         "sNat.sdecLt",
         "eee78921cb175211934ee3e2c15fc4abd53e9a032a9401bb2646d13254ed2fc0",
+        0x1,
     ),
     (
         "sNat.sdiv",
         "a4dc5b046bc50d1171eedadd0f55e193fad579ef7533b05bc5371f97236a0308",
+        0x7,
     ),
     (
         "sNat.sdiv.sgo",
         "82b8010764b72d79ae7d51da01e5201fc8343f0adc330545db898b04f2bf09fa",
+        0x7,
     ),
     (
         "sNat.sdiv.sgo.s_f",
         "b82973cecfe31a40a75e237614d2ccc742c7c5b801b542c1d982e06416680a60",
+        0x7,
     ),
     (
         "sNat.sdiv.sgo.smatch_1",
         "5d1c5d69cf9b0fa7ece54b6686063a0c927bb2a72583f4ab4d4c62586a3a0265",
+        0x7,
     ),
     (
         "sNat.sdiv_rec_fuel_lemma",
         "a49a699786fe6b14e6e47941b0feaa6da0856372bdd687085f76f876f939750d",
+        0x7,
+    ),
+    (
+        "sNat.seq_of_beq_eq_true",
+        "07cf54ed71821a27441898be4bd79521ebbd936413d71e8a5f16e444738b948f",
+        0x6,
     ),
     (
         "sNat.sgcd",
         "dedc3c71024169b924d64ede14b8cff92c9e072cbb90184e366d9cce06388e69",
+        0x7,
     ),
     (
         "sNat.sgcd.s_unary",
         "c78dbb49abc8b4636d2c0a4a04a40868cc828e71e9b76bd19fd78a7e1ba97cd4",
+        0x7,
     ),
     (
         "sNat.sinstDiv",
         "a733a99cf3d1b5358d94c2fb96d9651beb41b2bf42a6a58e353307361495e2ca",
+        0x7,
     ),
     (
         "sNat.sinstMod",
         "f20179a1fedde07aa8473eb16cdc6de987fcfc59d57b73ff38db72f5b43cb54f",
+        0x7,
     ),
     (
         "sNat.sland",
         "6ac2792b19764ada634bacfd627422a1a87b1d3113c16001dcddd0d96c30bb53",
+        0x7,
     ),
     (
         "sNat.sle",
         "30ef26f328c2ca7471f444b8d43542d16ab68781cbb07f2cdd8d09f4fc2c7f92",
+        0x7,
     ),
     (
         "sNat.sle.scasesOn",
         "2d6f7e36126d6af9115d5f31e6c5ca0e6201eb55bd9db244202571a43f3de843",
+        0x7,
     ),
     (
         "sNat.sle.srec",
         "56260b9c3e1db681d19b6fb68900921cd75dd6a7260122f1db4d54b0495e88e8",
+        0x7,
     ),
     (
         "sNat.sle.srefl",
         "fb79cac4155548825f02e55eddd824eab9ca9b04137367cddc3f173cfbf897cc",
+        0x7,
     ),
     (
         "sNat.sle.sstep",
         "e2d96bd4dfbdd8931320ebd2ea7e4b122dac5adeb7f438053178bb9a6046313e",
+        0x7,
+    ),
+    (
+        "sNat.sle_of_ble_eq_true",
+        "9d41424a7c2674710c58ef8fc3a92e742163ba2a48ab0d79579fd9f03d7037bd",
+        0x6,
     ),
     (
         "sNat.slor",
         "ad6fd3e5ed721acd2dbaabb8486d828baff0388b0f00e3a07b9dd5f60626ee50",
+        0x7,
     ),
     (
         "sNat.slt",
         "c146195d9bd1d831249ff685bdba1855896e6cddc094c4960924545c91510298",
+        0x7,
     ),
     (
         "sNat.slt_succ_self",
         "0907742784ee6d27493e36301ab564149093ffecf2ebc11198dd065d39201521",
+        0x7,
     ),
     (
         "sNat.smod",
         "4434b58575d4967bb3e9068eed2b3b18877cb81f29741fdb912defe2ccf61464",
+        0x7,
     ),
     (
         "sNat.smod.smatch_1",
         "44a82f8f768af930b7610a9871af5546f08ad042f78a136a45e0c9c970f2a7c3",
+        0x7,
     ),
     (
         "sNat.smodCore",
         "63a0af2f0d21f799929da0380191ddf18dd17ffdb1826c5bb7f7bc28969d4368",
+        0x7,
     ),
     (
         "sNat.smodCore.sgo",
         "1aaaec89b775ccd9ecf27c13a144141b275a084ff33054489018952e57cc4cba",
+        0x7,
     ),
     (
         "sNat.smodCore.sgo.s_f",
         "7dd9b5b8656bf4615534404b6d938699af1cb92393c071ae4874d4f5f7727871",
+        0x7,
     ),
     (
         "sNat.smul",
         "6a00f75a132d0fdc09e8f28aeda6b219ac49e44b736c75af5ac9508ad3172b22",
+        0x7,
     ),
     (
         "sNat.smul.s_f",
         "1d1fb503b4391f6232f272b44143e0b72ca630b553f7bc8fc6a5f103e85714fe",
+        0x7,
     ),
     (
         "sNat.smul.smatch_1",
         "a9dc6871b66b28fcc03b6ef93259fbd008aee010ab26cae9c75ba909753989e6",
+        0x7,
+    ),
+    (
+        "sNat.sne_of_beq_eq_false",
+        "1cc4fe7aa67f599a834affaa840d4833328f3cefed589fc6e9062b13db0d7f50",
+        0x6,
+    ),
+    (
+        "sNat.snot_le_of_not_ble_eq_true",
+        "0241fecabd635bfbec31323b96857abf4d9a4cf8deaabb47f808119e366af19c",
+        0x6,
     ),
     (
         "sNat.spow",
         "2bb31576312a78b384d7c622247f1098647eee50c07fdeb21282b487170d23ad",
+        0x7,
     ),
     (
         "sNat.spow.s_f",
         "48cfc9fd610477f4f7e1f3745ed9dfeecc6893c16682a3dc7073abb8fc9dfc26",
+        0x7,
     ),
     (
         "sNat.spow.smatch_1",
         "46f3bd16922853c352f45a4e8b1a4a1b3d5305fbd1b10b98665a08df855e4ea0",
+        0x7,
     ),
     (
         "sNat.spred",
         "badbce7ebd78d1df7dea1b59883d3f5d728a7f575bd4995158534b18fb31af16",
+        0x7,
     ),
     (
         "sNat.srec",
         "b8c4824136305cc972cb215cc436975a0dea7677d956042d67984c3bbd267cca",
+        0x7,
     ),
     (
         "sNat.sshiftLeft",
         "cb3189ea704703025d8d8d638cf96c75ae5405496290ef3356f65e48ad377853",
+        0x7,
     ),
     (
         "sNat.sshiftLeft.s_f",
         "2d4e5e6590699599e3c42aad4c6020487d7484d0178840150fd5b9753a2999ed",
+        0x7,
     ),
     (
         "sNat.sshiftLeft.smatch_1",
         "7b5400075aa6f0d1c100a480775fad8a80ca5d8b6da647e780764fde9a3275e7",
+        0x7,
     ),
     (
         "sNat.sshiftRight",
         "d6663fc0d10d9456ef5c05bdacf20a5a8c6e2dd82a18ab5dfac5b31e6cea6071",
+        0x7,
     ),
     (
         "sNat.sshiftRight.s_f",
         "51d58ac79200d987dbfd0a26166d5004f23829c8e4103460a98df220c79986b7",
+        0x7,
     ),
     (
         "sNat.ssub",
         "f1259c77b099e53becbdeea24c0d5d17b14b3f63cf6300cda99e7b9ac6af6fe5",
+        0x7,
     ),
     (
         "sNat.ssub.s_f",
         "d701137d9f36a7f4671aa15c3e61a1c343becd14a1a58a69636db79fd2f7d0da",
+        0x7,
     ),
     (
         "sNat.ssucc",
         "5e13699c77fd97d576e560b4060fd3ddd1a9662c3895431bfeca6c1f50e06f5a",
+        0x7,
     ),
     (
         "sNat.sxor",
         "a667056b9866d49b75634404e7ae6870d2d67cc1a12fceb2c78225233d187da3",
+        0x7,
     ),
     (
         "sNat.szero",
         "8a220c890fe6a96a0d84588e776f1c64ab43d49346d1dd0355b8fc13a20a17ad",
+        0x7,
     ),
     (
         "sNot",
         "406002523dda16d02c73d0c24880a2d9cd61d8a480415b48efd5c1060ab9611c",
+        0x7,
     ),
     (
         "sOfNat",
         "99071161a3a82f6b271576ea007a13cb2305567727327e353e2ca118e1ad10ac",
+        0x7,
     ),
     (
         "sOfNat.smk",
         "7cc465e4c9c1c3b9c7c96dc3b209004c8b07a7ca8754c5972bc21b10d7d7aa5a",
+        0x7,
     ),
     (
         "sOfNat.sofNat",
         "02415fc7209d104179625d3182193f4f752f87c2eca4385f992ffbc8f5d51c6f",
+        0x7,
     ),
     (
         "sPProd",
         "0a01736923c576b280c775a4f7d5955b9a7c7a717c23795afe2569bbda127fa5",
+        0x7,
     ),
     (
         "sPProd.smk",
         "4c67858a356cc24fc87ece9abb3d85282c9ab885d6fdbcb47c534775cab27c58",
+        0x7,
     ),
     (
         "sPSigma",
         "c372d010fb5c1e8f0c6cdc1b8eaee5116be6c6e635c142777a09805d2be69029",
+        0x7,
     ),
     (
         "sPSigma.scasesOn",
         "0312066f77f1acbe161391e43ad235705b371b3dd3f1c56459bd967712a5afa7",
+        0x7,
     ),
     (
         "sPSigma.smk",
         "03bd960fda75c2c686c383068723a3818a6fec0e6fad0c8d04257b5f4f09732e",
+        0x7,
     ),
     (
         "sPSigma.srec",
         "1b4ea2e26bd58bb7b7891b06a8ebde22351c4bc86469c9044b1e1c31a13286e3",
+        0x7,
     ),
     (
         "sPUnit",
         "7a3c935d264c0aeaa6515d28c8596608c4bb9107bd6a882a1c2db339c182faea",
+        0x7,
     ),
     (
         "sPUnit.sunit",
         "6ff7f3ac268f4185200ec764dceaaa702a104c349dfb90387fa4817428f69e25",
+        0x7,
     ),
     (
         "sSub",
         "581f7e6f95f4d9d6a58187581ad3147fe110cf417da2fe6818ebf013a0baac8c",
+        0x7,
     ),
     (
         "sSub.smk",
         "88d0293b815a579e9ea06b73c5ddeed7cb4f7ac4e3edf50a11aefa39933755ab",
+        0x7,
     ),
     (
         "sSub.ssub",
         "72f132f02c92e65f8e8efb6473bbfab1a13dcd33b2f09ada165610f94e91d08e",
+        0x7,
     ),
     (
         "sTrue",
         "6f33ad6b7e53086c597b6a3ab254e493173048e7fc1a5c21ded3937cde19c3ad",
+        0x7,
     ),
     (
         "sTrue.sintro",
         "77c44498aed05013e9ba8a5bc17c959e1b176166d00ebac4ba3dc8c1b8d56371",
+        0x7,
     ),
     (
         "sUnit",
         "3c560fdf2195621682e15a56866a55ef3c081d12354bde2c928754fe38532ff0",
+        0x7,
     ),
     (
         "sUnit.sunit",
         "6b38eed1c2841fba3f726c330302fd2f26a52e749b55338c7804ca19287e722b",
+        0x7,
     ),
     (
         "sWellFounded.sNat.seager",
         "2f99891d692fa0fc61b67cede229d5bdea50d5e400afa43d827d49d58f265dcc",
+        0x1,
+    ),
+    (
+        "sWellFounded.sNat.seager",
+        "3a43d4d3a05c768d6e350701deda442a67c70b1dc174e950cc3a9b23e48424c6",
+        0x6,
+    ),
+    (
+        "sWellFounded.sNat.sfix",
+        "936d384ba6b07c5e958425d0e138674db70435fea3dd6df52d4d740f6d14f523",
+        0x6,
     ),
     (
         "sWellFounded.sNat.sfix",
         "b90c3e1aacc48d434c0d0408dd7abbfd9960785898fe3b82f730cd657e8d5a98",
+        0x1,
     ),
     (
         "sWellFounded.sNat.sfix.s_proof_1",
         "65be9f89b2b610bf75c2c7ffbc85205f3e3d666294d55a2be36c6694e73f5e5f",
+        0x7,
     ),
     (
         "sWellFounded.sNat.sfix.s_proof_2",
         "02392ae0085115d5881135d0fcbbc2e41fca512f4e7f43b75c25a3aaca908f42",
+        0x7,
     ),
     (
         "sWellFounded.sNat.sfix.sgo",
         "08cef30d7d2c5a4aa253fee511a47d17a978d2062fc66ba6a193295881d822ac",
+        0x7,
     ),
     (
         "sWellFounded.sNat.sfix.sgo.s_proof_1",
         "bd95d8bf54ec2600dbaf77808ac8b12557d52ee5ce5c1863922c326125f33a2b",
+        0x7,
     ),
     (
         "s_private.sInit.sData.sNat.sBitwise.sBasic.n0.sNat.sbitwise.s_unary.s_proof_1",
         "c65d8c3df262d2473925d8b5ac9a9e1b381c5a95131417d8bb9eee35b167ac60",
+        0x7,
     ),
     (
         "s_private.sInit.sData.sNat.sGcd.n0.sNat.sgcd.s_unary.s_proof_1",
         "824a9432601a75fcec3deb8e3680f8e1b3772e7113cd5a08d9c757f3dab063d8",
+        0x7,
     ),
     (
         "sbne",
         "08c245d2ef2ba6574e1e4f168b1e7e40564b1babe7962c154468bfa9dfe429ca",
+        0x7,
+    ),
+    (
+        "scond.smatch_1",
+        "3b2aac7d0fd1234c91e647120e882a05aa77911ad5ee8d7a8e479188cc98f236",
+        0x4,
     ),
     (
         "sdite",
         "9353f6bc2637dfe895d408010a6ca2210dbde73f3efd36f886a447e3f14d0b85",
+        0x1,
+    ),
+    (
+        "sdite",
+        "96264300e21ca97a3145c72bd7035a03450cb27eb4b652afd764a6cbde35eba7",
+        0x6,
     ),
     (
         "sinstAddNat",
         "5480103982dc027d7cd3f039e480676c067b2d467e1b257ac4b1c7d20a7d01bd",
+        0x7,
+    ),
+    (
+        "sinstBEqOfDecidableEq",
+        "4fe63a6dc5750286a777685274ca2ead37957b65179ea88e18463b439c82e07a",
+        0x6,
     ),
     (
         "sinstBEqOfDecidableEq",
         "6bc5444995d0806b72bac1d2a5d74b1504e5b945c579038a6cab0810f7eb6384",
+        0x1,
+    ),
+    (
+        "sinstDecidableEqBool",
+        "66b7102ebea5802827615688150d17a96363bc3094a52f56f5fb00c07c5cca91",
+        0x6,
     ),
     (
         "sinstDecidableEqBool",
         "d7e16430d66513ef714f6dcdd2d3882386544de98c4be7d74a2d01405678e18a",
+        0x1,
     ),
     (
         "sinstDecidableEqNat",
         "e1c3b46ae4150e30487e6be835350ddb2e9f3b84e1d5410134a3a398fedda5ab",
+        0x7,
     ),
     (
         "sinstHAdd",
         "0976c908b989dc54306b2679ee55c484d54512f9e38c8a35c2729f9ef401eb24",
+        0x7,
     ),
     (
         "sinstHDiv",
         "d8a65238fbf27bcae181c65d323064ba9513ee3e460fbe160735fd678c44ed88",
+        0x7,
     ),
     (
         "sinstHMod",
         "69749f99b148566f2940fea130f3f7d0a7d005a04c27f01e714f9e52c32f3252",
+        0x7,
     ),
     (
         "sinstHMul",
         "b3f26075cfec81a7589ba5dafae2865e53495e71418663567b2355a02b40f1d5",
+        0x7,
     ),
     (
         "sinstHSub",
         "973b2d4dddb653c6548a33a7b37f6c846f660322dc72383b648bd7f06cc13bbc",
+        0x7,
     ),
     (
         "sinstLENat",
         "8ff8327e8a5a1226a42435b18893e322aae03543e55308b6fbb0672655f9ddb8",
+        0x7,
     ),
     (
         "sinstLTNat",
         "446aff3e195b341143decfd13d0f659ee2f320b0fcd9161bffcb6510d55b4b07",
+        0x7,
     ),
     (
         "sinstMulNat",
         "75853c39339c954236493ee2ff5c5e36d91801c4b932045b6657106720f285be",
+        0x7,
     ),
     (
         "sinstOfNatNat",
         "5b071cffd335e82ed86958bc85b451c5a79d5d578b4fc67c9b26f67b8b2a342c",
+        0x7,
     ),
     (
         "sinstSubNat",
         "f411c70b3f81c6eb7bf33cf69c6cc851802b6a9aecbb13b1da1c7214bf45f7e6",
+        0x7,
     ),
     (
         "site",
         "1b37a1726b8591b8018925187325aed236c10f30c2524297cf45426417d9bad3",
+        0x1,
+    ),
+    (
+        "site",
+        "f901e9c556f57262e9e8538c673f7d7af5ba9d1fc0f41e59512922cd931eecf4",
+        0x6,
     ),
     (
         "snamedPattern",
         "84ba4ffcbaad7f1003c2bc91e21b1bc81e5543feb85b5cf6667959ff5dc4155f",
+        0x7,
     ),
     (
         "snoConfusion_of_Nat",
         "2cc998ee29476ec679f8048168cfe0d3eb229100408d0103f91e3e84d2e2c344",
+        0x7,
     ),
     (
         "soutParam",
         "d0144b3ebd2e42e05ad142f136937ef1b1a194c57cedc6b2ad5058743b237890",
+        0x7,
+    ),
+    (
+        "srfl",
+        "31b3adf6a398d38ebff5c1a437934917d8b02a531e249ac522b1cbf7ddadd7b1",
+        0x6,
     ),
 ];

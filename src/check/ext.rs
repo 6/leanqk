@@ -8,9 +8,10 @@
 //! are structurally the expected ones (see `fingerprint.rs`): literals
 //! need the prelude's `Nat` (or `String`, `Char`, `List`) with their
 //! expected types, and each arithmetic operation needs its prelude
-//! definition, compared with the one in Lean v4.36.0 across everything it
-//! depends on. Otherwise the operation is just its definition, and a
-//! literal of a type that is not the expected one is rejected.
+//! definition, compared with the one of a known Lean version (v4.36.0,
+//! v4.34.0 or v4.30.0) across everything it depends on. Otherwise the operation is
+//! just its definition, and a literal of a type that is not the expected
+//! one is rejected.
 
 use crate::env::{Decl, DeclKind, Env};
 use crate::expr::{ExprId, ExprNode};
