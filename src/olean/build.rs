@@ -1,5 +1,9 @@
-//! Interning a module's [`Tape`] into the shared [`Env`], and putting its
-//! declarations in an order the checker can use.
+//! Interning a module's [`Tape`] into the shared arenas ([`Par`]), and
+//! putting its declarations in an order the checker can use.
+//!
+//! [`intern_module`] runs on worker threads, any number of modules at
+//! once; [`Assembler::add`] then appends each module's declarations to the
+//! environment, in import order, on one thread.
 //!
 //! A module's `constants` array is in hash-map order (`mkModuleData` in
 //! `src/Lean/Environment.lean` folds the kernel's constant map), not in
@@ -7,79 +11,66 @@
 //! before it, so the module's declarations are grouped the way `leanexport`
 //! groups them (an inductive with its constructors and recursors; the four
 //! quotient constants) and then sorted depth-first by the constants their
-//! terms mention, the order `leanexport` writes. Modules are interned in
-//! import order, so only references within the module need sorting.
+//! terms mention, the order `leanexport` writes. Modules come in import
+//! order, so only references within the module need sorting.
 
 use hashbrown::HashMap;
 
 use super::Fail;
 use super::decode::Tape;
+use super::par::Par;
 use crate::env::{Block, BlockKind, Decl, DeclKind, Env, NameList, QuotKind, RecRule};
 use crate::expr::{ExprId, ExprNode, LetBinder};
 use crate::level::{LevelId, LevelList, LevelNode};
 use crate::name::{NameId, NameNode};
 use crate::reader::ErrorClass;
-use crate::strings::StrId;
+use crate::strings::{Overflow, StrId};
 
-impl From<crate::strings::Overflow> for Fail {
-    fn from(o: crate::strings::Overflow) -> Self {
+impl From<Overflow> for Fail {
+    fn from(o: Overflow) -> Self {
         Fail::malformed(format!("capacity exceeded: {}", o.0))
     }
 }
 
-impl From<crate::expr::ExprError> for Fail {
-    fn from(e: crate::expr::ExprError) -> Self {
-        match e {
-            crate::expr::ExprError::Overflow(o) => o.into(),
-            crate::expr::ExprError::BVarTooLarge(i) => {
-                Fail::malformed(format!("bvar index {i} is too large"))
-            }
-        }
-    }
+/// A module, interned: its declarations in global ids (their name lists
+/// and rules are ranges into `pool` and `rules`), and the order to add
+/// them in.
+pub struct ModOut {
+    decls: Vec<Decl>,
+    pool: Vec<NameId>,
+    rules: Vec<RecRule>,
+    units: Vec<Unit>,
+    order: Vec<usize>,
 }
 
-/// Local-to-global id maps of one tape.
-struct Maps {
-    names: Vec<NameId>,
-    exprs: Vec<ExprId>,
-}
-
-pub static PROF: [std::sync::atomic::AtomicU64; 8] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 8];
-fn prof(i: usize, t: std::time::Instant) {
-    PROF[i].fetch_add(
-        t.elapsed().as_nanos() as u64,
-        std::sync::atomic::Ordering::Relaxed,
-    );
-}
-
-fn intern_tape(env: &mut Env, t: &Tape) -> Result<(Maps, Vec<Decl>), Fail> {
-    let phase_start = std::time::Instant::now();
+/// Intern a module's tape into `par`.
+pub fn intern_module(par: &Par, t: &Tape) -> Result<ModOut, Fail> {
+    let units = group(t);
+    let order = sort_units(t, &units);
     let strs: Vec<StrId> = (0..t.strs.len() as u32)
-        .map(|i| env.names.strings.intern(t.str(StrId(i))))
+        .map(|i| par.str(t.str(StrId(i))))
         .collect::<Result<_, _>>()?;
-    let mut names = Vec::with_capacity(t.names.len());
-    names.push(NameId::ANON);
-    for n in &t.names[1..] {
-        let node = match *n {
+    let mut names = vec![NameId::ANON; t.names.len()];
+    for &i in &t.name_order.order {
+        let node = match t.names[i as usize] {
             NameNode::Str(p, s) => NameNode::Str(names[p.index()], strs[s.index()]),
             NameNode::Num(p, k) => NameNode::Num(names[p.index()], k),
             NameNode::Anon => NameNode::Anon,
         };
-        names.push(env.names.intern(node)?.0);
+        names[i as usize] = par.name(node)?;
     }
     let mut levels = Vec::with_capacity(t.levels.len());
     levels.push(LevelId::ZERO);
     for l in &t.levels[1..] {
-        let m = |x: LevelId| levels[x.index()];
+        let g = |x: LevelId| levels[x.index()];
         let node = match *l {
             LevelNode::Zero => LevelNode::Zero,
-            LevelNode::Succ(a) => LevelNode::Succ(m(a)),
-            LevelNode::Max(a, b) => LevelNode::Max(m(a), m(b)),
-            LevelNode::IMax(a, b) => LevelNode::IMax(m(a), m(b)),
+            LevelNode::Succ(a) => LevelNode::Succ(g(a)),
+            LevelNode::Max(a, b) => LevelNode::Max(g(a), g(b)),
+            LevelNode::IMax(a, b) => LevelNode::IMax(g(a), g(b)),
             LevelNode::Param(n) => LevelNode::Param(names[n.index()]),
         };
-        levels.push(env.levels.intern(node)?.0);
+        levels.push(par.level(node)?);
     }
     let mut lists = Vec::with_capacity(t.level_ends.len());
     let mut buf = Vec::new();
@@ -90,80 +81,199 @@ fn intern_tape(env: &mut Env, t: &Tape) -> Result<(Maps, Vec<Decl>), Fail> {
                 .iter()
                 .map(|l| levels[l.index()]),
         );
-        lists.push(env.levels.intern_list(&buf)?);
+        lists.push(par.list(&buf)?);
     }
-    prof(0, phase_start);
-    let phase_start = std::time::Instant::now();
-    PROF[5].fetch_add(t.exprs.len() as u64, std::sync::atomic::Ordering::Relaxed);
-    let mut exprs: Vec<ExprId> = Vec::with_capacity(t.exprs.len());
-    env.exprs.reserve(t.exprs.len());
-    for e in &t.exprs {
-        let m = |x: ExprId| exprs[x.index()];
-        let node = match *e {
+    // Leaves first, height by height: the probes of one height do not
+    // wait on each other.
+    let mut exprs = vec![ExprId(0); t.exprs.len()];
+    for &i in &t.expr_order.order {
+        let e = |x: ExprId| exprs[x.index()];
+        let n = |x: NameId| names[x.index()];
+        let node = match t.exprs[i as usize] {
             ExprNode::BVar(i) => ExprNode::BVar(i),
             ExprNode::Sort(l) => ExprNode::Sort(levels[l.index()]),
-            ExprNode::Const(n, ls) => ExprNode::Const(names[n.index()], lists[ls.0 as usize]),
-            ExprNode::App(f, a) => ExprNode::App(m(f), m(a)),
-            ExprNode::Lam(bi, n, ty, b) => ExprNode::Lam(bi, names[n.index()], m(ty), m(b)),
-            ExprNode::Pi(bi, n, ty, b) => ExprNode::Pi(bi, names[n.index()], m(ty), m(b)),
+            ExprNode::Const(c, ls) => ExprNode::Const(n(c), lists[ls.0 as usize]),
+            ExprNode::App(f, a) => ExprNode::App(e(f), e(a)),
+            ExprNode::Lam(bi, x, ty, b) => ExprNode::Lam(bi, n(x), e(ty), e(b)),
+            ExprNode::Pi(bi, x, ty, b) => ExprNode::Pi(bi, n(x), e(ty), e(b)),
             ExprNode::Let(l, b) => {
                 let lb = t.lets[l.0 as usize];
                 let lb = LetBinder {
-                    name: names[lb.name.index()],
-                    ty: m(lb.ty),
-                    value: m(lb.value),
+                    name: n(lb.name),
+                    ty: e(lb.ty),
+                    value: e(lb.value),
                     nondep: lb.nondep,
                 };
-                ExprNode::Let(env.exprs.intern_let(lb)?, m(b))
+                ExprNode::Let(par.let_binder(lb)?, e(b))
             }
             ExprNode::NatSmall(lo, hi) => ExprNode::NatSmall(lo, hi),
-            ExprNode::NatBig(b) => env.exprs.nat_node(t.bigs[b.0 as usize].clone())?,
+            ExprNode::NatBig(b) => ExprNode::NatBig(par.nat_big(&t.bigs[b.0 as usize])?),
             ExprNode::Str(s) => ExprNode::Str(strs[s.index()]),
-            ExprNode::Proj(n, i, x) => ExprNode::Proj(names[n.index()], i, m(x)),
+            ExprNode::Proj(c, k, x) => ExprNode::Proj(n(c), k, e(x)),
             ExprNode::FVar(_) => return Err(Fail::malformed("free variable in a declaration")),
         };
-        exprs.push(env.exprs.intern(node, &env.levels)?.0);
+        exprs[i as usize] = par.expr(node)?;
     }
-    prof(1, phase_start);
-    let phase_start = std::time::Instant::now();
-    let mut decls = Vec::with_capacity(t.decls.len());
-    let nl = |env: &mut Env, l: NameList| -> Result<NameList, Fail> {
-        let ns: Vec<NameId> = t.name_pool[l.start as usize..(l.start + l.len) as usize]
-            .iter()
-            .map(|n| names[n.index()])
-            .collect();
-        env.push_names(&ns)
+    let pool: Vec<NameId> = t.name_pool.iter().map(|n| names[n.index()]).collect();
+    let rules: Vec<RecRule> = t
+        .rules
+        .iter()
+        .map(|r| RecRule {
+            ctor: names[r.ctor.index()],
+            nfields: r.nfields,
+            rhs: exprs[r.rhs.index()],
+        })
+        .collect();
+    let e = |x: ExprId| exprs[x.index()];
+    let decls = t
+        .decls
+        .iter()
+        .map(|d| {
+            let kind = match d.kind {
+                DeclKind::Definition {
+                    value,
+                    hints,
+                    safety,
+                    all,
+                } => DeclKind::Definition {
+                    value: e(value),
+                    hints,
+                    safety,
+                    all,
+                },
+                DeclKind::Theorem { value, all } => DeclKind::Theorem {
+                    value: e(value),
+                    all,
+                },
+                DeclKind::Opaque {
+                    value,
+                    all,
+                    is_unsafe,
+                } => DeclKind::Opaque {
+                    value: e(value),
+                    all,
+                    is_unsafe,
+                },
+                DeclKind::Constructor {
+                    induct,
+                    cidx,
+                    num_params,
+                    num_fields,
+                    is_unsafe,
+                } => DeclKind::Constructor {
+                    induct: names[induct.index()],
+                    cidx,
+                    num_params,
+                    num_fields,
+                    is_unsafe,
+                },
+                k => k,
+            };
+            Decl {
+                name: names[d.name.index()],
+                level_params: d.level_params,
+                ty: e(d.ty),
+                kind,
+            }
+        })
+        .collect();
+    Ok(ModOut {
+        decls,
+        pool,
+        rules,
+        units,
+        order,
+    })
+}
+
+/// Appends modules' declarations to an environment, in import order.
+pub struct Assembler<'p> {
+    pub env: Env,
+    par: &'p Par,
+    /// The module index of each declaration of `env`.
+    owners: Vec<u32>,
+}
+
+impl<'p> Assembler<'p> {
+    pub fn new(env: Env, par: &'p Par) -> Self {
+        Assembler {
+            env,
+            par,
+            owners: Vec::new(),
+        }
+    }
+
+    /// Add module `module`'s declarations. `names` gives module names, for
+    /// messages.
+    pub fn add(
+        &mut self,
+        m: &ModOut,
+        module: u32,
+        names: &dyn Fn(u32) -> String,
+    ) -> Result<(), Fail> {
+        for &u in &m.order {
+            let unit = &m.units[u];
+            match unit.kind {
+                UnitKind::Singles => {
+                    for &i in &unit.decls {
+                        let start = self.env.decls.len() as u32;
+                        if self.push(m, i, true, module, names)? {
+                            self.env.blocks.push(Block {
+                                start,
+                                kind: BlockKind::Single,
+                            });
+                        }
+                    }
+                }
+                UnitKind::Inductive { types, ctors, recs } => {
+                    let start = self.env.decls.len() as u32;
+                    for &i in &unit.decls {
+                        self.push(m, i, false, module, names)?;
+                    }
+                    self.env.blocks.push(Block {
+                        start,
+                        kind: BlockKind::Inductive { types, ctors, recs },
+                    })
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn list(&mut self, m: &ModOut, l: NameList) -> Result<NameList, Fail> {
+        self.env
+            .push_names(&m.pool[l.start as usize..(l.start + l.len) as usize])
             .ok_or_else(|| Fail::malformed("too many names in declaration lists"))
-    };
-    for d in &t.decls {
-        let e = |x: ExprId| exprs[x.index()];
+    }
+
+    /// Module `m`'s declaration `i` with its lists moved into `env`'s pools.
+    fn moved(&mut self, m: &ModOut, i: usize) -> Result<Decl, Fail> {
+        let d = m.decls[i];
         let kind = match d.kind {
-            DeclKind::Axiom { is_unsafe } => DeclKind::Axiom { is_unsafe },
             DeclKind::Definition {
                 value,
                 hints,
                 safety,
                 all,
             } => DeclKind::Definition {
-                value: e(value),
+                value,
                 hints,
                 safety,
-                all: nl(env, all)?,
+                all: self.list(m, all)?,
             },
             DeclKind::Theorem { value, all } => DeclKind::Theorem {
-                value: e(value),
-                all: nl(env, all)?,
+                value,
+                all: self.list(m, all)?,
             },
             DeclKind::Opaque {
                 value,
                 all,
                 is_unsafe,
             } => DeclKind::Opaque {
-                value: e(value),
-                all: nl(env, all)?,
+                value,
+                all: self.list(m, all)?,
                 is_unsafe,
             },
-            DeclKind::Quot { kind } => DeclKind::Quot { kind },
             DeclKind::Inductive {
                 num_params,
                 num_indices,
@@ -176,24 +286,11 @@ fn intern_tape(env: &mut Env, t: &Tape) -> Result<(Maps, Vec<Decl>), Fail> {
             } => DeclKind::Inductive {
                 num_params,
                 num_indices,
-                all: nl(env, all)?,
-                ctors: nl(env, ctors)?,
+                all: self.list(m, all)?,
+                ctors: self.list(m, ctors)?,
                 num_nested,
                 is_rec,
                 is_reflexive,
-                is_unsafe,
-            },
-            DeclKind::Constructor {
-                induct,
-                cidx,
-                num_params,
-                num_fields,
-                is_unsafe,
-            } => DeclKind::Constructor {
-                induct: names[induct.index()],
-                cidx,
-                num_params,
-                num_fields,
                 is_unsafe,
             },
             DeclKind::Recursor {
@@ -205,192 +302,137 @@ fn intern_tape(env: &mut Env, t: &Tape) -> Result<(Maps, Vec<Decl>), Fail> {
                 rules,
                 k,
                 is_unsafe,
-            } => {
-                let rs: Vec<RecRule> = t.rules
-                    [rules.start as usize..(rules.start + rules.len) as usize]
-                    .iter()
-                    .map(|r| RecRule {
-                        ctor: names[r.ctor.index()],
-                        nfields: r.nfields,
-                        rhs: e(r.rhs),
-                    })
-                    .collect();
-                DeclKind::Recursor {
-                    all: nl(env, all)?,
-                    num_params,
-                    num_indices,
-                    num_motives,
-                    num_minors,
-                    rules: env
-                        .push_rules(&rs)
-                        .ok_or_else(|| Fail::malformed("too many recursor rules"))?,
-                    k,
-                    is_unsafe,
-                }
-            }
+            } => DeclKind::Recursor {
+                all: self.list(m, all)?,
+                num_params,
+                num_indices,
+                num_motives,
+                num_minors,
+                rules: self
+                    .env
+                    .push_rules(&m.rules[rules.start as usize..(rules.start + rules.len) as usize])
+                    .ok_or_else(|| Fail::malformed("too many recursor rules"))?,
+                k,
+                is_unsafe,
+            },
+            k => k,
         };
-        decls.push(Decl {
-            name: names[d.name.index()],
-            level_params: nl(env, d.level_params)?,
-            ty: e(d.ty),
+        Ok(Decl {
+            name: d.name,
+            level_params: self.list(m, d.level_params)?,
+            ty: d.ty,
             kind,
-        });
+        })
     }
-    prof(2, phase_start);
-    Ok((Maps { names, exprs }, decls))
-}
 
-/// Intern a module's tape and append its declarations to `env`, grouped
-/// into blocks and sorted by dependency. Returns the global ids of the
-/// tape's names. `owners` holds the module index of each declaration of
-/// `env`, `module` is this one's, and `names` the module names, for
-/// messages.
-pub fn add_module(
-    env: &mut Env,
-    t: &Tape,
-    owners: &mut Vec<u32>,
-    module: u32,
-    names: &dyn Fn(u32) -> String,
-) -> Result<Vec<NameId>, Fail> {
-    let expr_start = env.exprs.len() as u32;
-    let (maps, decls) = intern_tape(env, t)?;
-    drop(maps.exprs);
-    let phase_start = std::time::Instant::now();
-    let units = group(env, &decls);
-    prof(3, phase_start);
-    let phase_start = std::time::Instant::now();
-    let order = sort_units(env, &decls, &units, expr_start);
-    prof(4, phase_start);
-    for u in order {
-        let unit = &units[u];
-        match unit.kind {
-            UnitKind::Singles => {
-                for &i in &unit.decls {
-                    let start = env.decls.len() as u32;
-                    if push_decl(env, decls[i], true, owners, module, names)? {
-                        env.blocks.push(Block {
-                            start,
-                            kind: BlockKind::Single,
-                        });
+    /// Append declaration `i` of `m`, unless one of that name is already
+    /// there. Like Lean's `importModules` (`subsumesInfo` in
+    /// `src/Lean/Environment.lean`), a theorem or axiom may come from
+    /// several modules (realized constants such as `congr_simp` lemmas are
+    /// made wherever they are needed) if the copies agree on type and
+    /// universe parameters. The first copy is the one found by name; a
+    /// later theorem with a different proof is appended as a shadow (see
+    /// below), other copies are dropped (returning `false`). Any other
+    /// duplicate is rejected.
+    fn push(
+        &mut self,
+        m: &ModOut,
+        i: usize,
+        may_merge: bool,
+        module: u32,
+        names: &dyn Fn(u32) -> String,
+    ) -> Result<bool, Fail> {
+        let idx = match u32::try_from(self.env.decls.len()) {
+            Ok(i) if i < u32::MAX => i,
+            _ => return Err(Fail::malformed("too many declarations")),
+        };
+        let d = self.moved(m, i)?;
+        if let Some(&prev) = self.env.by_name.get(&d.name) {
+            let p = self.env.decls[prev as usize];
+            if may_merge && self.subsumes(&p, &d) {
+                // Lean keeps the later copy of a theorem. Its proof may
+                // differ and use later constants, so it cannot replace the
+                // first copy, which earlier declarations may use. It is
+                // kept as a shadow: checked in its own place, but not found
+                // by name.
+                let same = match (p.kind, d.kind) {
+                    (DeclKind::Theorem { value: v, .. }, DeclKind::Theorem { value: w, .. }) => {
+                        v == w
                     }
+                    (_, DeclKind::Theorem { .. }) => false,
+                    _ => true,
+                };
+                if same {
+                    return Ok(false);
                 }
+                self.env.decls.push(d);
+                self.owners.push(module);
+                return Ok(true);
             }
-            UnitKind::Inductive { types, ctors, recs } => {
-                let start = env.decls.len() as u32;
-                for &i in &unit.decls {
-                    push_decl(env, decls[i], false, owners, module, names)?;
-                }
-                env.blocks.push(Block {
-                    start,
-                    kind: BlockKind::Inductive { types, ctors, recs },
-                })
+            return Err(Fail {
+                class: ErrorClass::Rejected,
+                msg: format!(
+                    "constant {} is declared twice, also in module {}",
+                    self.par.display(d.name),
+                    names(self.owners[prev as usize])
+                ),
+            });
+        }
+        self.env.by_name.insert(d.name, idx);
+        self.env.decls.push(d);
+        self.owners.push(module);
+        Ok(true)
+    }
+
+    /// Whether Lean's import merges `a` and `b` into one constant (in
+    /// either direction of `subsumesInfo`).
+    fn subsumes(&self, a: &Decl, b: &Decl) -> bool {
+        let env = &self.env;
+        if a.ty != b.ty || env.name_list(a.level_params) != env.name_list(b.level_params) {
+            return false;
+        }
+        match (a.kind, b.kind) {
+            (DeclKind::Theorem { all: x, .. }, DeclKind::Theorem { all: y, .. }) => {
+                env.name_list(x) == env.name_list(y)
             }
-        }
-    }
-    Ok(maps.names)
-}
-
-/// Append `d`, unless a declaration of that name is already there. Like
-/// Lean's `importModules` (`subsumesInfo` in `src/Lean/Environment.lean`),
-/// a theorem or axiom may come from several modules (realized constants
-/// such as `congr_simp` lemmas are made wherever they are needed) if the
-/// copies agree on type and universe parameters; the first copy is the one
-/// found by name, a later theorem with a different proof is appended as a
-/// shadow (see below), and other copies are dropped (returning `false`).
-/// Any other duplicate is rejected.
-fn push_decl(
-    env: &mut Env,
-    d: Decl,
-    may_merge: bool,
-    owners: &mut Vec<u32>,
-    module: u32,
-    names: &dyn Fn(u32) -> String,
-) -> Result<bool, Fail> {
-    let idx = match u32::try_from(env.decls.len()) {
-        Ok(i) if i < u32::MAX => i,
-        _ => return Err(Fail::malformed("too many declarations")),
-    };
-    if let Some(&prev) = env.by_name.get(&d.name) {
-        let p = env.decls[prev as usize];
-        if may_merge && subsumes(env, &p, &d) {
-            // Lean keeps the later copy of a theorem. Its proof may differ
-            // from the first one's and use later constants, so it cannot
-            // replace the first copy, which earlier declarations may use.
-            // It is kept as a shadow instead: checked in its own place,
-            // but not found by name.
-            let same = match (p.kind, d.kind) {
-                (DeclKind::Theorem { value: v, .. }, DeclKind::Theorem { value: w, .. }) => v == w,
-                (_, DeclKind::Theorem { .. }) => false,
-                _ => true,
-            };
-            if same {
-                return Ok(false);
+            (DeclKind::Theorem { all, .. }, DeclKind::Axiom { is_unsafe: false })
+            | (DeclKind::Axiom { is_unsafe: false }, DeclKind::Theorem { all, .. }) => {
+                env.name_list(all) == [a.name]
             }
-            env.decls.push(d);
-            owners.push(module);
-            return Ok(true);
+            (DeclKind::Axiom { is_unsafe: u }, DeclKind::Axiom { is_unsafe: v }) => {
+                u == v && self.is_prop_cheap(a.ty)
+            }
+            _ => false,
         }
-        return Err(Fail {
-            class: ErrorClass::Rejected,
-            msg: format!(
-                "constant {} is declared twice, also in module {}",
-                env.names.display(d.name),
-                names(owners[prev as usize])
-            ),
-        });
     }
-    env.by_name.insert(d.name, idx);
-    env.decls.push(d);
-    owners.push(module);
-    Ok(true)
-}
 
-/// Whether Lean's import merges `a` and `b` into one constant (in either
-/// direction of `subsumesInfo`).
-fn subsumes(env: &Env, a: &Decl, b: &Decl) -> bool {
-    if a.ty != b.ty || env.name_list(a.level_params) != env.name_list(b.level_params) {
-        return false;
-    }
-    match (a.kind, b.kind) {
-        (DeclKind::Theorem { all: x, .. }, DeclKind::Theorem { all: y, .. }) => {
-            env.name_list(x) == env.name_list(y)
+    /// Lean's `isPropCheap`: `ty` is `∀ ..., p xs` with `p : ∀ args, Prop`,
+    /// as many `args` as `xs`.
+    fn is_prop_cheap(&self, mut ty: ExprId) -> bool {
+        let get = |e: ExprId| self.par.expr_node(e);
+        while let ExprNode::Pi(_, _, _, b) = get(ty) {
+            ty = b;
         }
-        (DeclKind::Theorem { all, .. }, DeclKind::Axiom { is_unsafe: false })
-        | (DeclKind::Axiom { is_unsafe: false }, DeclKind::Theorem { all, .. }) => {
-            env.name_list(all) == [a.name]
+        let mut nargs = 0usize;
+        while let ExprNode::App(f, _) = get(ty) {
+            ty = f;
+            nargs += 1;
         }
-        (DeclKind::Axiom { is_unsafe: u }, DeclKind::Axiom { is_unsafe: v }) => {
-            u == v && is_prop_cheap(env, a.ty)
-        }
-        _ => false,
-    }
-}
-
-/// Lean's `isPropCheap`: `ty` is `∀ ..., p xs` with `p : ∀ args, Prop`,
-/// as many `args` as `xs`.
-fn is_prop_cheap(env: &Env, mut ty: ExprId) -> bool {
-    while let ExprNode::Pi(_, _, _, b) = env.exprs.get(ty) {
-        ty = b;
-    }
-    let mut nargs = 0usize;
-    while let ExprNode::App(f, _) = env.exprs.get(ty) {
-        ty = f;
-        nargs += 1;
-    }
-    let ExprNode::Const(n, _) = env.exprs.get(ty) else {
-        return false;
-    };
-    let Some(c) = env.find(n) else {
-        return false;
-    };
-    let mut p = c.ty;
-    for _ in 0..nargs {
-        let ExprNode::Pi(_, _, _, b) = env.exprs.get(p) else {
+        let ExprNode::Const(n, _) = get(ty) else {
             return false;
         };
-        p = b;
+        let Some(c) = self.env.find(n) else {
+            return false;
+        };
+        let mut p = c.ty;
+        for _ in 0..nargs {
+            let ExprNode::Pi(_, _, _, b) = get(p) else {
+                return false;
+            };
+            p = b;
+        }
+        matches!(get(p), ExprNode::Sort(l) if l == LevelId::ZERO)
     }
-    matches!(env.exprs.get(p), ExprNode::Sort(l) if l == LevelId::ZERO)
 }
 
 enum UnitKind {
@@ -408,10 +450,15 @@ struct Unit {
     kind: UnitKind,
 }
 
-/// Group a module's declarations into units: each inductive family with its
-/// constructors and recursors, the quotient constants, and the rest one by
-/// one.
-fn group(env: &Env, decls: &[Decl]) -> Vec<Unit> {
+fn tape_list(t: &Tape, l: NameList) -> &[NameId] {
+    &t.name_pool[l.start as usize..(l.start + l.len) as usize]
+}
+
+/// Group a module's declarations (in tape ids) into units: each inductive
+/// family with its constructors and recursors, the quotient constants, and
+/// the rest one by one.
+fn group(t: &Tape) -> Vec<Unit> {
+    let decls = &t.decls;
     let by_name: HashMap<NameId, usize> =
         decls.iter().enumerate().map(|(i, d)| (d.name, i)).collect();
     let mut taken = vec![false; decls.len()];
@@ -419,7 +466,7 @@ fn group(env: &Env, decls: &[Decl]) -> Vec<Unit> {
     let mut recs_of: HashMap<NameId, Vec<usize>> = HashMap::new();
     for (i, d) in decls.iter().enumerate() {
         if let DeclKind::Recursor { all, .. } = d.kind
-            && let Some(&first) = env.name_list(all).first()
+            && let Some(&first) = tape_list(t, all).first()
         {
             recs_of.entry(first).or_default().push(i);
         }
@@ -433,7 +480,7 @@ fn group(env: &Env, decls: &[Decl]) -> Vec<Unit> {
         match d.kind {
             DeclKind::Inductive { all, .. } => {
                 let mut types = Vec::new();
-                let names = env.name_list(all);
+                let names = tape_list(t, all);
                 if !names.contains(&d.name) {
                     types.push(i);
                     taken[i] = true;
@@ -452,7 +499,7 @@ fn group(env: &Env, decls: &[Decl]) -> Vec<Unit> {
                     let DeclKind::Inductive { ctors: cs, .. } = decls[ty].kind else {
                         unreachable!()
                     };
-                    for c in env.name_list(cs) {
+                    for c in tape_list(t, cs) {
                         if let Some(&j) = by_name.get(c)
                             && !taken[j]
                             && matches!(decls[j].kind, DeclKind::Constructor { .. })
@@ -513,9 +560,22 @@ fn group(env: &Env, decls: &[Decl]) -> Vec<Unit> {
     units
 }
 
+/// The tape name with the dotted form `s`, if the tape has it.
+fn tape_find(t: &Tape, s: &str) -> Option<NameId> {
+    let mut cur = NameId::ANON;
+    for c in s.split('.') {
+        let sid = t.strs.find(c)?;
+        let i = t.names.iter().position(|&n| n == NameNode::Str(cur, sid))?;
+        cur = NameId(i as u32);
+    }
+    Some(cur)
+}
+
 /// Depth-first order of the units: each after the units its terms mention
 /// (cycles, which the checker rejects anyway, are broken arbitrarily).
-fn sort_units(env: &Env, decls: &[Decl], units: &[Unit], expr_start: u32) -> Vec<usize> {
+/// Works on the tape, whose expressions are exactly the module's own terms.
+fn sort_units(t: &Tape, units: &[Unit]) -> Vec<usize> {
+    let decls = &t.decls;
     let mut unit_of: HashMap<NameId, usize> = HashMap::new();
     for (u, unit) in units.iter().enumerate() {
         for &i in &unit.decls {
@@ -523,16 +583,34 @@ fn sort_units(env: &Env, decls: &[Decl], units: &[Unit], expr_start: u32) -> Vec
         }
     }
     // Literals refer to these constants implicitly.
-    let lit_nat: Vec<usize> = ["Nat"]
-        .iter()
-        .filter_map(|s| unit_of.get(&env.names.find_dotted(s)?).copied())
-        .collect();
+    let local = |s: &str| tape_find(t, s).and_then(|n| unit_of.get(&n).copied());
+    let lit_nat: Vec<usize> = ["Nat"].iter().filter_map(|s| local(s)).collect();
     let lit_str: Vec<usize> = ["String", "Char.ofNat", "String.ofList"]
         .iter()
-        .filter_map(|s| unit_of.get(&env.names.find_dotted(s)?).copied())
+        .filter_map(|s| local(s))
         .collect();
-    let n_new = env.exprs.len() - expr_start as usize;
-    let mut seen = vec![u32::MAX; n_new];
+    // Which expressions mention a constant of this module at all: the walks
+    // below skip the others (most shared subterms only mention imports).
+    let mut mentions = Vec::with_capacity(t.exprs.len());
+    for e in &t.exprs {
+        let m = |x: ExprId| -> bool { mentions[x.index()] };
+        let v = match *e {
+            ExprNode::Const(n, _) => unit_of.contains_key(&n),
+            ExprNode::App(a, b) | ExprNode::Lam(_, _, a, b) | ExprNode::Pi(_, _, a, b) => {
+                m(a) || m(b)
+            }
+            ExprNode::Let(l, b) => {
+                let l = t.lets[l.0 as usize];
+                m(l.ty) || m(l.value) || m(b)
+            }
+            ExprNode::Proj(n, _, x) => unit_of.contains_key(&n) || m(x),
+            ExprNode::NatSmall(..) | ExprNode::NatBig(_) => !lit_nat.is_empty(),
+            ExprNode::Str(_) => !lit_str.is_empty(),
+            ExprNode::BVar(_) | ExprNode::Sort(_) | ExprNode::FVar(_) => false,
+        };
+        mentions.push(v);
+    }
+    let mut seen = vec![u32::MAX; t.exprs.len()];
     let mut work: Vec<ExprId> = Vec::new();
     let mut deps_of = |u: usize, out: &mut Vec<usize>| {
         out.clear();
@@ -544,44 +622,38 @@ fn sort_units(env: &Env, decls: &[Decl], units: &[Unit], expr_start: u32) -> Vec
                 DeclKind::Definition { value, .. }
                 | DeclKind::Theorem { value, .. }
                 | DeclKind::Opaque { value, .. } => work.push(value),
-                DeclKind::Recursor { rules, .. } => {
-                    work.extend(env.rec_rules(rules).iter().map(|r| r.rhs))
-                }
+                DeclKind::Recursor { rules, .. } => work.extend(
+                    t.rules[rules.start as usize..(rules.start + rules.len) as usize]
+                        .iter()
+                        .map(|r| r.rhs),
+                ),
                 _ => {}
             }
         }
         while let Some(e) = work.pop() {
-            let Some(k) = e.0.checked_sub(expr_start) else {
-                continue;
-            };
-            if seen[k as usize] == u as u32 {
+            let k = e.index();
+            if !mentions[k] || seen[k] == u as u32 {
                 continue;
             }
-            seen[k as usize] = u as u32;
-            match env.exprs.get(e) {
-                ExprNode::Const(n, _) => {
-                    if let Some(&v) = unit_of.get(&n) {
-                        out.push(v);
-                    }
-                }
+            seen[k] = u as u32;
+            match t.exprs[k] {
+                ExprNode::Const(n, _) => out.extend(unit_of.get(&n)),
                 ExprNode::App(f, a) => {
                     work.push(f);
                     work.push(a);
                 }
-                ExprNode::Lam(_, _, t, b) | ExprNode::Pi(_, _, t, b) => {
-                    work.push(t);
+                ExprNode::Lam(_, _, ty, b) | ExprNode::Pi(_, _, ty, b) => {
+                    work.push(ty);
                     work.push(b);
                 }
                 ExprNode::Let(l, b) => {
-                    let l = env.exprs.let_binder(l);
+                    let l = t.lets[l.0 as usize];
                     work.push(l.ty);
                     work.push(l.value);
                     work.push(b);
                 }
                 ExprNode::Proj(n, _, x) => {
-                    if let Some(&v) = unit_of.get(&n) {
-                        out.push(v);
-                    }
+                    out.extend(unit_of.get(&n));
                     work.push(x);
                 }
                 ExprNode::NatSmall(..) | ExprNode::NatBig(_) => out.extend(&lit_nat),
@@ -589,7 +661,6 @@ fn sort_units(env: &Env, decls: &[Decl], units: &[Unit], expr_start: u32) -> Vec
                 ExprNode::BVar(_) | ExprNode::Sort(_) | ExprNode::FVar(_) => {}
             }
         }
-        // Quotients need `Eq`; inductives in a unit may also name others.
         out.sort_unstable();
         out.dedup();
         out.retain(|&v| v != u);
@@ -607,7 +678,7 @@ fn sort_units(env: &Env, decls: &[Decl], units: &[Unit], expr_start: u32) -> Vec
         deps_of(root, &mut d);
         state[root] = 1;
         stack.push((root, d, 0));
-        while let Some((u, deps, i)) = stack.last_mut() {
+        while let Some((_, deps, i)) = stack.last_mut() {
             if *i < deps.len() {
                 let v = deps[*i];
                 *i += 1;
@@ -618,8 +689,7 @@ fn sort_units(env: &Env, decls: &[Decl], units: &[Unit], expr_start: u32) -> Vec
                     stack.push((v, d, 0));
                 }
             } else {
-                let u = *u;
-                let (_, d, _) = stack.pop().expect("nonempty");
+                let (u, d, _) = stack.pop().expect("nonempty");
                 spare.push(d);
                 state[u] = 2;
                 order.push(u);

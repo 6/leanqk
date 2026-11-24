@@ -15,7 +15,6 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
-use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::env::Env;
@@ -26,12 +25,14 @@ mod build;
 mod decode;
 mod file;
 mod obj;
+mod par;
 
 pub use file::LEAN_VERSION;
 
 use decode::{Decoder, Tape};
 use file::OleanFile;
 use obj::Heap;
+use par::Par;
 
 /// An error without its file.
 #[derive(Debug)]
@@ -119,9 +120,10 @@ pub struct Stats {
     pub imports_time: Duration,
     /// Decoding and interning the modules (wall clock).
     pub load_time: Duration,
-    /// Time the interning thread spent interning (the rest of
-    /// `load_time` it waited for decoded modules).
+    /// Time spent appending declarations in import order.
     pub intern_time: Duration,
+    /// Time spent moving the concurrent arenas into the environment.
+    pub finish_time: Duration,
 }
 
 /// A module to load: its name and the path of its main `.olean`.
@@ -459,69 +461,71 @@ fn decode_module(m: &Module) -> Result<(Tape, usize, u64), OleanError> {
     Ok((d.finish(), parts.len(), bytes))
 }
 
-fn new_env(mods: &[Module]) -> Env {
+fn new_env() -> Env {
     let mut env = Env::new();
     env.meta.format_version = "olean".into();
     env.meta.lean_version = Some(LEAN_VERSION.into());
-    let _ = mods;
-    if let Some(n) = std::env::var("LEANQK_RESERVE")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-    {
-        env.exprs.reserve(n);
-    }
     env
 }
 
+/// What a worker makes of a module.
+type Done = Result<(build::ModOut, usize, u64), OleanError>;
+
+fn work(par: &Par, m: &Module) -> Done {
+    let (tape, files, bytes) = decode_module(m)?;
+    let out = build::intern_module(par, &tape).map_err(|e| e.at(&m.path))?;
+    Ok((out, files, bytes))
+}
+
+/// Load `mods` (in import order) with `threads` workers. Workers decode
+/// and intern whole modules, any number at once, into the concurrent
+/// arenas; this thread appends their declarations in import order.
 fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanError> {
-    let mut env = new_env(mods);
+    // The parts' sizes, to size the arenas.
+    let bytes: u64 = mods
+        .iter()
+        .flat_map(|m| {
+            ["olean", "olean.server", "olean.private"]
+                .map(|e| std::fs::metadata(m.path.with_extension(e)).map_or(0, |md| md.len()))
+        })
+        .sum();
+    let par = Par::new(bytes);
+    let mut asm = build::Assembler::new(new_env(), &par);
     let mut stats = Stats {
         modules: mods.len(),
         ..Stats::default()
     };
-    let mut intern = Duration::ZERO;
-    let mut owners: Vec<u32> = Vec::new();
     let names = |i: u32| mods[i as usize].name.clone();
-    let mut add = |env: &mut Env, i: usize, r: Result<(Tape, usize, u64), OleanError>| {
-        let (tape, files, bytes) = r?;
+    let mut intern = Duration::ZERO;
+    let mut add = |asm: &mut build::Assembler<'_>, i: usize, r: Done| {
+        let (out, files, bytes) = r?;
         stats.files += files;
         stats.bytes += bytes;
         let t = Instant::now();
-        build::add_module(env, &tape, &mut owners, i as u32, &names)
+        asm.add(&out, i as u32, &names)
             .map_err(|e| e.at(&mods[i].path))?;
         intern += t.elapsed();
         Ok::<(), OleanError>(())
     };
     if threads <= 1 {
         for (i, m) in mods.iter().enumerate() {
-            add(&mut env, i, decode_module(m))?;
+            add(&mut asm, i, work(&par, m))?;
         }
     } else {
-        // Workers decode modules in import order, at most `window` ahead of
-        // the interning thread, which takes them in order.
-        let window = threads * 4;
         let next = AtomicUsize::new(0);
-        let done = Mutex::new(0usize);
-        let cv = Condvar::new();
         let failed = std::sync::atomic::AtomicBool::new(false);
-        let res = std::thread::scope(|s| {
-            let (tx, rx) = mpsc::channel();
+        std::thread::scope(|s| {
+            let (tx, rx) = mpsc::channel::<(usize, Done)>();
             for _ in 0..threads {
                 let tx = tx.clone();
-                let (next, done, cv, failed) = (&next, &done, &cv, &failed);
+                let (next, failed, par) = (&next, &failed, &par);
                 s.spawn(move || {
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);
                         if i >= mods.len() || failed.load(Ordering::Relaxed) {
                             break;
                         }
-                        {
-                            let mut d = done.lock().expect("lock");
-                            while i >= *d + window && !failed.load(Ordering::Relaxed) {
-                                d = cv.wait(d).expect("lock");
-                            }
-                        }
-                        if tx.send((i, decode_module(&mods[i]))).is_err() {
+                        if tx.send((i, work(par, &mods[i]))).is_err() {
                             break;
                         }
                     }
@@ -534,38 +538,55 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
                 for (i, r) in rx.iter() {
                     pending.insert(i, r);
                     while let Some(r) = pending.remove(&want) {
-                        add(&mut env, want, r)?;
+                        add(&mut asm, want, r)?;
                         want += 1;
-                        *done.lock().expect("lock") = want;
-                        cv.notify_all();
                     }
                 }
                 Ok(())
             })();
             if out.is_err() {
                 failed.store(true, Ordering::Relaxed);
-                cv.notify_all();
             }
-            drop(rx);
             out
-        });
-        res?;
+        })?;
     }
-    stats.intern_time = intern;
+    let t = Instant::now();
     if std::env::var_os("LEANQK_OLEAN_PROFILE").is_some() {
-        let p: Vec<u64> = build::PROF
-            .iter()
-            .map(|a| a.load(Ordering::Relaxed))
-            .collect();
         eprintln!(
-            "profile: names/levels {:.2}s exprs {:.2}s decls {:.2}s group {:.2}s sort {:.2}s; tape exprs {}",
-            p[0] as f64 / 1e9,
-            p[1] as f64 / 1e9,
-            p[2] as f64 / 1e9,
-            p[3] as f64 / 1e9,
-            p[4] as f64 / 1e9,
-            p[5]
+            "rss before finish: {:?} peak {:?}",
+            rss_now(),
+            crate::stats::peak_rss_bytes()
         );
     }
+    let mut env = asm.env;
+    let (names, levels, exprs) = par.finish(threads).map_err(|o| {
+        err(
+            ErrorClass::Malformed,
+            Path::new(""),
+            format!("capacity exceeded: {}", o.0),
+        )
+    })?;
+    env.names = names;
+    env.levels = levels;
+    env.exprs = exprs;
+    stats.finish_time = t.elapsed();
+    if std::env::var_os("LEANQK_OLEAN_PROFILE").is_some() {
+        eprintln!(
+            "rss after finish: {:?} peak {:?}",
+            rss_now(),
+            crate::stats::peak_rss_bytes()
+        );
+    }
+    stats.intern_time = intern;
     Ok((env, stats))
+}
+
+fn rss_now() -> Option<u64> {
+    let s = std::fs::read_to_string("/proc/self/status").ok()?;
+    let l = s.lines().find(|l| l.starts_with("VmRSS:"))?;
+    l.split_whitespace()
+        .nth(1)?
+        .parse::<u64>()
+        .ok()
+        .map(|k| k / 1024)
 }

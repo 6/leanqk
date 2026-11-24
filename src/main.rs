@@ -271,13 +271,14 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool) -> u8 {
         }
         if let Some(st) = &os {
             out.push_str(&format!(
-                "load time     {secs:.3} s ({} modules, {} files, {}, {} threads; imports {:.3} s, interning {:.3} s)\n",
+                "load time     {secs:.3} s ({} modules, {} files, {}, {} threads; imports {:.3} s, ordering {:.3} s, arenas {:.3} s)\n",
                 st.modules,
                 st.files,
                 human_bytes(st.bytes),
                 st.threads,
                 st.imports_time.as_secs_f64(),
                 st.intern_time.as_secs_f64(),
+                st.finish_time.as_secs_f64(),
             ));
         }
         match peak_rss_bytes() {

@@ -41,6 +41,42 @@ pub struct Tape {
     /// Direct imports (local name ids), for the main part only.
     pub imports: Vec<NameId>,
     pub is_module: bool,
+    /// The names by depth (components), and the expressions by height.
+    pub name_order: Layers,
+    pub expr_order: Layers,
+}
+
+/// Indices grouped into layers: layer `d` is `order[ends[d-1]..ends[d]]`.
+#[derive(Default)]
+pub struct Layers {
+    pub order: Vec<u32>,
+    pub ends: Vec<u32>,
+}
+
+impl Layers {
+    /// Counting sort of the indices `0..keys.len()` by key.
+    fn new(keys: &[u32]) -> Layers {
+        let mut ends: Vec<u32> = Vec::new();
+        for &k in keys {
+            if k as usize >= ends.len() {
+                ends.resize(k as usize + 1, 0);
+            }
+            ends[k as usize] += 1;
+        }
+        let mut next = Vec::with_capacity(ends.len());
+        let mut acc = 0u32;
+        for e in ends.iter_mut() {
+            next.push(acc);
+            acc += *e;
+            *e = acc;
+        }
+        let mut order = vec![0u32; keys.len()];
+        for (i, &k) in keys.iter().enumerate() {
+            order[next[k as usize] as usize] = i as u32;
+            next[k as usize] += 1;
+        }
+        Layers { order, ends }
+    }
 }
 
 #[derive(Default)]
@@ -611,7 +647,42 @@ impl<'h, 'a> Decoder<'h, 'a> {
         })
     }
 
-    pub fn finish(self) -> Tape {
+    pub fn finish(mut self) -> Tape {
+        let t = &mut self.tape;
+        // Name 0 (anonymous) is layer 0 and needs no interning; the rest
+        // come after their prefixes.
+        let mut depth: Vec<u32> = Vec::with_capacity(t.names.len());
+        for n in &t.names {
+            depth.push(match *n {
+                NameNode::Anon => 0,
+                NameNode::Str(p, _) | NameNode::Num(p, _) => depth[p.index()] + 1,
+            });
+        }
+        let mut names = Layers::new(&depth);
+        names.order.retain(|&i| i != 0);
+        if let Some(e) = names.ends.first_mut() {
+            *e = 0;
+        }
+        for e in names.ends.iter_mut().skip(1) {
+            *e -= 1;
+        }
+        t.name_order = names;
+        let mut height: Vec<u32> = Vec::with_capacity(t.exprs.len());
+        for e in &t.exprs {
+            let g = |x: ExprId| height[x.index()];
+            height.push(match *e {
+                ExprNode::App(a, b) | ExprNode::Lam(_, _, a, b) | ExprNode::Pi(_, _, a, b) => {
+                    g(a).max(g(b)) + 1
+                }
+                ExprNode::Let(l, b) => {
+                    let l = t.lets[l.0 as usize];
+                    g(l.ty).max(g(l.value)).max(g(b)) + 1
+                }
+                ExprNode::Proj(_, _, x) => g(x) + 1,
+                _ => 0,
+            });
+        }
+        t.expr_order = Layers::new(&height);
         self.tape
     }
 }
