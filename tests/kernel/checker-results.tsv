@@ -1,0 +1,866 @@
+checker	revision	id	expected	verdict	class	seconds	note
+leanchecker	lean4 v4.36.0 (611c117b)	nat-add-wrap64	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-add-carry64	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-add-zero-ctor	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-sub-wrap	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-sub-trunc	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-sub-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-sub-succ-arg	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-mul-wrap64	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-mul-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-div-zero	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-div-zero-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-div-big-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-div-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-mod-zero	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-mod-zero-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-mod-big-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-gcd-zero	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-gcd-zero-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-gcd-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-gcd-big-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-beq-trunc	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-beq-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-beq-false-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-ble-trunc	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-ble-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-ble-eq	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-land-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-land-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-lor-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-lor-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-xor-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-xor-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-shl-wrap	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-shl-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-shr-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-shr-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-shr-huge-shift	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-pow-wrap	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-pow-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-pow-zero-zero	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-pow-zero-zero-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-pow-2-24	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-pow-2-24-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-pow-2-24-plus1	either	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-pow-2-24-plus1-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-pow-exp-u32	either	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-pow-exp-u32-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-pow-result-limit-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-shl-limit	either	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-shl-limit-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-shl-zero-u32	either	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-log2-small	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-log2-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-log2-zero	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-succ-big	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-succ-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-zero-lit	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-big-lit-neq	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	nat-lit-negative	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	str-empty	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	str-ab	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	str-ab-swapped	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	str-ab-short	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	str-2byte	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	str-2byte-as-bytes	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	str-4byte	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	str-4byte-as-utf16	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	str-nul	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	str-nul-truncated	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	str-lit-neq	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	str-invalid-char	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pos-direct	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pos-nonstrict	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pos-nested-list	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pos-nested-wrap	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pos-mutual	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pos-mutual-nested	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pos-nested-ok	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pos-mutual-nested-ok	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	mutual-param-type	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	mutual-levelparam-name	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	mutual-levelparam-extra	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	mutual-result-universe	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	mutual-numparams	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	mutual-all	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	eta-unit	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	eta-unit-param	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	eta-unit-indexed	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	eta-struct	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	eta-struct-S	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	eta-recursive	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	eta-recursive-isrec-lie	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	eta-indexed	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	proj-recursive	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	proj-indexed	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	proj-ok	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	proj-out-of-range	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	proj-wrong-type	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	ctor-meta-cidx	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	ctor-meta-numfields	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	rec-rule-swap	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	rec-k-lie	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	rec-k-missing	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-imax-succ	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-max-imax	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-imax-self	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-imax-zero	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-imax-one	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-imax-nested-trap	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-imax-assoc	either	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-max-comm	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-max-zero	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-succ-max	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-max-absorb	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-param-swap	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-succ-param	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	univ-imax-succ-left	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	lparam-undeclared	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	lparam-duplicate	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	lparam-const-too-many	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	lparam-const-too-few	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	elim-prop-two-ctors	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	elim-prop-data-field	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	elim-prop-use	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	elim-false-large	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	quot-lift-mk-q	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	quot-lift-mk-extra-arg	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	quot-ind-mk	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	quot-lift-var	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	quot-mk-rel-rfl	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	quot-lift-mk-wrong	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	quot-lift-no-respect	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	quot-ind-large	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	quot-mk-type	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	quot-kind-swap	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	quot-no-eq	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pi-fun	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pi-imax	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pi-beta	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pi-data	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pi-sort	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pi-bool	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pi-proj-exists	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	pi-proj-and	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-ok	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-meta-only	accept	accept	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-fwd-expr	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-dup-expr-id	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-dup-expr-same	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-dup-name-id	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-dup-level-id	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-dup-decl	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-missing-value	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-missing-type	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-missing-levelparams	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-missing-ctors	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-missing-recs	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-kind-unknown	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-kind-thm-as-axiom	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-kind-thm-as-def	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-kind-expr-unknown	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-undeclared-const	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-thm-mismatch	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-thm-not-prop	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-loose-bvar	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-const-wrong-arity	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-bad-level-ref	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-name-bad-prefix	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-no-meta	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-bad-json	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-opaque-mismatch	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-safe-uses-unsafe	reject	reject	agree		
+leanchecker	lean4 v4.36.0 (611c117b)	fmt-safe-uses-partial	reject	reject	agree		
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-add-wrap64	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-add-carry64	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-add-zero-ctor	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-sub-wrap	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-sub-trunc	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-sub-big	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-sub-succ-arg	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-mul-wrap64	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-mul-big	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-div-zero	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-div-zero-wrong	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-div-big-wrong	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-div-big	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-mod-zero	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-mod-zero-wrong	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-mod-big-wrong	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-gcd-zero	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-gcd-zero-wrong	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-gcd-big	accept	accept	agree	0.04	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-gcd-big-wrong	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-beq-trunc	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-beq-big	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-beq-false-wrong	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-ble-trunc	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-ble-big	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-ble-eq	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-land-wrong	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-land-big	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-lor-wrong	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-lor-big	accept	accept	agree	0.04	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-xor-wrong	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-xor-big	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-shl-wrap	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-shl-big	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-shr-wrong	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-shr-big	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-shr-huge-shift	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-pow-wrap	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-pow-big	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-pow-zero-zero	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-pow-zero-zero-wrong	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-pow-2-24	accept	accept	agree	0.03	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-pow-2-24-wrong	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-pow-2-24-plus1	either	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-pow-2-24-plus1-wrong	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-pow-exp-u32	either	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-pow-exp-u32-wrong	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-pow-result-limit-wrong	reject	reject	agree	0.09	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-shl-limit	either	accept	agree	0.09	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-shl-limit-wrong	reject	reject	agree	0.09	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-shl-zero-u32	either	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-log2-small	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-log2-wrong	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-log2-zero	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-succ-big	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-succ-wrong	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-zero-lit	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-big-lit-neq	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	nat-lit-negative	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	str-empty	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	str-ab	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	str-ab-swapped	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	str-ab-short	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	str-2byte	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	str-2byte-as-bytes	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	str-4byte	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	str-4byte-as-utf16	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	str-nul	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	str-nul-truncated	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	str-lit-neq	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	str-invalid-char	accept	accept	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pos-direct	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pos-nonstrict	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pos-nested-list	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pos-nested-wrap	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pos-mutual	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pos-mutual-nested	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pos-nested-ok	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pos-mutual-nested-ok	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	mutual-param-type	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	mutual-levelparam-name	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	mutual-levelparam-extra	reject	crash	crash/timeout/declined	0.00	thread 'main' (17466) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	mutual-result-universe	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	mutual-numparams	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	mutual-all	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	eta-unit	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	eta-unit-param	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	eta-unit-indexed	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	eta-struct	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	eta-struct-S	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	eta-recursive	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	eta-recursive-isrec-lie	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	eta-indexed	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	proj-recursive	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	proj-indexed	accept	crash	crash/timeout/declined	0.00	thread 'thread_0' (17524) panicked at src/tc.rs:502:59: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	proj-ok	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	proj-out-of-range	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	proj-wrong-type	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	ctor-meta-cidx	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	ctor-meta-numfields	reject	reject	agree	0.07	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	rec-rule-swap	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	rec-k-lie	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	rec-k-missing	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-imax-succ	accept	crash	crash/timeout/declined	0.00	thread 'main' (17583) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-max-imax	reject	crash	crash/timeout/declined	0.00	thread 'main' (17584) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-imax-self	accept	crash	crash/timeout/declined	0.00	thread 'main' (17585) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-imax-zero	accept	crash	crash/timeout/declined	0.00	thread 'main' (17586) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-imax-one	reject	crash	crash/timeout/declined	0.00	thread 'main' (17587) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-imax-nested-trap	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-imax-assoc	either	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-max-comm	accept	crash	crash/timeout/declined	0.00	thread 'main' (17598) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-max-zero	accept	crash	crash/timeout/declined	0.00	thread 'main' (17599) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-succ-max	accept	crash	crash/timeout/declined	0.00	thread 'main' (17600) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-max-absorb	accept	crash	crash/timeout/declined	0.00	thread 'main' (17601) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-param-swap	reject	crash	crash/timeout/declined	0.00	thread 'main' (17602) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-succ-param	reject	crash	crash/timeout/declined	0.00	thread 'main' (17603) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	univ-imax-succ-left	reject	crash	crash/timeout/declined	0.00	thread 'main' (17604) panicked at src/parser.rs:506:83: | called `Option::unwrap()` on a `None` value | note: run with `RUST_BACKTRACE=1` environment variable t
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	lparam-undeclared	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	lparam-duplicate	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	lparam-const-too-many	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	lparam-const-too-few	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	elim-prop-two-ctors	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	elim-prop-data-field	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	elim-prop-use	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	elim-false-large	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	quot-lift-mk-q	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	quot-lift-mk-extra-arg	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	quot-ind-mk	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	quot-lift-var	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	quot-mk-rel-rfl	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	quot-lift-mk-wrong	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	quot-lift-no-respect	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	quot-ind-large	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	quot-mk-type	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	quot-kind-swap	reject	accept	wrongly-accepts	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	quot-no-eq	reject	reject	agree	0.07	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pi-fun	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pi-imax	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pi-beta	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pi-data	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pi-sort	reject	reject	agree	0.08	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pi-bool	reject	reject	agree	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pi-proj-exists	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	pi-proj-and	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-ok	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-meta-only	accept	accept	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-fwd-expr	reject	declined	crash/timeout/declined	0.00	Declined: Expr back-reference mismatch, expected Ie(1), found Ie(2). Back-refs must be continuous.
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-dup-expr-id	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-dup-expr-same	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-dup-name-id	reject	declined	crash/timeout/declined	0.00	Declined: Name back-reference mismatch, expected In(2), found In(1). Back-refs must be continuous.
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-dup-level-id	reject	declined	crash/timeout/declined	0.00	Declined: Level back-reference mismatch, expected Il(2), found Il(1). Back-refs must be continuous.
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-dup-decl	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-missing-value	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-missing-type	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-missing-levelparams	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-missing-ctors	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-missing-recs	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-kind-unknown	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-kind-thm-as-axiom	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-kind-thm-as-def	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-kind-expr-unknown	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-undeclared-const	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-thm-mismatch	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-thm-not-prop	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-loose-bvar	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-const-wrong-arity	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-bad-level-ref	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-name-bad-prefix	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-no-meta	reject	accept	wrongly-accepts	0.01	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-bad-json	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-opaque-mismatch	reject	reject	agree	0.05	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-safe-uses-unsafe	reject	reject	agree	0.00	
+nanoda	0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929	fmt-safe-uses-partial	reject	reject	agree	0.00	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-add-wrap64	reject	reject	agree	0.06	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-add-carry64	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-add-zero-ctor	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-sub-wrap	reject	reject	agree	0.05	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-sub-trunc	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-sub-big	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-sub-succ-arg	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-mul-wrap64	reject	reject	agree	0.06	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-mul-big	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-div-zero	accept	accept	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-div-zero-wrong	reject	reject	agree	0.09	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-div-big-wrong	reject	reject	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-div-big	accept	accept	agree	0.06	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-mod-zero	accept	accept	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-mod-zero-wrong	reject	reject	agree	0.10	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-mod-big-wrong	reject	reject	agree	0.09	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-gcd-zero	accept	accept	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-gcd-zero-wrong	reject	reject	agree	0.09	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-gcd-big	accept	accept	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-gcd-big-wrong	reject	reject	agree	0.09	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-beq-trunc	reject	reject	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-beq-big	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-beq-false-wrong	reject	reject	agree	0.06	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-ble-trunc	reject	reject	agree	0.08	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-ble-big	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-ble-eq	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-land-wrong	reject	reject	agree	0.11	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-land-big	accept	accept	agree	0.08	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-lor-wrong	reject	reject	agree	0.11	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-lor-big	accept	accept	agree	0.08	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-xor-wrong	reject	reject	agree	0.11	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-xor-big	accept	accept	agree	0.08	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-shl-wrap	reject	reject	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-shl-big	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-shr-wrong	reject	reject	agree	0.08	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-shr-big	accept	accept	agree	0.05	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-shr-huge-shift	accept	accept	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-pow-wrap	reject	reject	agree	0.05	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-pow-big	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-pow-zero-zero	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-pow-zero-zero-wrong	reject	reject	agree	0.08	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-pow-2-24	accept	accept	agree	0.06	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-pow-2-24-wrong	reject	reject	agree	0.09	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-pow-2-24-plus1	either	reject	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-pow-2-24-plus1-wrong	reject	reject	agree	0.05	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-pow-exp-u32	either	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-pow-exp-u32-wrong	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-pow-result-limit-wrong	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-shl-limit	either	reject	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-shl-limit-wrong	reject	reject	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-shl-zero-u32	either	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-log2-small	accept	accept	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-log2-wrong	reject	reject	agree	0.10	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-log2-zero	accept	accept	agree	0.05	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-succ-big	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-succ-wrong	reject	reject	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-zero-lit	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-big-lit-neq	reject	reject	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	nat-lit-negative	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	str-empty	accept	accept	agree	0.08	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	str-ab	accept	accept	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	str-ab-swapped	reject	reject	agree	0.12	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	str-ab-short	reject	reject	agree	0.09	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	str-2byte	accept	accept	agree	0.08	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	str-2byte-as-bytes	reject	reject	agree	0.12	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	str-4byte	accept	accept	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	str-4byte-as-utf16	reject	reject	agree	0.11	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	str-nul	accept	accept	agree	0.06	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	str-nul-truncated	reject	reject	agree	0.10	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	str-lit-neq	reject	reject	agree	0.11	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	str-invalid-char	accept	accept	agree	0.06	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pos-direct	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pos-nonstrict	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pos-nested-list	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pos-nested-wrap	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pos-mutual	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pos-mutual-nested	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pos-nested-ok	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pos-mutual-nested-ok	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	mutual-param-type	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	mutual-levelparam-name	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	mutual-levelparam-extra	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	mutual-result-universe	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	mutual-numparams	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	mutual-all	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	eta-unit	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	eta-unit-param	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	eta-unit-indexed	reject	reject	agree	0.08	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	eta-struct	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	eta-struct-S	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	eta-recursive	reject	reject	agree	0.05	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	eta-recursive-isrec-lie	reject	reject	agree	0.05	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	eta-indexed	reject	reject	agree	0.06	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	proj-recursive	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	proj-indexed	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	proj-ok	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	proj-out-of-range	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	proj-wrong-type	reject	reject	agree	0.05	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	ctor-meta-cidx	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	ctor-meta-numfields	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	rec-rule-swap	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	rec-k-lie	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	rec-k-missing	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-imax-succ	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-max-imax	reject	reject	agree	0.06	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-imax-self	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-imax-zero	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-imax-one	reject	reject	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-imax-nested-trap	reject	reject	agree	0.08	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-imax-assoc	either	reject	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-max-comm	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-max-zero	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-succ-max	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-max-absorb	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-param-swap	reject	reject	agree	0.07	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-succ-param	reject	reject	agree	0.05	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	univ-imax-succ-left	reject	reject	agree	0.06	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	lparam-undeclared	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	lparam-duplicate	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	lparam-const-too-many	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	lparam-const-too-few	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	elim-prop-two-ctors	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	elim-prop-data-field	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	elim-prop-use	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	elim-false-large	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	quot-lift-mk-q	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	quot-lift-mk-extra-arg	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	quot-ind-mk	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	quot-lift-var	reject	reject	agree	0.09	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	quot-mk-rel-rfl	reject	reject	agree	0.06	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	quot-lift-mk-wrong	reject	reject	agree	0.08	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	quot-lift-no-respect	reject	accept	wrongly-accepts	0.04	checked 2 declarations
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	quot-ind-large	reject	accept	wrongly-accepts	0.04	checked 2 declarations
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	quot-mk-type	reject	accept	wrongly-accepts	0.03	checked 2 declarations
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	quot-kind-swap	reject	accept	wrongly-accepts	0.03	checked 2 declarations
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	quot-no-eq	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pi-fun	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pi-imax	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pi-beta	accept	accept	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pi-data	reject	reject	agree	0.11	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pi-sort	reject	reject	agree	0.10	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pi-bool	reject	reject	agree	0.11	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pi-proj-exists	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	pi-proj-and	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-ok	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-meta-only	accept	accept	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-fwd-expr	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-dup-expr-id	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-dup-expr-same	reject	accept	wrongly-accepts	0.04	checked 2 declarations
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-dup-name-id	reject	accept	wrongly-accepts	0.03	checked 2 declarations
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-dup-level-id	reject	accept	wrongly-accepts	0.04	checked 2 declarations
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-dup-decl	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-missing-value	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-missing-type	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-missing-levelparams	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-missing-ctors	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-missing-recs	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-kind-unknown	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-kind-thm-as-axiom	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-kind-thm-as-def	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-kind-expr-unknown	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-undeclared-const	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-thm-mismatch	reject	reject	agree	0.06	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-thm-not-prop	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-loose-bvar	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-const-wrong-arity	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-bad-level-ref	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-name-bad-prefix	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-no-meta	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-bad-json	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-opaque-mismatch	reject	reject	agree	0.04	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-safe-uses-unsafe	reject	reject	agree	0.03	
+lean4lean	932afa1419f8c9f21717cb01578cdd4d709df6be	fmt-safe-uses-partial	reject	reject	agree	0.04	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-add-wrap64	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-add-carry64	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-add-zero-ctor	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-sub-wrap	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-sub-trunc	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-sub-big	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-sub-succ-arg	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-mul-wrap64	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-mul-big	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-div-zero	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-div-zero-wrong	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-div-big-wrong	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-div-big	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-mod-zero	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-mod-zero-wrong	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-mod-big-wrong	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-gcd-zero	accept	accept	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-gcd-zero-wrong	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-gcd-big	accept	accept	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-gcd-big-wrong	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-beq-trunc	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-beq-big	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-beq-false-wrong	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-ble-trunc	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-ble-big	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-ble-eq	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-land-wrong	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-land-big	accept	accept	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-lor-wrong	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-lor-big	accept	accept	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-xor-wrong	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-xor-big	accept	accept	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-shl-wrap	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-shl-big	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-shr-wrong	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-shr-big	accept	accept	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-shr-huge-shift	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-pow-wrap	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-pow-big	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-pow-zero-zero	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-pow-zero-zero-wrong	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-pow-2-24	accept	accept	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-pow-2-24-wrong	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-pow-2-24-plus1	either	declined	crash/timeout/declined	1.56	K.claim unsupported: declaration stack budget exhausted | FAIL 186 declarations, 0 cached, 1 failed in 1.56s
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-pow-2-24-plus1-wrong	reject	declined	crash/timeout/declined	2.03	K.claim unsupported: declaration stack budget exhausted | FAIL 186 declarations, 0 cached, 1 failed in 2.03s
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-pow-exp-u32	either	declined	crash/timeout/declined	1.55	K.claim unsupported: declaration stack budget exhausted | FAIL 34 declarations, 0 cached, 1 failed in 1.54s
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-pow-exp-u32-wrong	reject	declined	crash/timeout/declined	1.58	K.claim unsupported: declaration stack budget exhausted | FAIL 34 declarations, 0 cached, 1 failed in 1.57s
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-pow-result-limit-wrong	reject	declined	crash/timeout/declined	1.57	K.claim unsupported: declaration stack budget exhausted | FAIL 41 declarations, 0 cached, 1 failed in 1.56s
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-shl-limit	either	declined	crash/timeout/declined	7.64	K.claim unsupported: declaration arena budget exhausted | FAIL 205 declarations, 0 cached, 1 failed in 7.59s
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-shl-limit-wrong	reject	declined	crash/timeout/declined	9.86	K.claim unsupported: declaration arena budget exhausted | FAIL 205 declarations, 0 cached, 1 failed in 9.82s
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-shl-zero-u32	either	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-log2-small	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-log2-wrong	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-log2-zero	accept	accept	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-succ-big	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-succ-wrong	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-zero-lit	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-big-lit-neq	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	nat-lit-negative	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	str-empty	accept	accept	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	str-ab	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	str-ab-swapped	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	str-ab-short	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	str-2byte	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	str-2byte-as-bytes	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	str-4byte	accept	accept	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	str-4byte-as-utf16	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	str-nul	accept	accept	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	str-nul-truncated	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	str-lit-neq	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	str-invalid-char	accept	accept	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pos-direct	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pos-nonstrict	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pos-nested-list	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pos-nested-wrap	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pos-mutual	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pos-mutual-nested	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pos-nested-ok	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pos-mutual-nested-ok	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	mutual-param-type	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	mutual-levelparam-name	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	mutual-levelparam-extra	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	mutual-result-universe	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	mutual-numparams	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	mutual-all	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	eta-unit	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	eta-unit-param	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	eta-unit-indexed	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	eta-struct	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	eta-struct-S	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	eta-recursive	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	eta-recursive-isrec-lie	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	eta-indexed	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	proj-recursive	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	proj-indexed	accept	reject	wrongly-rejects	0.00	K.V.get rejected: projection of a non-structure | FAIL 26 declarations, 0 cached, 1 failed in 901.98µs
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	proj-ok	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	proj-out-of-range	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	proj-wrong-type	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	ctor-meta-cidx	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	ctor-meta-numfields	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	rec-rule-swap	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	rec-k-lie	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	rec-k-missing	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-imax-succ	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-max-imax	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-imax-self	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-imax-zero	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-imax-one	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-imax-nested-trap	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-imax-assoc	either	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-max-comm	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-max-zero	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-succ-max	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-max-absorb	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-param-swap	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-succ-param	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	univ-imax-succ-left	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	lparam-undeclared	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	lparam-duplicate	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	lparam-const-too-many	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	lparam-const-too-few	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	elim-prop-two-ctors	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	elim-prop-data-field	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	elim-prop-use	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	elim-false-large	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	quot-lift-mk-q	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	quot-lift-mk-extra-arg	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	quot-ind-mk	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	quot-lift-var	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	quot-mk-rel-rfl	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	quot-lift-mk-wrong	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	quot-lift-no-respect	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	quot-ind-large	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	quot-mk-type	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	quot-kind-swap	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	quot-no-eq	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pi-fun	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pi-imax	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pi-beta	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pi-data	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pi-sort	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pi-bool	reject	reject	agree	0.01	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pi-proj-exists	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	pi-proj-and	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-ok	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-meta-only	accept	accept	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-fwd-expr	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-dup-expr-id	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-dup-expr-same	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-dup-name-id	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-dup-level-id	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-dup-decl	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-missing-value	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-missing-type	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-missing-levelparams	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-missing-ctors	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-missing-recs	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-kind-unknown	reject	declined	crash/timeout/declined	0.00	unsupported: line 27: declaration kind theorem
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-kind-thm-as-axiom	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-kind-thm-as-def	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-kind-expr-unknown	reject	declined	crash/timeout/declined	0.00	unsupported: line 12: expression pi
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-undeclared-const	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-thm-mismatch	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-thm-not-prop	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-loose-bvar	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-const-wrong-arity	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-bad-level-ref	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-name-bad-prefix	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-no-meta	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-bad-json	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-opaque-mismatch	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-safe-uses-unsafe	reject	reject	agree	0.00	
+nano-lean	b5602a4ba169f6d4aef34fcdc3011fc41cd777e8	fmt-safe-uses-partial	reject	reject	agree	0.00	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-add-wrap64	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-add-carry64	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-add-zero-ctor	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-sub-wrap	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-sub-trunc	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-sub-big	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-sub-succ-arg	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-mul-wrap64	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-mul-big	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-div-zero	accept	accept	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-div-zero-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-div-big-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-div-big	accept	accept	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-mod-zero	accept	accept	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-mod-zero-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-mod-big-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-gcd-zero	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-gcd-zero-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-gcd-big	accept	accept	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-gcd-big-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-beq-trunc	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-beq-big	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-beq-false-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-ble-trunc	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-ble-big	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-ble-eq	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-land-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-land-big	accept	accept	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-lor-wrong	reject	reject	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-lor-big	accept	accept	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-xor-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-xor-big	accept	accept	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-shl-wrap	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-shl-big	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-shr-wrong	reject	reject	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-shr-big	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-shr-huge-shift	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-pow-wrap	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-pow-big	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-pow-zero-zero	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-pow-zero-zero-wrong	reject	reject	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-pow-2-24	accept	accept	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-pow-2-24-wrong	reject	reject	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-pow-2-24-plus1	either	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-pow-2-24-plus1-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-pow-exp-u32	either	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-pow-exp-u32-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-pow-result-limit-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-shl-limit	either	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-shl-limit-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-shl-zero-u32	either	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-log2-small	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-log2-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-log2-zero	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-succ-big	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-succ-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-zero-lit	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-big-lit-neq	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	nat-lit-negative	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	str-empty	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	str-ab	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	str-ab-swapped	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	str-ab-short	reject	reject	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	str-2byte	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	str-2byte-as-bytes	reject	reject	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	str-4byte	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	str-4byte-as-utf16	reject	reject	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	str-nul	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	str-nul-truncated	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	str-lit-neq	reject	reject	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	str-invalid-char	accept	accept	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pos-direct	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pos-nonstrict	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pos-nested-list	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pos-nested-wrap	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pos-mutual	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pos-mutual-nested	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pos-nested-ok	accept	reject	wrongly-rejects	0.01	rejected: K.PosNested: isRec / isReflexive do not match the declaration
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pos-mutual-nested-ok	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	mutual-param-type	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	mutual-levelparam-name	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	mutual-levelparam-extra	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	mutual-result-universe	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	mutual-numparams	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	mutual-all	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	eta-unit	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	eta-unit-param	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	eta-unit-indexed	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	eta-struct	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	eta-struct-S	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	eta-recursive	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	eta-recursive-isrec-lie	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	eta-indexed	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	proj-recursive	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	proj-indexed	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	proj-ok	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	proj-out-of-range	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	proj-wrong-type	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	ctor-meta-cidx	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	ctor-meta-numfields	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	rec-rule-swap	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	rec-k-lie	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	rec-k-missing	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-imax-succ	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-max-imax	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-imax-self	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-imax-zero	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-imax-one	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-imax-nested-trap	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-imax-assoc	either	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-max-comm	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-max-zero	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-succ-max	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-max-absorb	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-param-swap	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-succ-param	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	univ-imax-succ-left	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	lparam-undeclared	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	lparam-duplicate	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	lparam-const-too-many	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	lparam-const-too-few	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	elim-prop-two-ctors	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	elim-prop-data-field	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	elim-prop-use	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	elim-false-large	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	quot-lift-mk-q	accept	accept	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	quot-lift-mk-extra-arg	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	quot-ind-mk	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	quot-lift-var	reject	reject	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	quot-mk-rel-rfl	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	quot-lift-mk-wrong	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	quot-lift-no-respect	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	quot-ind-large	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	quot-mk-type	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	quot-kind-swap	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	quot-no-eq	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pi-fun	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pi-imax	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pi-beta	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pi-data	reject	reject	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pi-sort	reject	reject	agree	0.02	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pi-bool	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pi-proj-exists	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	pi-proj-and	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-ok	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-meta-only	accept	accept	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-fwd-expr	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-dup-expr-id	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-dup-expr-same	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-dup-name-id	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-dup-level-id	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-dup-decl	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-missing-value	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-missing-type	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-missing-levelparams	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-missing-ctors	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-missing-recs	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-kind-unknown	reject	declined	crash/timeout/declined	0.01	declined: susz: fmt-kind-unknown.ndjson: cannot pack: line 27: unknown declaration kind 'theorem' (susz status 2)
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-kind-thm-as-axiom	reject	declined	crash/timeout/declined	0.01	declined: susz: fmt-kind-thm-as-axiom.ndjson: cannot pack: line 27: unknown key 'all' (susz status 2)
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-kind-thm-as-def	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-kind-expr-unknown	reject	declined	crash/timeout/declined	0.01	declined: susz: fmt-kind-expr-unknown.ndjson: cannot pack: line 12: unknown expression kind (susz status 2)
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-undeclared-const	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-thm-mismatch	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-thm-not-prop	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-loose-bvar	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-const-wrong-arity	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-bad-level-ref	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-name-bad-prefix	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-no-meta	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-bad-json	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-opaque-mismatch	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-safe-uses-unsafe	reject	reject	agree	0.01	
+gruszka	43d2d1277e6dfa72572caa871c67ef15f78193e9	fmt-safe-uses-partial	reject	reject	agree	0.01	
