@@ -16,9 +16,11 @@
 //! ops and shifts). Literals below 2^64 never reach it: they are stored
 //! inline in the 16-byte expression node.
 
-#![forbid(unsafe_code)]
+// The one exception is the memory map in `olean::file`.
+#![deny(unsafe_code)]
 
 pub mod check;
+pub mod compare;
 pub mod env;
 pub mod expr;
 mod hash;
@@ -27,6 +29,7 @@ mod intern;
 pub mod json;
 pub mod level;
 pub mod name;
+pub mod olean;
 pub mod reader;
 pub mod stats;
 pub mod strings;
