@@ -1,0 +1,223 @@
+//! Universe levels (`Lean.Level`), hash-consed. 12 bytes per node plus one
+//! flag byte. Also interned lists of levels, for `Expr.const` instances.
+
+use hashbrown::HashTable;
+
+use crate::hash::{hash_bytes, hash2};
+use crate::intern::{Interner, Node};
+use crate::name::NameId;
+use crate::strings::Overflow;
+
+/// Id of an interned level. `LevelId::ZERO` is `Level.zero`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+pub struct LevelId(pub(crate) u32);
+
+impl LevelId {
+    pub const ZERO: LevelId = LevelId(0);
+
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LevelNode {
+    Zero,
+    Succ(LevelId),
+    Max(LevelId, LevelId),
+    IMax(LevelId, LevelId),
+    Param(NameId),
+}
+
+impl Node for LevelNode {
+    #[inline]
+    fn hash(&self) -> u64 {
+        let (tag, a, b) = match *self {
+            LevelNode::Zero => (0, 0, 0),
+            LevelNode::Succ(l) => (1, l.0, 0),
+            LevelNode::Max(l, r) => (2, l.0, r.0),
+            LevelNode::IMax(l, r) => (3, l.0, r.0),
+            LevelNode::Param(n) => (4, n.0, 0),
+        };
+        hash2(tag | (a as u64) << 8, b as u64)
+    }
+}
+
+/// Id of an interned list of levels. `LevelList::EMPTY` is `[]`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct LevelList(pub(crate) u32);
+
+impl LevelList {
+    pub const EMPTY: LevelList = LevelList(0);
+}
+
+pub struct Levels {
+    arena: Interner<LevelNode>,
+    has_param: Vec<bool>,
+    // Interned lists: concatenated elements, end offsets, and a flag per list.
+    list_data: Vec<LevelId>,
+    list_ends: Vec<u32>,
+    list_has_param: Vec<bool>,
+    list_table: HashTable<u32>,
+}
+
+impl Default for Levels {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn list_hash(ls: &[LevelId]) -> u64 {
+    // Ids are u32; hash their little-endian bytes.
+    let mut buf = [0u8; 64];
+    if ls.len() <= 16 {
+        for (i, l) in ls.iter().enumerate() {
+            buf[i * 4..i * 4 + 4].copy_from_slice(&l.0.to_le_bytes());
+        }
+        hash_bytes(&buf[..ls.len() * 4])
+    } else {
+        let bytes: Vec<u8> = ls.iter().flat_map(|l| l.0.to_le_bytes()).collect();
+        hash_bytes(&bytes)
+    }
+}
+
+impl Levels {
+    pub fn new() -> Self {
+        let mut arena = Interner::new("too many universe levels");
+        let (zero, _) = arena.intern(LevelNode::Zero).expect("empty arena");
+        debug_assert_eq!(zero, LevelId::ZERO.0);
+        Levels {
+            arena,
+            has_param: vec![false],
+            list_data: Vec::new(),
+            list_ends: vec![0],
+            list_has_param: vec![false],
+            list_table: HashTable::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.arena.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    #[inline]
+    pub fn get(&self, l: LevelId) -> LevelNode {
+        *self.arena.get(l.0)
+    }
+
+    #[inline]
+    pub fn has_param(&self, l: LevelId) -> bool {
+        self.has_param[l.index()]
+    }
+
+    pub fn intern(&mut self, node: LevelNode) -> Result<(LevelId, bool), Overflow> {
+        let (id, fresh) = self.arena.intern(node)?;
+        if fresh {
+            let hp = match node {
+                LevelNode::Zero => false,
+                LevelNode::Succ(l) => self.has_param(l),
+                LevelNode::Max(a, b) | LevelNode::IMax(a, b) => {
+                    self.has_param(a) || self.has_param(b)
+                }
+                LevelNode::Param(_) => true,
+            };
+            self.has_param.push(hp);
+        }
+        Ok((LevelId(id), fresh))
+    }
+
+    /// Number of interned level lists, counting `[]`.
+    pub fn list_count(&self) -> usize {
+        self.list_ends.len()
+    }
+
+    pub fn list(&self, l: LevelList) -> &[LevelId] {
+        let i = l.0 as usize;
+        let start = if i == 0 {
+            0
+        } else {
+            self.list_ends[i - 1] as usize
+        };
+        &self.list_data[start..self.list_ends[i] as usize]
+    }
+
+    pub fn list_has_param(&self, l: LevelList) -> bool {
+        self.list_has_param[l.0 as usize]
+    }
+
+    pub fn intern_list(&mut self, ls: &[LevelId]) -> Result<LevelList, Overflow> {
+        if ls.is_empty() {
+            return Ok(LevelList::EMPTY);
+        }
+        let h = list_hash(ls);
+        let Self {
+            list_data,
+            list_ends,
+            list_table,
+            ..
+        } = self;
+        let slice = |i: usize| {
+            let start = if i == 0 { 0 } else { list_ends[i - 1] as usize };
+            &list_data[start..list_ends[i] as usize]
+        };
+        if let Some(&id) = list_table.find(h, |&id| slice(id as usize) == ls) {
+            return Ok(LevelList(id));
+        }
+        let end = list_data.len() + ls.len();
+        if end > u32::MAX as usize || list_ends.len() >= u32::MAX as usize {
+            return Err(Overflow("too many universe level lists"));
+        }
+        let id = list_ends.len() as u32;
+        list_data.extend_from_slice(ls);
+        list_ends.push(end as u32);
+        let (list_data, list_ends) = (&*list_data, &*list_ends);
+        list_table.insert_unique(h, id, |&id| {
+            let i = id as usize;
+            let start = if i == 0 { 0 } else { list_ends[i - 1] as usize };
+            list_hash(&list_data[start..list_ends[i] as usize])
+        });
+        let hp = ls.iter().any(|&l| self.has_param[l.index()]);
+        self.list_has_param.push(hp);
+        Ok(LevelList(id))
+    }
+
+    pub fn heap_bytes(&self) -> usize {
+        self.arena.heap_bytes()
+            + self.has_param.capacity()
+            + self.list_data.capacity() * 4
+            + self.list_ends.capacity() * 4
+            + self.list_has_param.capacity()
+            + self.list_table.capacity() * 5
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn levels_and_lists() {
+        let mut ls = Levels::new();
+        let (one, _) = ls.intern(LevelNode::Succ(LevelId::ZERO)).unwrap();
+        let (one2, fresh) = ls.intern(LevelNode::Succ(LevelId::ZERO)).unwrap();
+        assert_eq!(one, one2);
+        assert!(!fresh);
+        let (u, _) = ls.intern(LevelNode::Param(NameId(3))).unwrap();
+        let (m, _) = ls.intern(LevelNode::Max(one, u)).unwrap();
+        assert!(ls.has_param(m) && !ls.has_param(one));
+        let a = ls.intern_list(&[one, u]).unwrap();
+        let b = ls.intern_list(&[one, u]).unwrap();
+        let c = ls.intern_list(&[u, one]).unwrap();
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_eq!(ls.list(a), &[one, u]);
+        assert_eq!(ls.intern_list(&[]).unwrap(), LevelList::EMPTY);
+        assert!(ls.list(LevelList::EMPTY).is_empty());
+        assert!(ls.list_has_param(a));
+        assert_eq!(size_of::<LevelNode>(), 12);
+    }
+}
