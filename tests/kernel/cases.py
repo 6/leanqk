@@ -1059,3 +1059,16 @@ eval_case("eval-let-wrong", "K.ev_let_wrong", "reject", "the same, off by one")
 eval_case("eval-fn", "K.ev_fn_ok", "accept",
           "a fold that builds a function (closures of closures), then applied")
 eval_case("eval-fn-wrong", "K.ev_fn_wrong", "reject", "the same, off by one")
+eval_case("eval-arr-get", "K.ev_arr_get", "accept",
+          "an array built by push, read by get! and getD (in and out of range)")
+eval_case("eval-arr-get-wrong", "K.ev_arr_get_wrong", "reject", "the same, wrong sum")
+eval_case("eval-arr-set", "K.ev_arr_set", "accept", "set! then the array as a list")
+eval_case("eval-arr-set-wrong", "K.ev_arr_set_wrong", "reject", "the same, the old element")
+eval_case("eval-arr-oob", "K.ev_arr_oob", "accept",
+          "set! and get! out of range leave the array alone and give the default")
+eval_case("eval-arr-oob-wrong", "K.ev_arr_oob_wrong", "reject", "the same, off by one")
+eval_case("eval-arr-eq", "K.ev_arr_eq", "accept",
+          "decidable equality of an array built by push and one made from a list")
+eval_case("eval-arr-eq-wrong", "K.ev_arr_eq_wrong", "reject", "the same, different arrays")
+eval_case("eval-arr-fn", "K.ev_arr_fn", "accept", "an array of functions, elements applied")
+eval_case("eval-arr-fn-wrong", "K.ev_arr_fn_wrong", "reject", "the same, wrong sum")

@@ -3,7 +3,8 @@
 //! of every declaration it depends on.
 //!
 //! Each EXPORT is the closure of the operations in that version's `Init`
-//! (`leanexport Init -- Nat.add Nat.sub ...`, every name of `NAT_OPS`):
+//! (`leanexport Init -- Nat.add Nat.sub ...`, every name of `NAT_OPS` and
+//! `ARRAY_OPS`):
 //!
 //! ```text
 //! cargo run --release --example fingerprints -- v4.36.0=init-4.36.ndjson \
@@ -12,7 +13,7 @@
 
 use std::collections::BTreeMap;
 
-use nitrolean::check::ext::NAT_OPS;
+use nitrolean::check::ext::{ARRAY_OPS, NAT_OPS};
 use nitrolean::check::{Fingerprints, fingerprint_key, hex_digest};
 use nitrolean::reader::read_file;
 
@@ -31,7 +32,11 @@ fn main() {
         let (env, _) = read_file(path.as_ref()).unwrap_or_else(|e| panic!("{e}"));
         let fp = Fingerprints::new(&env);
         let mut seen = BTreeMap::new();
-        for (name, _) in NAT_OPS {
+        let names = NAT_OPS
+            .iter()
+            .map(|x| x.0)
+            .chain(ARRAY_OPS.iter().map(|x| x.0));
+        for name in names {
             let n = env
                 .names
                 .find_dotted(name)
