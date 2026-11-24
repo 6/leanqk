@@ -96,9 +96,7 @@ pub fn mk_imax(st: &mut Store<'_>, l1: LevelId, l2: LevelId) -> LevelId {
     let one = st.succ(LevelId::ZERO);
     if is_not_zero(st, l2) {
         mk_max(st, l1, l2)
-    } else if l2 == LevelId::ZERO {
-        l2
-    } else if l1 == LevelId::ZERO || l1 == one {
+    } else if l2 == LevelId::ZERO || l1 == LevelId::ZERO || l1 == one {
         l2
     } else if l1 == l2 {
         l1

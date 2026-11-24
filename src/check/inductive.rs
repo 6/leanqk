@@ -22,6 +22,10 @@ use super::store::{IdMap, IdSet};
 use super::tc::{KErr, Mode, R, Tc, err};
 use super::univ;
 
+/// The rewriting callback of `replace`: given a subterm and the number of
+/// binders above it, a replacement, or `None` to descend.
+type ReplaceFn<'a, T> = dyn FnMut(&mut T, ExprId, u32) -> R<Option<ExprId>> + 'a;
+
 #[derive(Clone, Debug)]
 pub struct IndType {
     pub name: NameId,
@@ -110,9 +114,9 @@ impl Tc<'_> {
                 return e;
             };
             let n = Some(n);
-            if (n == opt || n == auto) && args.len() == 2 {
-                e = args[0];
-            } else if (n == out || n == semi) && args.len() == 1 {
+            if ((n == opt || n == auto) && args.len() == 2)
+                || ((n == out || n == semi) && args.len() == 1)
+            {
                 e = args[0];
             } else {
                 return e;
@@ -139,7 +143,7 @@ impl Tc<'_> {
         &mut self,
         e: ExprId,
         off: u32,
-        f: &mut dyn FnMut(&mut Self, ExprId, u32) -> R<Option<ExprId>>,
+        f: &mut ReplaceFn<'_, Self>,
         memo: &mut IdMap<(ExprId, u32), ExprId>,
     ) -> R<ExprId> {
         if let Some(&r) = memo.get(&(e, off)) {
@@ -851,7 +855,7 @@ impl<'a, 'e> AddInd<'a, 'e> {
         match self.elim_param {
             Some(_) => {
                 let mut v = vec![self.elim_level];
-                v.extend_from_slice(&self.tc.st.list(self.levels).to_vec());
+                v.extend_from_slice(self.tc.st.list(self.levels));
                 self.tc.st.mk_list(&v)
             }
             None => self.levels,

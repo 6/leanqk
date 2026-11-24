@@ -901,7 +901,7 @@ impl<'e> Tc<'e> {
         }
     }
 
-    fn to_cnstr_when_k(&mut self, induct: NameId, nparams: u32, e: ExprId) -> R<ExprId> {
+    fn ctor_when_k(&mut self, induct: NameId, nparams: u32, e: ExprId) -> R<ExprId> {
         let t = self.infer(e)?;
         let app_type = self.whnf(t)?;
         let mut args = Vec::new();
@@ -971,7 +971,7 @@ impl<'e> Tc<'e> {
         }
     }
 
-    fn to_cnstr_when_structure(&mut self, rec: &Decl, induct: NameId, e: ExprId) -> R<ExprId> {
+    fn ctor_when_structure(&mut self, rec: &Decl, induct: NameId, e: ExprId) -> R<ExprId> {
         if !self.is_non_rec_structure(induct)
             || self.is_constructor_app(e)
             || matches!(self.st.node(e), ExprNode::Str(_))
@@ -1029,13 +1029,13 @@ impl<'e> Tc<'e> {
         };
         let mut major = args[major_idx];
         if k {
-            major = self.to_cnstr_when_k(induct, num_params, major)?;
+            major = self.ctor_when_k(induct, num_params, major)?;
         }
         // Divergence (corpus/divergences.md): structure eta comes before
         // `whnf` of the major premise, as leanprover/lean4#15351 proposes,
         // so a major premise without a normal form does not stop the
         // reduction. Both orders agree whenever Lean's terminates.
-        major = self.to_cnstr_when_structure(&d, induct, major)?;
+        major = self.ctor_when_structure(&d, induct, major)?;
         major = self.rec_whnf(major, cheap_rec, cheap_proj)?;
         match self.st.node(major) {
             ExprNode::NatSmall(..) | ExprNode::NatBig(_) => {
@@ -1320,11 +1320,7 @@ impl<'e> Tc<'e> {
             | ExprNode::NatSmall(..)
             | ExprNode::NatBig(_)
             | ExprNode::Str(_) => return Ok(e),
-            ExprNode::FVar(_) => {
-                if self.is_let_fvar(e).is_none() {
-                    return Ok(e);
-                }
-            }
+            ExprNode::FVar(_) if self.is_let_fvar(e).is_none() => return Ok(e),
             _ => {}
         }
         if let Some(&r) = self.whnf_cache.get(&e) {
@@ -1352,13 +1348,10 @@ impl<'e> Tc<'e> {
     fn is_def_eq_binding(&mut self, mut t: ExprId, mut s: ExprId) -> R<bool> {
         let lam = matches!(self.st.node(t), ExprNode::Lam(..));
         let mut subst: Vec<ExprId> = Vec::new();
-        loop {
-            let ((ExprNode::Lam(_, _, td, tb), ExprNode::Lam(_, sn, sd, sb))
-            | (ExprNode::Pi(_, _, td, tb), ExprNode::Pi(_, sn, sd, sb))) =
-                (self.st.node(t), self.st.node(s))
-            else {
-                break;
-            };
+        while let (ExprNode::Lam(_, _, td, tb), ExprNode::Lam(_, sn, sd, sb))
+        | (ExprNode::Pi(_, _, td, tb), ExprNode::Pi(_, sn, sd, sb)) =
+            (self.st.node(t), self.st.node(s))
+        {
             let sbi = match self.st.node(s) {
                 ExprNode::Lam(bi, ..) | ExprNode::Pi(bi, ..) => bi,
                 _ => unreachable!(),
@@ -1517,9 +1510,9 @@ impl<'e> Tc<'e> {
         if !self.is_def_eq(tt, ts)? {
             return Ok(false);
         }
-        for i in num_params as usize..s_args.len() {
+        for (i, &a) in s_args.iter().enumerate().skip(num_params as usize) {
             let p = self.st.proj(induct, (i - num_params as usize) as u32, t);
-            if !self.is_def_eq(p, s_args[i])? {
+            if !self.is_def_eq(p, a)? {
                 return Ok(false);
             }
         }
@@ -1822,10 +1815,7 @@ impl<'e> Tc<'e> {
         if let Some(r) = self.try_string_lit_expansion(tn, sn)? {
             return Ok(r);
         }
-        if self.is_def_eq_unit_like(tn, sn)? {
-            return Ok(true);
-        }
-        Ok(false)
+        self.is_def_eq_unit_like(tn, sn)
     }
 
     pub fn is_def_eq(&mut self, t: ExprId, s: ExprId) -> R<bool> {
