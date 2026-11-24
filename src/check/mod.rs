@@ -11,6 +11,8 @@
 //! writes only into its own [`store::Store`] and caches, so independent
 //! declarations could be checked on several threads; for now there is one.
 
+mod eval;
+pub use eval::stats as eval_stats;
 pub mod ext;
 mod fingerprint;
 mod fingerprint_table;
