@@ -590,3 +590,6 @@ fn rss_now() -> Option<u64> {
         .ok()
         .map(|k| k / 1024)
 }
+
+#[cfg(test)]
+mod tests;

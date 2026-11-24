@@ -1,0 +1,73 @@
+name: Olean
+
+# Loads Lean v4.36.0's own .olean files (Init and Std, from the toolchain)
+# and checks that they give the same environment as Lean's NDJSON export,
+# then runs the reader's tests against the real files.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ELAN_VERSION: v4.4.0
+  ELAN_SHA256: 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2
+  LEAN_TOOLCHAIN: leanprover/lean4:v4.36.0
+
+jobs:
+  olean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: jdx/mise-action@v5
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'mise.toml') }}
+
+      - name: Cache elan and Lean
+        uses: actions/cache@v6
+        with:
+          path: ~/.elan
+          key: elan-${{ env.ELAN_VERSION }}-${{ env.LEAN_TOOLCHAIN }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install elan and Lean
+        run: |
+          if [ ! -x ~/.elan/bin/elan ]; then
+            curl -sSfL -o /tmp/elan.tar.gz \
+              "https://github.com/leanprover/elan/releases/download/$ELAN_VERSION/elan-x86_64-unknown-linux-gnu.tar.gz"
+            echo "$ELAN_SHA256  /tmp/elan.tar.gz" | sha256sum -c -
+            tar -xzf /tmp/elan.tar.gz -C /tmp
+            /tmp/elan-init -y --no-modify-path --default-toolchain none
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          ~/.elan/bin/elan toolchain install "$LEAN_TOOLCHAIN"
+
+      - name: Install GNU time
+        run: test -x /usr/bin/time || { sudo apt-get update -q && sudo apt-get install -yq time; }
+
+      - name: Reader tests on the toolchain's files
+        run: |
+          prefix=$(elan run "$LEAN_TOOLCHAIN" lean --print-prefix)
+          LEANQK_LEAN_LIB="$prefix/lib/lean" cargo test --release --locked olean
+
+      - name: Init matches the export
+        run: scripts/olean-equivalence.sh Init "$RUNNER_TEMP/eq"
+
+      - name: Std matches the export
+        run: scripts/olean-equivalence.sh Std "$RUNNER_TEMP/eq"

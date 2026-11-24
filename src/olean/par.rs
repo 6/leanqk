@@ -35,18 +35,23 @@ const MAX_CHUNKS: usize = 1 << (32 - CHUNK_BITS);
 /// threshold, so that each is returned to the system when freed.
 struct Words<const W: usize, const B: u32> {
     chunks: Vec<OnceLock<Box<[AtomicU64]>>>,
+    /// Ids per chunk: `2^B`, or fewer if all ids fit in one chunk.
+    per: usize,
 }
 
 impl<const W: usize, const B: u32> Words<W, B> {
-    fn new() -> Self {
+    /// Storage for ids below `max`.
+    fn new(max: usize) -> Self {
+        let n = (max >> B) + 1;
         Words {
-            chunks: (0..1usize << (32 - B)).map(|_| OnceLock::new()).collect(),
+            chunks: (0..n.min(1 << (32 - B))).map(|_| OnceLock::new()).collect(),
+            per: max.min(1 << B).max(1),
         }
     }
 
     fn chunk(&self, id: u32) -> &[AtomicU64] {
         self.chunks[(id >> B) as usize]
-            .get_or_init(|| (0..(W << B)).map(|_| AtomicU64::new(0)).collect())
+            .get_or_init(|| (0..W * self.per).map(|_| AtomicU64::new(0)).collect())
     }
 
     #[inline]
@@ -72,9 +77,11 @@ struct Cells<T> {
 }
 
 impl<T> Cells<T> {
-    fn new() -> Self {
+    /// Storage for ids below `max`.
+    fn new(max: usize) -> Self {
+        let n = (max >> CHUNK_BITS) + 1;
         Cells {
-            chunks: (0..MAX_CHUNKS).map(|_| OnceLock::new()).collect(),
+            chunks: (0..n.min(MAX_CHUNKS)).map(|_| OnceLock::new()).collect(),
         }
     }
 
@@ -218,8 +225,10 @@ impl Pack for LetBinder {
 }
 
 /// A concurrent arena of packable nodes, with one word of side data each.
-pub(crate) struct Conc<T, const B: u32 = 14> {
+pub(crate) struct Conc<T, const B: u32 = 16> {
     shards: Vec<Mutex<HashTable<u32>>>,
+    /// Ids are below this (see [`Par::new`]).
+    max: usize,
     words: Words<3, B>,
     next: AtomicU32,
     what: &'static str,
@@ -229,13 +238,14 @@ pub(crate) struct Conc<T, const B: u32 = 14> {
 impl<T: Pack, const B: u32> Conc<T, B> {
     /// An arena with room for about `n` nodes before any shard rehashes
     /// (rehashing reads every node of the shard back).
-    fn new(what: &'static str, n: usize) -> Self {
+    fn new(what: &'static str, n: usize, max: usize) -> Self {
         let per = n / SHARDS + n / (8 * SHARDS);
         Conc {
             shards: (0..SHARDS)
                 .map(|_| Mutex::new(HashTable::with_capacity(per)))
                 .collect(),
-            words: Words::new(),
+            words: Words::new(max),
+            max,
             next: AtomicU32::new(0),
             what,
             _t: std::marker::PhantomData,
@@ -266,8 +276,8 @@ impl<T: Pack, const B: u32> Conc<T, B> {
             return Ok(id);
         }
         let id = self.next.fetch_add(1, Ordering::AcqRel);
-        if id >= u32::MAX - 1 {
-            self.next.store(u32::MAX - 1, Ordering::Release);
+        if id >= u32::MAX - 1 || id as usize >= self.max {
+            self.next.store(id, Ordering::Release);
             return Err(Overflow(self.what));
         }
         let p = node.pack();
@@ -292,6 +302,7 @@ impl<T: Pack, const B: u32> Conc<T, B> {
 /// lists, big numbers): rare enough that one table with a lock per shard
 /// and boxed values is fine.
 struct ConcVals<V: ?Sized> {
+    max: usize,
     shards: Vec<Mutex<HashTable<u32>>>,
     cells: Cells<Box<V>>,
     next: AtomicU32,
@@ -299,10 +310,11 @@ struct ConcVals<V: ?Sized> {
 }
 
 impl<V: ?Sized + PartialEq> ConcVals<V> {
-    fn new(what: &'static str) -> Self {
+    fn new(what: &'static str, max: usize) -> Self {
         ConcVals {
+            max,
             shards: (0..SHARDS).map(|_| Mutex::new(HashTable::new())).collect(),
-            cells: Cells::new(),
+            cells: Cells::new(max),
             next: AtomicU32::new(0),
             what,
         }
@@ -324,8 +336,8 @@ impl<V: ?Sized + PartialEq> ConcVals<V> {
             return Ok(id);
         }
         let id = self.next.fetch_add(1, Ordering::AcqRel);
-        if id >= u32::MAX - 1 {
-            self.next.store(u32::MAX - 1, Ordering::Release);
+        if id >= u32::MAX - 1 || id as usize >= self.max {
+            self.next.store(id, Ordering::Release);
             return Err(Overflow(self.what));
         }
         self.cells.set(id, mk());
@@ -354,17 +366,20 @@ pub struct Par {
 impl Par {
     /// Arenas sized for `bytes` of `.olean` files. Lean's files hold about
     /// one distinct expression per 60 bytes and one name per 1300 (Init,
-    /// Std and Mathlib); the tables grow past that if needed.
+    /// Std and Mathlib); the tables grow past that if needed. Every node
+    /// comes from an object of at least 16 bytes, so there are fewer than
+    /// `bytes / 16` of each kind (plus the few made here).
     pub fn new(bytes: u64) -> Self {
-        let b = bytes as usize;
+        let b = usize::try_from(bytes).unwrap_or(usize::MAX);
+        let max = b / 16 + 16;
         let p = Par {
-            strs: ConcVals::new("string pool exceeds 4 GiB"),
-            names: Conc::new("too many names", b / 1300),
-            levels: Conc::new("too many universe levels", 0),
-            lists: ConcVals::new("too many universe level lists"),
-            exprs: Conc::new("too many expressions", b / 60),
-            lets: Conc::new("too many let binders", b / 3000),
-            bigs: ConcVals::new("too many big literals"),
+            strs: ConcVals::new("string pool exceeds 4 GiB", max),
+            names: Conc::new("too many names", b / 1300, max),
+            levels: Conc::new("too many universe levels", 0, max),
+            lists: ConcVals::new("too many universe level lists", max),
+            exprs: Conc::new("too many expressions", b / 60, max),
+            lets: Conc::new("too many let binders", b / 3000, max),
+            bigs: ConcVals::new("too many big literals", max),
         };
         // Id 0 is the anonymous name, the zero level and the empty list,
         // as in the sequential arenas.
@@ -541,7 +556,7 @@ impl Par {
                 break;
             }
             let Some(c) = c.into_inner() else { break };
-            let take = (en - nodes.len()).min(1 << 21);
+            let take = (en - nodes.len()).min(c.len() / 3);
             for w in c[..take * 3].as_chunks::<3>().0 {
                 let w: [u64; 3] = std::array::from_fn(|i| w[i].load(Ordering::Relaxed));
                 nodes.push(ExprNode::unpack([w[0], w[1]]));
