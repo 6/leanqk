@@ -15,7 +15,7 @@
 use num_bigint::BigUint;
 
 use crate::hash::{hash_bytes, hash2};
-use crate::intern::{Interner, Node};
+use crate::intern::{Interner, Node, Sharded};
 use crate::level::{LevelId, LevelList, Levels};
 use crate::name::NameId;
 use crate::strings::{Overflow, StrId};
@@ -117,8 +117,10 @@ impl Node for ExprNode {
     #[inline]
     fn same(&self, o: &Self) -> bool {
         match (*self, *o) {
-            (ExprNode::Lam(_, _, t1, b1), ExprNode::Lam(_, _, t2, b2))
-            | (ExprNode::Pi(_, _, t1, b1), ExprNode::Pi(_, _, t2, b2)) => t1 == t2 && b1 == b2,
+            (ExprNode::Lam(_, _, ty_a, body_a), ExprNode::Lam(_, _, ty_b, body_b))
+            | (ExprNode::Pi(_, _, ty_a, body_a), ExprNode::Pi(_, _, ty_b, body_b)) => {
+                ty_a == ty_b && body_a == body_b
+            }
             (a, b) => a == b,
         }
     }
@@ -143,6 +145,14 @@ impl ExprData {
                     0
                 },
         )
+    }
+
+    pub(crate) fn from_bits(b: u32) -> Self {
+        ExprData(b)
+    }
+
+    pub(crate) fn bits(self) -> u32 {
+        self.0
     }
 
     /// The data of a free variable.
@@ -192,7 +202,7 @@ impl From<Overflow> for ExprError {
 }
 
 pub struct Exprs {
-    arena: Interner<ExprNode>,
+    arena: Sharded<ExprNode>,
     data: Vec<ExprData>,
     lets: Interner<LetBinder>,
     bigs: Vec<BigUint>,
@@ -212,11 +222,35 @@ pub(crate) fn big_hash(n: &BigUint) -> u64 {
 impl Exprs {
     pub fn new() -> Self {
         Exprs {
-            arena: Interner::new("too many expressions"),
+            arena: Sharded::new("too many expressions"),
             data: Vec::new(),
             lets: Interner::new("too many let binders"),
             bigs: Vec::new(),
             big_table: hashbrown::HashTable::new(),
+        }
+    }
+
+    /// An arena made of the parts the `.olean` loader builds: nodes in id
+    /// order (children first, pairwise distinct), the shard tables indexing
+    /// them, each node's data, the let binders and the big literals.
+    pub(crate) fn from_parts(
+        nodes: Vec<ExprNode>,
+        tables: Vec<hashbrown::HashTable<u32>>,
+        data: Vec<ExprData>,
+        lets: Interner<LetBinder>,
+        bigs: Vec<BigUint>,
+    ) -> Self {
+        assert_eq!(nodes.len(), data.len());
+        let mut big_table = hashbrown::HashTable::new();
+        for (i, b) in bigs.iter().enumerate() {
+            big_table.insert_unique(big_hash(b), i as u32, |&id| big_hash(&bigs[id as usize]));
+        }
+        Exprs {
+            arena: Sharded::from_parts(nodes, tables, "too many expressions"),
+            data,
+            lets,
+            bigs,
+            big_table,
         }
     }
 
@@ -375,11 +409,11 @@ mod tests {
     fn sharing_and_data() {
         let levels = Levels::new();
         let mut es = Exprs::new();
-        let (b0, _) = es.intern(ExprNode::BVar(0), &levels).unwrap();
-        let (b1, _) = es.intern(ExprNode::BVar(1), &levels).unwrap();
+        let (bvar0, _) = es.intern(ExprNode::BVar(0), &levels).unwrap();
+        let (bvar1, _) = es.intern(ExprNode::BVar(1), &levels).unwrap();
         let (ty, _) = es.intern(ExprNode::Sort(LevelId::ZERO), &levels).unwrap();
-        let (app, _) = es.intern(ExprNode::App(b1, b0), &levels).unwrap();
-        let (app2, fresh) = es.intern(ExprNode::App(b1, b0), &levels).unwrap();
+        let (app, _) = es.intern(ExprNode::App(bvar1, bvar0), &levels).unwrap();
+        let (app2, fresh) = es.intern(ExprNode::App(bvar1, bvar0), &levels).unwrap();
         assert_eq!(app, app2);
         assert!(!fresh);
         assert_eq!(es.data(app).loose_bvar_range(), 2);

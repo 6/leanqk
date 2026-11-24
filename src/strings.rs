@@ -11,7 +11,7 @@ use crate::hash::hash_bytes;
 
 /// Id of an interned string.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
-pub struct StrId(u32);
+pub struct StrId(pub(crate) u32);
 
 impl StrId {
     pub fn index(self) -> usize {
