@@ -1,0 +1,174 @@
+id	rule	expected	lean	why
+nat-add-wrap64	nat.add	reject	reject	2^64-1 + 1 claimed 0: a kernel using machine words wraps around
+nat-add-carry64	nat.add	accept	accept	carry past 2^64 must give 2^64
+nat-add-zero-ctor	nat.add	accept	accept	Nat.zero counts as the literal 0 for the extension
+nat-sub-wrap	nat.sub	reject	reject	0 - 1 claimed 2^64-1: Nat subtraction truncates, it does not wrap
+nat-sub-trunc	nat.sub	accept	accept	truncated subtraction gives 0
+nat-sub-big	nat.sub	accept	accept	borrow across the 2^64 boundary
+nat-sub-succ-arg	nat.sub	accept	accept	Nat.succ of a literal is reduced to a literal before the extension fires
+nat-mul-wrap64	nat.mul	reject	reject	2^32 * 2^32 claimed 0 (64-bit overflow)
+nat-mul-big	nat.mul	accept	accept	2^64 * 2^64 = 2^128
+nat-div-zero	nat.div	accept	accept	x / 0 = 0
+nat-div-zero-wrong	nat.div	reject	reject	x / 0 claimed x
+nat-div-big-wrong	nat.div	reject	reject	2^128 / 2^64 claimed 2^64+1
+nat-div-big	nat.div	accept	accept	floor division of big literals
+nat-mod-zero	nat.mod	accept	accept	x % 0 = x
+nat-mod-zero-wrong	nat.mod	reject	reject	x % 0 claimed 0
+nat-mod-big-wrong	nat.mod	reject	reject	(2^64+5) % 2^64 claimed 0 (low-word truncation)
+nat-gcd-zero	nat.gcd	accept	accept	gcd 0 0 = 0
+nat-gcd-zero-wrong	nat.gcd	reject	reject	gcd 0 0 claimed 1
+nat-gcd-big	nat.gcd	accept	accept	gcd of big literals
+nat-gcd-big-wrong	nat.gcd	reject	reject	gcd of big literals claimed too large
+nat-beq-trunc	nat.beq	reject	reject	beq 2^64 0 claimed true (comparing only the low 64 bits)
+nat-beq-big	nat.beq	accept	accept	beq of equal big literals
+nat-beq-false-wrong	nat.beq	reject	reject	beq 1 2 claimed true
+nat-ble-trunc	nat.ble	reject	reject	ble 2^64 1 claimed true
+nat-ble-big	nat.ble	accept	accept	ble of big literals
+nat-ble-eq	nat.ble	accept	accept	ble 0 0 = true
+nat-land-wrong	nat.land	reject	reject	land (2^64+1) 1 claimed 0
+nat-land-big	nat.land	accept	accept	land above 2^64
+nat-lor-wrong	nat.lor	reject	reject	lor 1 2 claimed 4
+nat-lor-big	nat.lor	accept	accept	lor above 2^64
+nat-xor-wrong	nat.xor	reject	reject	xor 5 5 claimed 10
+nat-xor-big	nat.xor	accept	accept	xor cancels the high bit
+nat-shl-wrap	nat.shiftLeft	reject	reject	1 <<< 64 claimed 0 (64-bit shift)
+nat-shl-big	nat.shiftLeft	accept	accept	1 <<< 64 = 2^64
+nat-shr-wrong	nat.shiftRight	reject	reject	2^64 >>> 64 claimed 0
+nat-shr-big	nat.shiftRight	accept	accept	2^64 >>> 64 = 1
+nat-shr-huge-shift	nat.shiftRight	accept	accept	a shift amount of 2^64 bits is still fine for >>>
+nat-pow-wrap	nat.pow	reject	reject	2^64 claimed 0
+nat-pow-big	nat.pow	accept	accept	2^64
+nat-pow-zero-zero	nat.pow	accept	accept	0^0 = 1
+nat-pow-zero-zero-wrong	nat.pow	reject	reject	0^0 claimed 0
+nat-pow-2-24	nat.pow	accept	accept	2^(2^24) (a 2 MB literal) mod 7 = 2; the exponent is at Lean's limit
+nat-pow-2-24-wrong	nat.pow	reject	reject	2^(2^24) mod 7 claimed 4
+nat-pow-2-24-plus1	nat.size-limit	either	reject	true claim just past Lean's Nat.pow limit; Lean refuses, a kernel may compute it
+nat-pow-2-24-plus1-wrong	nat.size-limit	reject	reject	false claim just past the Nat.pow limit: refusing or computing both reject
+nat-pow-exp-u32	nat.size-limit	either	reject	1^(2^32) = 1; Lean refuses exponents that do not fit in 32 bits
+nat-pow-exp-u32-wrong	nat.size-limit	reject	reject	1^(2^32) claimed 0
+nat-pow-result-limit-wrong	nat.size-limit	reject	reject	2^(2^31) (256 MB) claimed <= 0; must not be accepted whatever the size policy
+nat-shl-limit	nat.size-limit	either	reject	(1 <<< 2^31) >>> 2^31 = 1 builds a 256 MB literal; Lean refuses it
+nat-shl-limit-wrong	nat.size-limit	reject	reject	the same claimed 0
+nat-shl-zero-u32	nat.size-limit	either	accept	0 <<< 2^32 = 0: the shift amount does not fit in 32 bits, the result is tiny
+nat-log2-small	nat.log2	accept	accept	Nat.log2 is not a kernel extension: it must be unfolded
+nat-log2-wrong	nat.log2	reject	reject	log2 8 claimed 4
+nat-log2-zero	nat.log2	accept	accept	log2 0 = 0
+nat-succ-big	nat.lit	accept	accept	Nat.succ of a literal at the 2^64 boundary
+nat-succ-wrong	nat.lit	reject	reject	succ (succ 0) claimed 3
+nat-zero-lit	nat.lit	accept	accept	Nat.zero is defeq to literal 0
+nat-big-lit-neq	nat.lit	reject	reject	2^64 claimed equal to 0 (a literal truncated to 64 bits)
+nat-lit-negative	nat.lit	reject	reject	natVal "-1" is not a natural number
+str-empty	string.lit	accept	accept	"" unfolds to String.ofList []
+str-ab	string.lit	accept	accept	"ab" unfolds to String.ofList ['a','b']
+str-ab-swapped	string.lit	reject	reject	"ab" claimed to be ['b','a']
+str-ab-short	string.lit	reject	reject	"ab" claimed to be ['a']
+str-2byte	string.lit	accept	accept	a 2-byte UTF-8 char is one Char (U+00E9)
+str-2byte-as-bytes	string.lit	reject	reject	a 2-byte char claimed to be its UTF-8 bytes
+str-4byte	string.lit	accept	accept	a 4-byte char is one Char
+str-4byte-as-utf16	string.lit	reject	reject	a 4-byte char claimed to be its UTF-16 surrogate pair
+str-nul	string.lit	accept	accept	an embedded NUL is an ordinary char
+str-nul-truncated	string.lit	reject	reject	"a\0b" claimed to be "a" (C-string truncation)
+str-lit-neq	string.lit	reject	reject	two different literals are not defeq
+str-invalid-char	string.lit	accept	accept	Char.ofNat of a surrogate is '\0', so String.ofList [Char.ofNat 0xD800] is "\0"
+pos-direct	inductive.positivity	reject	reject	Neg.mk : (Neg → Nat) → Neg (control)
+pos-nonstrict	inductive.positivity	reject	reject	((T → Nat) → Nat) → T is positive but not strictly
+pos-nested-list	inductive.positivity	reject	reject	negative occurrence inside a nested List argument
+pos-nested-wrap	inductive.positivity	reject	reject	nested through Wrap, whose parameter is used negatively in Wrap's field
+pos-mutual	inductive.positivity	reject	reject	negative occurrence of the other type of a mutual block
+pos-mutual-nested	inductive.positivity	reject	reject	mutual block, nested through List, negative in the other type
+pos-nested-ok	inductive.positivity	accept	accept	List (Nat → T) → T is fine
+pos-mutual-nested-ok	inductive.positivity	accept	accept	mutual + nested, strictly positive
+mutual-param-type	inductive.mutual	reject	reject	MB's parameter is (α : Prop) while MA's is (α : Type)
+mutual-levelparam-name	inductive.mutual	reject	reject	MV is declared over universe v, MU over u
+mutual-levelparam-extra	inductive.mutual	reject	reject	MV lists level params [u, v], MU lists [u]
+mutual-result-universe	inductive.mutual	reject	reject	MA : Type → Type but MB : Type → Type 1
+mutual-numparams	inductive.mutual	reject	reject	MB's record says numParams 0, MA's says 1
+mutual-all	inductive.mutual	reject	reject	MB's `all` omits MA
+eta-unit	eta.unit	accept	accept	any two values of a fieldless structure are defeq
+eta-unit-param	eta.unit	accept	accept	unit-like eta with a parameter
+eta-unit-indexed	eta.unit	reject	reject	W : Nat → Type has one fieldless ctor but an index: not unit-like
+eta-struct	eta.struct	accept	accept	p = (p.1, p.2) by eta for Prod
+eta-struct-S	eta.struct	accept	accept	s = ⟨s.x, s.y⟩ by eta
+eta-recursive	eta.struct	reject	reject	R has one ctor but is recursive: x = R.mk (R.get x) is not defeq
+eta-recursive-isrec-lie	eta.struct	reject	reject	as eta-recursive, with R's record claiming isRec false
+eta-indexed	eta.struct	reject	reject	V : Nat → Type has one ctor but an index: no eta
+proj-recursive	eta.proj	accept	accept	projection out of the recursive one-ctor type R: allowed (only eta is restricted)
+proj-indexed	eta.proj	accept	accept	projection out of the indexed one-ctor type V: allowed (only eta is restricted)
+proj-ok	eta.proj	accept	accept	proj S 0 : Nat (control)
+proj-out-of-range	eta.proj	reject	reject	proj S 2, S has two fields
+proj-wrong-type	eta.proj	reject	reject	proj S 1 is a Bool, claimed Nat
+ctor-meta-cidx	inductive.meta	reject	reject	Bool.true claims cidx 0
+ctor-meta-numfields	inductive.meta	reject	reject	True.intro claims one field
+rec-rule-swap	inductive.rec	reject	reject	Bool.rec's two rule right-hand sides swapped
+rec-k-lie	inductive.rec	reject	reject	Bool.rec claims K-like reduction (k = true)
+rec-k-missing	inductive.rec	reject	reject	Eq.rec claims k = false (it is K-like)
+univ-imax-succ	universe.level	accept	accept	imax u (v+1) = max u (v+1)
+univ-max-imax	universe.level	reject	reject	max u v ≠ imax u v when v = 0
+univ-imax-self	universe.level	accept	accept	imax u u = u
+univ-imax-zero	universe.level	accept	accept	imax u 0 = 0
+univ-imax-one	universe.level	reject	reject	imax 1 u is 0 when u = 0
+univ-imax-nested-trap	universe.level	reject	reject	differs at v = 0, w = 1, u = 2: looks like a harmless imax→max rewrite
+univ-imax-assoc	universe.level	either	reject	equal for every assignment (w = 0, then w > 0); a level normaliser need not prove it
+univ-max-comm	universe.level	accept	accept	max is commutative
+univ-max-zero	universe.level	accept	accept	max 0 u = u
+univ-succ-max	universe.level	accept	accept	succ distributes over max
+univ-max-absorb	universe.level	accept	accept	idempotence + commutativity
+univ-param-swap	universe.level	reject	reject	distinct parameters
+univ-succ-param	universe.level	reject	reject	u+1 ≠ u
+univ-imax-succ-left	universe.level	reject	reject	imax (u+1) v is 0 when v = 0
+lparam-undeclared	universe.params	reject	reject	K.lp uses u but declares no level params
+lparam-duplicate	universe.params	reject	reject	K.lp declares level params [u, u]
+lparam-const-too-many	universe.params	reject	reject	Eq.refl.{u, u} (one param expected)
+lparam-const-too-few	universe.params	reject	reject	Eq.refl with no universe argument
+elim-prop-two-ctors	universe.elim	reject	reject	P2 : Prop with two ctors, recursor claims a motive in Sort u
+elim-prop-data-field	universe.elim	reject	reject	Ex : Prop with a Nat field, recursor claims a motive in Sort u
+elim-prop-use	universe.elim	reject	reject	P2.rec (motive into Prop) applied to a motive into Type
+elim-false-large	universe.elim	accept	accept	False eliminates into any universe (empty Prop)
+quot-lift-mk-q	quot.reduce	accept	accept	Quot.lift f h (Quot.mk r a) ≡ f a
+quot-lift-mk-extra-arg	quot.reduce	accept	accept	the reduction also fires with extra arguments after the quotient
+quot-ind-mk	quot.reduce	accept	accept	Quot.ind h (Quot.mk r a) ≡ h a
+quot-lift-var	quot.reduce	reject	reject	Quot.lift f h q ≡ f a claimed for a variable q (no Quot.mk to reduce)
+quot-mk-rel-rfl	quot.reduce	reject	reject	Quot.mk r a ≡ Quot.mk r b for related a b: needs Quot.sound, not defeq
+quot-lift-mk-wrong	quot.reduce	reject	reject	Quot.lift f h (Quot.mk r a) claimed ≡ f (a+1)
+quot-lift-no-respect	quot.typing	reject	reject	Quot.lift declared without the respect hypothesis (lifts any function)
+quot-ind-large	quot.typing	reject	reject	Quot.ind's motive is Quot r → Sort u
+quot-mk-type	quot.typing	reject	reject	Quot.mk : {α} → (r) → α → α
+quot-kind-swap	quot.typing	reject	reject	Quot.lift's record says kind "ind"
+quot-no-eq	quot.typing	reject	reject	the quotient package without Eq declared
+pi-fun	proof-irrel	accept	accept	two proofs of ∀ n, p n are defeq
+pi-imax	proof-irrel	accept	accept	∀ a : α, β a with α : Sort u, β : α → Prop is a Prop (imax u 0 = 0)
+pi-beta	proof-irrel	accept	accept	the proposition is only Prop after beta
+pi-data	proof-irrel	reject	reject	functions P → Nat out of a proof are not proofs
+pi-sort	proof-irrel	reject	reject	elements of α : Sort u are not proofs (u may be > 0)
+pi-bool	proof-irrel	reject	reject	Bool values are not proofs
+pi-proj-exists	proof-irrel	reject	reject	projecting the witness (data) out of a proof of ∃
+pi-proj-and	proof-irrel	accept	accept	projecting a proof out of a proof of ∧
+fmt-ok	export.format	accept	accept	the unmodified base export (control)
+fmt-meta-only	export.format	accept	accept	an export with no declarations
+fmt-fwd-expr	export.format	reject	reject	the theorem's type record comes after the theorem
+fmt-dup-expr-id	export.format	reject	reject	an expression id bound twice to different terms
+fmt-dup-expr-same	export.format	reject	reject	an expression id bound twice to the same term
+fmt-dup-name-id	export.format	reject	reject	a name id bound twice
+fmt-dup-level-id	export.format	reject	reject	a level id bound twice
+fmt-dup-decl	export.format	reject	reject	the theorem declared twice
+fmt-missing-value	export.format	reject	reject	theorem without `value`
+fmt-missing-type	export.format	reject	reject	theorem without `type`
+fmt-missing-levelparams	export.format	reject	reject	theorem without `levelParams`
+fmt-missing-ctors	export.format	reject	reject	inductive without `ctors`
+fmt-missing-recs	export.format	reject	reject	inductive without `recs`
+fmt-kind-unknown	export.format	reject	reject	a declaration record of unknown kind "theorem"
+fmt-kind-thm-as-axiom	export.format	reject	reject	theorem fields under the "axiom" kind
+fmt-kind-thm-as-def	export.format	reject	reject	theorem fields under the "def" kind
+fmt-kind-expr-unknown	export.format	reject	reject	an expression record of unknown kind "pi"
+fmt-undeclared-const	export.format	reject	reject	the proof refers to an undeclared constant
+fmt-thm-mismatch	export.format	reject	reject	the theorem's value True does not have type True
+fmt-thm-not-prop	export.format	reject	reject	theorem K.triv : Prop := True (a theorem's type must be a Prop)
+fmt-loose-bvar	export.format	reject	reject	the theorem's type is a loose bound variable
+fmt-const-wrong-arity	export.format	reject	reject	True.intro applied to a universe argument
+fmt-bad-level-ref	export.format	reject	reject	a constant whose universe list names a missing level id
+fmt-name-bad-prefix	export.format	reject	reject	a name whose prefix id does not exist
+fmt-no-meta	export.format	reject	reject	the meta header line is missing
+fmt-bad-json	export.format	reject	reject	the last line is truncated JSON
+fmt-opaque-mismatch	export.format	reject	reject	an opaque whose value does not match its type
+fmt-safe-uses-unsafe	export.format	reject	reject	a safe theorem proved by an unsafe axiom of False
+fmt-safe-uses-partial	export.format	reject	reject	a safe definition that unfolds to a partial one

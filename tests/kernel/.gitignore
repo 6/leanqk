@@ -1,0 +1,13 @@
+out/
+__pycache__/
+*.olean
+*.olean.*
+*.ilean
+*.ir
+*.c
+*.o
+*.trace
+*.hash
+.lake/
+build/
+lake-manifest.json
