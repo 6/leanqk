@@ -9,7 +9,7 @@ repository = "https://github.com/6/leanqk"
 readme = "README.md"
 keywords = ["lean", "proof-checker", "kernel"]
 categories = ["command-line-utilities", "mathematics"]
-exclude = [".github/", "mise.toml"]
+exclude = [".github/", "mise.toml", "mise.*.toml", "corpus/", "scripts/"]
 
 [lib]
 path = "src/lib.rs"
