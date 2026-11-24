@@ -99,6 +99,16 @@ static STEPS: AtomicU64 = AtomicU64::new(0);
 static BAILS: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 static NANOS: AtomicU64 = AtomicU64::new(0);
 
+/// Giving up on a stuck term; `LEANQK_EVAL_DEBUG=1` says where.
+#[cold]
+fn stuck(at: u32) -> Bail {
+    static DEBUG: OnceLock<bool> = OnceLock::new();
+    if *DEBUG.get_or_init(|| std::env::var_os("LEANQK_EVAL_DEBUG").is_some()) {
+        eprintln!("evaluator: stuck at eval/mod.rs:{at}");
+    }
+    Bail::Stuck
+}
+
 /// Whether the evaluator is on (`LEANQK_EVAL=0` turns it off, to compare).
 pub fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
@@ -183,7 +193,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             ..
         } = &*v
         {
-            return Err(Bail::Stuck);
+            return Err(stuck(186));
         }
         let mut rb = value::Readback::default();
         Ok(rb.value(self.tc, &v))
@@ -265,7 +275,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             ExprNode::NatSmall(lo, hi) => Ok(Rc::new(Val::Nat(Nat::small(lo, hi)))),
             ExprNode::NatBig(b) => Ok(Rc::new(Val::Nat(Nat::big(self.tc.st.big(b).clone())))),
             ExprNode::Str(_) => Ok(Rc::new(Val::Str(e))),
-            ExprNode::FVar(_) => Err(Bail::Stuck),
+            ExprNode::FVar(_) => Err(stuck(268)),
             ExprNode::Sort(_) | ExprNode::Pi(..) => {
                 // A type: in weak head normal form already.
                 let t = if self.tc.st.has_loose_bvars(e) {
@@ -441,7 +451,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             CInfo::QuotInd => self.saturate(c, Head::QuotInd, args),
             CInfo::Ctor(info) => Ok(Rc::new(Val::Ctor { c, info, args })),
             CInfo::Neutral => Ok(Rc::new(Val::Neutral { head: c, args })),
-            CInfo::Bail => Err(Bail::Stuck),
+            CInfo::Bail => Err(stuck(444)),
         }
     }
 
@@ -515,7 +525,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 let rest = args.split_off(1);
                 let r = match self.nat_of(&x) {
                     Some(n) => Rc::new(Val::Nat(n.succ())),
-                    None => return Err(Bail::Stuck),
+                    None => return Err(stuck(518)),
                 };
                 self.apply_rest(r, rest)
             }
@@ -547,14 +557,14 @@ impl<'a, 'e> Machine<'a, 'e> {
                 };
                 let q = self.force(&args[mk_pos])?;
                 let Val::Neutral { head, args: margs } = &*q else {
-                    return Err(Bail::Stuck);
+                    return Err(stuck(550));
                 };
                 let is_mk = match (self.tc.st.node(*head), self.tc.ext.quot.as_ref()) {
                     (ExprNode::Const(n, _), Some(qn)) => n == qn.mk,
                     _ => false,
                 };
                 if !is_mk || margs.len() != 3 {
-                    return Err(Bail::Stuck);
+                    return Err(stuck(557));
                 }
                 let f = self.force(&args[arg_pos])?;
                 let mut rest = vec![margs[2].clone()];
@@ -595,7 +605,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             self.tc.ext.bool_false
         };
         let Some(n) = n else {
-            return Err(Bail::Stuck);
+            return Err(stuck(598));
         };
         let c = self.tc.st.cnst(n, LevelList::EMPTY);
         self.constant(c, Vec::new())
@@ -652,7 +662,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                     }))
                 } else {
                     // A sort or a Pi applied to arguments: ill-typed.
-                    Err(Bail::Stuck)
+                    Err(stuck(655))
                 }
             }
             Val::Pap {
@@ -664,7 +674,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 a.extend(args);
                 self.saturate(*head, kind.clone(), a)
             }
-            Val::Nat(_) | Val::Str(_) => Err(Bail::Stuck),
+            Val::Nat(_) | Val::Str(_) => Err(stuck(667)),
         }
     }
 
@@ -685,10 +695,10 @@ impl<'a, 'e> Machine<'a, 'e> {
                         let t = t.clone();
                         self.force(&t)
                     }
-                    None => Err(Bail::Stuck),
+                    None => Err(stuck(688)),
                 }
             }
-            _ => Err(Bail::Stuck),
+            _ => Err(stuck(691)),
         }
     }
 
@@ -731,17 +741,26 @@ impl<'a, 'e> Machine<'a, 'e> {
             _ => {}
         }
         let Val::Ctor { c, args: margs, .. } = &*mv else {
-            return Err(Bail::Stuck);
+            if std::env::var_os("LEANQK_EVAL_DEBUG").is_some() {
+                let mut rb = value::Readback::default();
+                let x = rb.value(self.tc, &mv);
+                eprintln!(
+                    "evaluator: stuck major of a recursor on {}: {}",
+                    self.tc.show(r.induct),
+                    self.tc.pp(x).chars().take(400).collect::<String>()
+                );
+            }
+            return Err(stuck(734));
         };
         let ExprNode::Const(cn, _) = self.tc.st.node(*c) else {
             unreachable!()
         };
         let Some(&(_, nfields, rhs)) = r.rules.iter().find(|x| x.0 == cn) else {
-            return Err(Bail::Stuck);
+            return Err(stuck(740));
         };
         let nfields = nfields as usize;
         if nfields > margs.len() {
-            return Err(Bail::Stuck);
+            return Err(stuck(744));
         }
         let mut a = Vec::with_capacity(r.pmm + nfields + args.len() - r.major_idx - 1);
         a.extend_from_slice(&args[..r.pmm]);
@@ -755,7 +774,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     /// `n` as `Nat.zero` or `Nat.succ (n - 1)`.
     fn nat_ctor(&mut self, n: &Nat) -> ER<V> {
         let (Some(zero), Some(succ)) = (self.tc.ext.nat_zero, self.tc.ext.nat_succ) else {
-            return Err(Bail::Stuck);
+            return Err(stuck(758));
         };
         match n.pred() {
             None => {
@@ -765,7 +784,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             Some(p) => {
                 let c = self.tc.st.cnst(succ, LevelList::EMPTY);
                 let CInfo::Succ = self.info(c) else {
-                    return Err(Bail::Stuck);
+                    return Err(stuck(768));
                 };
                 let info = Rc::new(CtorInfo {
                     induct: self.tc.ext.nat.ok_or(Bail::Stuck)?,
