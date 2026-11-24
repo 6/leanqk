@@ -144,6 +144,7 @@ pub struct State {
     steps: u64,
     depth: u32,
     array_names: Option<Option<(NameId, NameId, NameId)>>,
+    nullary: IdMap<ExprId, V>,
     /// Per constant: memo lookups and hits.
     memo: IdMap<ExprId, (u32, u32)>,
     /// `LEANQK_EVAL_PROFILE=1`: how often each constant was reached.
@@ -489,12 +490,12 @@ impl<'a, 'e> Machine<'a, 'e> {
                 if st.0 >= MEMO_TRIAL && st.1 * MEMO_RATIO < st.0 {
                     return self.apply(f, args);
                 }
+                st.0 += 1;
                 let Some(key) = self.closed_app(c, &args) else {
                     return self.apply(f, args);
                 };
                 let kt = self.closed(key);
                 let st = self.s.memo.entry(c).or_default();
-                st.0 += 1;
                 if let TState::Done(v) = &*kt.0.borrow() {
                     st.1 += 1;
                     return Ok(v.clone());
@@ -512,6 +513,15 @@ impl<'a, 'e> Machine<'a, 'e> {
             CInfo::QuotLift => self.saturate(c, Head::QuotLift, args),
             CInfo::QuotInd => self.saturate(c, Head::QuotInd, args),
             CInfo::Arr(op, v) => self.saturate(c, Head::Arr(op, v), args),
+            CInfo::Ctor(info) if args.is_empty() => {
+                // One shared value per constructor constant.
+                if let Some(v) = self.s.nullary.get(&c) {
+                    return Ok(v.clone());
+                }
+                let v = Rc::new(Val::Ctor { c, info, args });
+                self.s.nullary.insert(c, v.clone());
+                Ok(v)
+            }
             CInfo::Ctor(info) => Ok(Rc::new(Val::Ctor { c, info, args })),
             CInfo::Neutral => Ok(Rc::new(Val::Neutral { head: c, args })),
             CInfo::Bail => Err(stuck(444)),
