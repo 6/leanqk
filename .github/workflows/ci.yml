@@ -18,6 +18,26 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Nothing private in the tree or in the new commits' messages.
+      - name: Public-content check
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            scripts/public-check.sh "$PR_BASE..$PR_HEAD"
+          elif [ -n "${BEFORE//0/}" ] && git cat-file -e "$BEFORE^{commit}"; then
+            scripts/public-check.sh "$BEFORE..$AFTER"
+          else
+            scripts/public-check.sh "$AFTER"
+          fi
+      - name: Public-content check self-test
+        run: scripts/public-check-test.sh
       - uses: jdx/mise-action@v5
       - name: Format
         run: cargo fmt --check
