@@ -131,10 +131,24 @@ fn check_env_here(env: &Env) -> Result<Report, Failure> {
     })
 }
 
+/// Whether Lean's checker skips `d`: like `Environment.replay`, which
+/// `leanchecker --from-export` runs, leanqk does not check unsafe and
+/// partial declarations. They carry no logical content: no safe
+/// declaration can refer to them.
+fn skipped(d: &Decl) -> bool {
+    match d.kind {
+        DeclKind::Definition { safety, .. } => safety != Safety::Safe,
+        _ => Tc::decl_is_unsafe(d),
+    }
+}
+
 fn check_block(tc: &mut Tc<'_>, b: &Block) -> R<()> {
     tc.reset(b.start);
     let env = tc.st.env;
     let decls = env.block_decls(b);
+    if decls.first().is_some_and(skipped) {
+        return Ok(());
+    }
     match b.kind {
         BlockKind::Single => check_single(tc, &decls[0]),
         BlockKind::Inductive { types, ctors, .. } => {

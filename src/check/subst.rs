@@ -258,6 +258,9 @@ impl Store<'_> {
 
     // ---- universe parameters ----
 
+    /// Lean's level `instantiate`: a rebuilt `max` or `imax` goes through
+    /// the simplifying constructors (`update_max`), which affects what
+    /// Lean's level normalization can prove.
     pub fn inst_level(&mut self, l: LevelId, ps: &[NameId], ls: &[LevelId]) -> LevelId {
         if !self.level_has_param(l) {
             return l;
@@ -265,18 +268,26 @@ impl Store<'_> {
         match self.level(l) {
             LevelNode::Zero => l,
             LevelNode::Succ(a) => {
-                let a = self.inst_level(a, ps, ls);
-                self.succ(a)
+                let a2 = self.inst_level(a, ps, ls);
+                if a2 == a { l } else { self.succ(a2) }
             }
             LevelNode::Max(a, b) => {
-                let a = self.inst_level(a, ps, ls);
-                let b = self.inst_level(b, ps, ls);
-                self.max(a, b)
+                let a2 = self.inst_level(a, ps, ls);
+                let b2 = self.inst_level(b, ps, ls);
+                if (a2, b2) == (a, b) {
+                    l
+                } else {
+                    super::univ::mk_max(self, a2, b2)
+                }
             }
             LevelNode::IMax(a, b) => {
-                let a = self.inst_level(a, ps, ls);
-                let b = self.inst_level(b, ps, ls);
-                self.imax(a, b)
+                let a2 = self.inst_level(a, ps, ls);
+                let b2 = self.inst_level(b, ps, ls);
+                if (a2, b2) == (a, b) {
+                    l
+                } else {
+                    super::univ::mk_imax(self, a2, b2)
+                }
             }
             LevelNode::Param(n) => match ps.iter().position(|&p| p == n) {
                 Some(i) if i < ls.len() => ls[i],

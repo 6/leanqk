@@ -13,7 +13,7 @@ use num_bigint::BigUint;
 
 use crate::env::{Decl, DeclKind, Hints, Safety};
 use crate::expr::{BinderInfo, ExprId, ExprNode};
-use crate::level::{LevelId, LevelList, LevelNode};
+use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
 use super::ext::{Ext, NatOp};
@@ -463,7 +463,7 @@ impl<'e> Tc<'e> {
         let s = self.ensure_sort(s)?;
         let mut r = self.sort_level(s).unwrap();
         for &u in us.iter().rev() {
-            r = self.st.imax(u, r);
+            r = univ::mk_imax(&mut self.st, u, r);
         }
         Ok(self.st.sort(r))
     }
@@ -660,7 +660,7 @@ impl<'e> Tc<'e> {
         let t = self.infer(e)?;
         let s = self.ensure_sort(t)?;
         let l = self.sort_level(s).unwrap();
-        Ok(univ::is_zero(&self.st, l))
+        Ok(univ::normalizes_to_zero(&self.st, l))
     }
 
     // ---- weak head normal form ----
@@ -955,7 +955,10 @@ impl<'e> Tc<'e> {
     }
 
     fn to_cnstr_when_structure(&mut self, induct: NameId, e: ExprId) -> R<ExprId> {
-        if !self.is_non_rec_structure(induct) || self.is_constructor_app(e) {
+        if !self.is_non_rec_structure(induct)
+            || self.is_constructor_app(e)
+            || matches!(self.st.node(e), ExprNode::Str(_))
+        {
             return Ok(e);
         }
         let t = self.infer(e)?;
@@ -1007,6 +1010,11 @@ impl<'e> Tc<'e> {
         if k {
             major = self.to_cnstr_when_k(induct, num_params, major)?;
         }
+        // Divergence (corpus/divergences.md): structure eta comes before
+        // `whnf` of the major premise, as leanprover/lean4#15351 proposes,
+        // so a major premise without a normal form does not stop the
+        // reduction. Both orders agree whenever Lean's terminates.
+        major = self.to_cnstr_when_structure(induct, major)?;
         major = self.rec_whnf(major, cheap_rec, cheap_proj)?;
         match self.st.node(major) {
             ExprNode::NatSmall(..) | ExprNode::NatBig(_) => {
@@ -1016,9 +1024,7 @@ impl<'e> Tc<'e> {
                 let x = self.string_lit_to_constructor(major)?;
                 major = self.whnf(x)?;
             }
-            _ => {
-                major = self.to_cnstr_when_structure(induct, major)?;
-            }
+            _ => {}
         }
         let mut margs = Vec::new();
         let mhead = self.st.spine(major, &mut margs);
@@ -1380,7 +1386,7 @@ impl<'e> Tc<'e> {
         if let Some(&r) = self.level_eq.get(&k) {
             return r;
         }
-        let r = univ::equiv(&self.st, a, b);
+        let r = univ::equiv(&mut self.st, a, b);
         self.level_eq.insert(k, r);
         r
     }
@@ -1836,14 +1842,4 @@ fn num_integer_gcd(mut a: BigUint, mut b: BigUint) -> BigUint {
         b = r;
     }
     a
-}
-
-/// `u ≤ v` on levels, exposed for the inductive checks.
-pub fn level_leq(st: &Store<'_>, u: LevelId, v: LevelId) -> bool {
-    univ::leq(st, u, v)
-}
-
-#[allow(dead_code)]
-fn level_kind(st: &Store<'_>, l: LevelId) -> LevelNode {
-    st.level(l)
 }
