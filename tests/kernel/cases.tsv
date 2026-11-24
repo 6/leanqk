@@ -172,3 +172,25 @@ fmt-bad-json	export.format	reject	reject	the last line is truncated JSON
 fmt-opaque-mismatch	export.format	reject	reject	an opaque whose value does not match its type
 fmt-safe-uses-unsafe	export.format	reject	reject	a safe theorem proved by an unsafe axiom of False
 fmt-safe-uses-partial	export.format	reject	reject	a safe definition that unfolds to a partial one
+eval-decide	eval	accept	accept	decide on a fold over List.range
+eval-decide-false	eval	reject	reject	the same decide, false
+eval-k-stuck	eval	reject	reject	Eq.rec over an axiom of 0 = 1: K does not apply (0 ≢ 1), so the cast is stuck
+eval-k-ok	eval	accept	accept	Eq.rec over an axiom of 2 + 2 = 4: K applies (2 + 2 ≡ 4) without reducing the axiom
+eval-struct-eta	eval	accept	accept	Prod.rec on an opaque pair reduces by structure eta to its first projection
+eval-struct-eta-wrong	eval	reject	reject	the same, claimed to be the second projection
+eval-quot	eval	accept	accept	Quot.lift f h (Quot.mk r (ev_sum 4)) ≡ f 6 = 7
+eval-quot-wrong	eval	reject	reject	the same, claimed 6
+eval-str-len	eval	accept	accept	String.length of a literal
+eval-str-len-wrong	eval	reject	reject	the same, claimed 4
+eval-deep	eval	accept	accept	a right fold over 20000 elements: evaluation nests 20000 deep
+eval-deep-wrong	eval	reject	reject	the same, off by one
+eval-pap	eval	accept	accept	Nat.add 1 is not in weak head normal form: it unfolds (then eta)
+eval-pap-wrong	eval	reject	reject	Nat.add 1 ≢ fun x => Nat.add 2 x
+eval-rec-lit	eval	accept	accept	Nat.rec on the literal 1000 (literals become Nat.succ applications)
+eval-rec-lit-wrong	eval	reject	reject	the same, off by one
+eval-big	eval	accept	accept	literal arithmetic past 2^64 inside decide
+eval-big-wrong	eval	reject	reject	the same, false
+eval-let	eval	accept	accept	a let-bound value used twice
+eval-let-wrong	eval	reject	reject	the same, off by one
+eval-fn	eval	accept	accept	a fold that builds a function (closures of closures), then applied
+eval-fn-wrong	eval	reject	reject	the same, off by one

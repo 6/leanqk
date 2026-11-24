@@ -9,6 +9,27 @@ use nitrolean::reader::read_file;
 
 #[test]
 fn committed_kernel_cases_get_their_verdicts() {
+    let (ran, wrong) = run_cases("exports");
+    assert!(ran >= 90, "only {ran} committed cases found");
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// All the cases, including the large ones `gen.py` writes to `out/cases/`
+/// (not committed): `cargo test --release -- --ignored` after generating them.
+#[test]
+#[ignore]
+fn generated_kernel_cases_get_their_verdicts() {
+    let (ran, wrong) = run_cases("out/cases");
+    assert!(
+        ran >= 190,
+        "only {ran} generated cases found: run tests/kernel/gen.py"
+    );
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// Check the cases of `cases.tsv` found in `tests/kernel/<sub>`; the number
+/// run and the wrong verdicts.
+fn run_cases(sub: &str) -> (usize, Vec<String>) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/kernel");
     let tsv = std::fs::read_to_string(dir.join("cases.tsv")).unwrap();
     let mut ran = 0;
@@ -16,7 +37,7 @@ fn committed_kernel_cases_get_their_verdicts() {
     for line in tsv.lines().skip(1) {
         let cols: Vec<&str> = line.split('\t').collect();
         let (id, expected) = (cols[0], cols[2]);
-        let path = dir.join("exports").join(format!("{id}.ndjson"));
+        let path = dir.join(sub).join(format!("{id}.ndjson"));
         if !path.exists() {
             continue;
         }
@@ -32,6 +53,5 @@ fn committed_kernel_cases_get_their_verdicts() {
             wrong.push(format!("{id}: expected {expected}, got {got}"));
         }
     }
-    assert!(ran >= 90, "only {ran} committed cases found");
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    (ran, wrong)
 }
