@@ -95,12 +95,15 @@ impl Thunk {
     }
 }
 
+/// Thunks bound by one beta step (or one `let`), in binding order: the
+/// last one is the innermost variable.
 pub struct EnvNode {
-    pub head: Th,
+    pub thunks: Vec<Th>,
     pub tail: Env,
 }
 
-/// Thunks for the loose bound variables: `#0` first.
+/// Thunks for the loose bound variables: `#0` is the last thunk of the
+/// first node.
 #[derive(Clone)]
 pub struct Env(pub Option<Rc<EnvNode>>);
 
@@ -111,23 +114,47 @@ impl Env {
         self.0.is_none()
     }
 
-    pub fn push(&self, t: Th) -> Env {
+    /// `self` with `ts` bound, in order (so the last one is `#0`).
+    pub fn push_all(&self, ts: Vec<Th>) -> Env {
+        debug_assert!(!ts.is_empty());
         Env(Some(Rc::new(EnvNode {
-            head: t,
+            thunks: ts,
             tail: self.clone(),
         })))
+    }
+
+    pub fn push(&self, t: Th) -> Env {
+        self.push_all(vec![t])
     }
 
     pub fn get(&self, mut i: u32) -> &Th {
         let mut e = self;
         loop {
             let n = e.0.as_ref().expect("bound variable outside its binder");
-            if i == 0 {
-                return &n.head;
+            let k = n.thunks.len() as u32;
+            if i < k {
+                return &n.thunks[(k - 1 - i) as usize];
             }
-            i -= 1;
+            i -= k;
             e = &n.tail;
         }
+    }
+
+    /// The thunks of `#0 … #(n-1)`, or `None` if there are fewer.
+    pub fn first(&self, n: u32) -> Option<Vec<&Th>> {
+        let mut out = Vec::with_capacity(n as usize);
+        let mut e = self;
+        while (out.len() as u32) < n {
+            let node = e.0.as_ref()?;
+            for t in node.thunks.iter().rev() {
+                if out.len() as u32 == n {
+                    break;
+                }
+                out.push(t);
+            }
+            e = &node.tail;
+        }
+        Some(out)
     }
 }
 
@@ -146,13 +173,8 @@ impl Readback {
         if n == 0 {
             return e;
         }
-        let mut s = Vec::with_capacity(n as usize);
-        let mut cur = env;
-        for _ in 0..n {
-            let node = cur.0.as_ref().expect("bound variable outside its binder");
-            s.push(self.thunk(tc, &node.head));
-            cur = &node.tail;
-        }
+        let ts = env.first(n).expect("bound variable outside its binder");
+        let s: Vec<ExprId> = ts.into_iter().map(|t| self.thunk(tc, t)).collect();
         tc.st.instantiate(e, &s)
     }
 

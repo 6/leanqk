@@ -144,9 +144,16 @@ pub struct State {
     steps: u64,
     depth: u32,
     array_names: Option<Option<(NameId, NameId, NameId)>>,
+    /// Per constant: memo lookups and hits.
+    memo: IdMap<ExprId, (u32, u32)>,
     /// `LEANQK_EVAL_PROFILE=1`: how often each constant was reached.
     profile: Option<IdMap<ExprId, u64>>,
 }
+
+/// A constant is memoized while at least one lookup in `MEMO_RATIO` hits,
+/// judged after `MEMO_TRIAL` lookups.
+const MEMO_TRIAL: u32 = 256;
+const MEMO_RATIO: u32 = 32;
 
 /// How deep `origin` looks through delayed thunks.
 const ORIGIN_DEPTH: u32 = 4;
@@ -272,7 +279,12 @@ impl<'a, 'e> Machine<'a, 'e> {
             return Err(Bail::Deep);
         }
         self.s.depth += 1;
-        let r = stacker::maybe_grow(RED_ZONE, SEGMENT, || self.eval_here(e, env));
+        // Checking the stack costs; a few frames fit in the red zone.
+        let r = if self.s.depth & 7 == 0 {
+            stacker::maybe_grow(RED_ZONE, SEGMENT, || self.eval_here(e, env))
+        } else {
+            self.eval_here(e, env)
+        };
         self.s.depth -= 1;
         r
     }
@@ -327,15 +339,18 @@ impl<'a, 'e> Machine<'a, 'e> {
                     return self.force(&t);
                 }
                 let mut f = e;
-                let mut rev = Vec::new();
-                while let ExprNode::App(g, a) = self.tc.st.node(f) {
-                    rev.push(a);
+                let mut n = 0;
+                while let ExprNode::App(g, _) = self.tc.st.node(f) {
+                    n += 1;
                     f = g;
                 }
-                let mut args = Vec::with_capacity(rev.len());
-                for &a in rev.iter().rev() {
+                let mut args = Vec::with_capacity(n);
+                let mut g = e;
+                while let ExprNode::App(h, a) = self.tc.st.node(g) {
                     args.push(self.thunk(a, env));
+                    g = h;
                 }
+                args.reverse();
                 match self.tc.st.node(f) {
                     ExprNode::Const(..) => self.constant(f, args),
                     ExprNode::Lam(..) => self.beta(f, env.clone(), args),
@@ -468,11 +483,20 @@ impl<'a, 'e> Machine<'a, 'e> {
                 // Arguments that are all known terms: this is the closed
                 // term `c a₁ … aₙ`, whose value is shared through its id,
                 // as `whnf`'s cache shares it after substitution.
+                // Building the key costs a term; constants whose keys
+                // rarely hit are not memoized any more.
+                let st = self.s.memo.entry(c).or_default();
+                if st.0 >= MEMO_TRIAL && st.1 * MEMO_RATIO < st.0 {
+                    return self.apply(f, args);
+                }
                 let Some(key) = self.closed_app(c, &args) else {
                     return self.apply(f, args);
                 };
                 let kt = self.closed(key);
+                let st = self.s.memo.entry(c).or_default();
+                st.0 += 1;
                 if let TState::Done(v) = &*kt.0.borrow() {
+                    st.1 += 1;
                     return Ok(v.clone());
                 }
                 let v = self.apply(f, args)?;
@@ -525,12 +549,10 @@ impl<'a, 'e> Machine<'a, 'e> {
                 let (e, env) = (*e, env.clone());
                 drop(b);
                 let n = self.tc.st.data(e).loose_bvar_range();
+                let ts: Vec<Th> = env.first(n)?.into_iter().cloned().collect();
                 let mut s = Vec::with_capacity(n as usize);
-                let mut cur = &env;
-                for _ in 0..n {
-                    let node = cur.0.as_ref()?;
-                    s.push(self.origin_at(&node.head, depth + 1)?);
-                    cur = &node.tail;
+                for t in &ts {
+                    s.push(self.origin_at(t, depth + 1)?);
                 }
                 let r = self.tc.st.instantiate(e, &s);
                 t.1.set(Some(r));
@@ -659,22 +681,22 @@ impl<'a, 'e> Machine<'a, 'e> {
     }
 
     /// Beta: the lambda `lam` (in `env`) applied to `args`.
-    fn beta(&mut self, mut lam: ExprId, env: Env, args: Vec<Th>) -> ER<V> {
-        let mut env = env;
+    fn beta(&mut self, mut lam: ExprId, env: Env, mut args: Vec<Th>) -> ER<V> {
         let mut i = 0;
         while i < args.len()
             && let ExprNode::Lam(_, _, _, b) = self.tc.st.node(lam)
         {
-            env = env.push(args[i].clone());
             lam = b;
             i += 1;
         }
-        let v = self.eval(lam, &env)?;
-        if i == args.len() {
-            Ok(v)
-        } else {
-            self.apply(v, args[i..].to_vec())
+        if i == 0 {
+            let v = self.eval(lam, &env)?;
+            return self.apply(v, args);
         }
+        let rest = args.split_off(i);
+        let env = env.push_all(args);
+        let v = self.eval(lam, &env)?;
+        self.apply_rest(v, rest)
     }
 
     fn apply(&mut self, f: V, args: Vec<Th>) -> ER<V> {
