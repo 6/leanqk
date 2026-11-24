@@ -7,8 +7,13 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
 fail() { echo "selfcheck: $*" >&2; exit 1; }
 
-[[ $(cat README.md) == "Lean quick kernel" && $(wc -l <README.md) == 1 ]] ||
-  fail "README.md must be exactly 'Lean quick kernel'"
+# Nothing private in the public tree, and (when origin/main is known) in the
+# messages of the commits on top of it.
+if git rev-parse -q --verify origin/main >/dev/null; then
+  scripts/public-check.sh || fail "public-check failed"
+else
+  scripts/public-check.sh --tree-only || fail "public-check failed"
+fi
 
 for f in scripts/*.sh; do bash -n "$f"; done
 for f in scripts/*.py; do python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$f"; done
@@ -29,10 +34,6 @@ python3 -I scripts/corpus.py expected-leanqk "$lean_tsv" corpus/divergences.md c
 for s in $(tail -n +2 "$lean_tsv" | cut -f2 | sort -u); do
   grep -q "^## .*(\`$s\`)" corpus/SOURCES.md || fail "source $s is not described in corpus/SOURCES.md"
 done
-
-# Nothing private in the public tree.
-pattern='agent''ctl|speed''run|\b(Op''us|Cla''ude|Son''net|Hai''ku|G''PT|Co''dex)\b|/home/[a-z]|/Users/[a-z]|scratch/[0-9a-f]{6}|Co-Authored''-By'
-if git grep --untracked -niIE "$pattern" -- . ':!scripts/selfcheck.sh'; then fail "private names or paths above"; fi
 
 # The runner, on a fake checker.
 tmp=$(mktemp -d)

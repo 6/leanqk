@@ -1,0 +1,2 @@
+# Paths (or globs) that scripts/public-check.sh lets through its binary-file and
+# 1 MB checks, one per line. Say on the line above why each one belongs here.
