@@ -9,8 +9,8 @@
 //! what a term means. Constants are referred to by name, so a fingerprint
 //! covers one declaration; [`Checker::matches`] then requires every
 //! declaration that an operation depends on to match the table taken from
-//! Lean v4.36.0's prelude (`fingerprint_table.rs`, written by
-//! `examples/fingerprints.rs`). Theorems contribute their statement only,
+//! the prelude of one Lean version (`fingerprint_table.rs`, written by
+//! `examples/fingerprints.rs` from the preludes of the versions it lists). Theorems contribute their statement only,
 //! and their proofs are not followed: by proof irrelevance any proof of
 //! the same statement does as well.
 
@@ -23,7 +23,7 @@ use crate::expr::{BinderInfo, ExprId, ExprNode};
 use crate::level::{LevelId, LevelNode};
 use crate::name::{NameId, NameNode};
 
-use super::fingerprint_table::TABLE;
+use super::fingerprint_table::{TABLE, VERSIONS};
 use super::store::IdMap;
 
 pub type Digest32 = [u8; 32];
@@ -31,7 +31,7 @@ pub type Digest32 = [u8; 32];
 pub struct Checker<'e> {
     env: &'e Env,
     exprs: RefCell<IdMap<ExprId, Digest32>>,
-    decls: RefCell<IdMap<NameId, Result<(), String>>>,
+    decls: RefCell<IdMap<NameId, Result<u32, String>>>,
 }
 
 fn h(parts: &[&[u8]]) -> Digest32 {
@@ -320,46 +320,87 @@ impl<'e> Checker<'e> {
         }
     }
 
-    /// Ok if `n` and everything it depends on match the table.
+    /// Ok if `n` and everything it depends on match the table, all for the
+    /// same Lean version.
     pub fn matches(&self, n: NameId) -> Result<(), String> {
         let mut stack = vec![n];
         let mut seen = IdMap::<NameId, ()>::default();
         let mut deps = Vec::new();
+        let mut common = u32::MAX;
         while let Some(m) = stack.pop() {
             if seen.insert(m, ()).is_some() {
                 continue;
             }
-            if let Some(r) = self.decls.borrow().get(&m) {
-                r.clone()?;
-                continue;
-            }
-            let shown = self.name_str(m).replace('\u{0}', ".");
-            let Some(d) = self.env.find(m) else {
+            let cached = self.decls.borrow().get(&m).cloned();
+            let r = match cached {
+                Some(r) => r,
+                None => {
+                    let r = self.match_decl(m);
+                    self.decls.borrow_mut().insert(m, r.clone());
+                    r
+                }
+            };
+            let mask = r?;
+            common &= mask;
+            if common == 0 {
                 return Err(format!(
-                    "depends on `{}`, which is not declared",
-                    shown.trim_start_matches('s')
+                    "its declarations are not all from one Lean version (`{}` is from {})",
+                    display(&key(self, m)),
+                    versions(mask)
                 ));
-            };
-            let want = TABLE.binary_search_by(|(k, _)| k.cmp(&shown.as_str()));
-            let r = match want {
-                Ok(i) if TABLE[i].1 == hex(&self.decl(d)) => Ok(()),
-                Ok(_) => Err(format!(
-                    "`{}` is not the expected declaration",
-                    display(&shown)
-                )),
-                Err(_) => Err(format!(
-                    "depends on `{}`, which the prelude's does not",
-                    display(&shown)
-                )),
-            };
-            self.decls.borrow_mut().insert(m, r.clone());
-            r?;
+            }
+            let d = self.env.find(m).expect("matched");
             deps.clear();
             self.deps(d, &mut deps);
             stack.extend_from_slice(&deps);
         }
         Ok(())
     }
+
+    /// The versions whose table has `m` as it is declared here.
+    fn match_decl(&self, m: NameId) -> Result<u32, String> {
+        let shown = key(self, m);
+        let Some(d) = self.env.find(m) else {
+            return Err(format!(
+                "depends on `{}`, which is not declared",
+                display(&shown)
+            ));
+        };
+        let lo = TABLE.partition_point(|(k, _, _)| *k < shown.as_str());
+        let rows = TABLE[lo..]
+            .iter()
+            .take_while(|(k, _, _)| *k == shown.as_str());
+        let mut known = false;
+        let mut mask = 0;
+        let digest = hex(&self.decl(d));
+        for (_, v, vs) in rows {
+            known = true;
+            if *v == digest {
+                mask |= vs;
+            }
+        }
+        match (known, mask) {
+            (false, _) => Err(format!(
+                "depends on `{}`, which the prelude's does not",
+                display(&shown)
+            )),
+            (true, 0) => Err(format!(
+                "`{}` is not the expected declaration",
+                display(&shown)
+            )),
+            (true, m) => Ok(m),
+        }
+    }
+}
+
+fn versions(mask: u32) -> String {
+    VERSIONS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| mask & (1 << i) != 0)
+        .map(|(_, v)| *v)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The key a name has in the table.
