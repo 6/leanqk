@@ -43,7 +43,7 @@ arena/corner-cases/alg-conv-trans-quot-right	accept	Lean v4.36.0
 arena/corner-cases/eta-ctor	reject	Lean v4.36.0
 arena/corner-cases/eta-rec-struct	reject	Lean v4.36.0
 arena/corner-cases/eta-rule-k	reject	Lean v4.36.0
-arena/corner-cases/eta-struct-major-and	reject	Lean v4.36.0
+arena/corner-cases/eta-struct-major-and	accept	divergence (corpus/divergences.md)
 arena/corner-cases/eta-struct-major-and-no-whnf	accept	divergence (corpus/divergences.md)
 arena/corner-cases/eta-struct-major-no-whnf	accept	divergence (corpus/divergences.md)
 arena/corner-cases/eta-unit-like-nested	reject	Lean v4.36.0
