@@ -127,4 +127,43 @@ theorem triv : True := True.intro
 /-! Strings -/
 def str_ab : String := "ab"
 
+/-! Evaluation of closed terms (the evaluator in `src/check/eval/`) -/
+def ev_sum (n : Nat) : Nat := (List.range n).foldl (· + ·) 0
+theorem ev_decide : decide (ev_sum 100 = 4950) = true := rfl
+theorem ev_decide_false : decide (ev_sum 100 = 4951) = true := sorry
+axiom ev_ax_bad : (0 : Nat) = 1
+axiom ev_ax_ok : (2 + 2 : Nat) = 4
+noncomputable def ev_cast_bad : Nat := @Eq.rec Nat 0 (fun _ _ => Nat) 5 1 ev_ax_bad
+theorem ev_k_stuck : ev_cast_bad = 5 := sorry
+noncomputable def ev_cast_ok : Nat := @Eq.rec Nat (2 + 2) (fun _ _ => Nat) 5 4 ev_ax_ok
+theorem ev_k_ok : ev_cast_ok = 5 := sorry
+axiom ev_pair : Nat × Nat
+noncomputable def ev_fst : Nat := Prod.rec (motive := fun _ => Nat) (fun a _ => a) ev_pair
+theorem ev_struct_eta : ev_fst = ev_pair.1 := sorry
+theorem ev_struct_eta_wrong : ev_fst = ev_pair.2 := sorry
+theorem ev_quot_ok :
+    Quot.lift (fun n : Nat => n + 1) (fun _ _ (h : _ = _) => congrArg (· + 1) h)
+      (Quot.mk (· = ·) (ev_sum 4)) = 7 := sorry
+theorem ev_quot_wrong :
+    Quot.lift (fun n : Nat => n + 1) (fun _ _ (h : _ = _) => congrArg (· + 1) h)
+      (Quot.mk (· = ·) (ev_sum 4)) = 6 := sorry
+theorem ev_str_len : "abc".length = 3 := sorry
+theorem ev_str_len_wrong : "abc".length = 4 := sorry
+def ev_deep (n : Nat) : Nat := (List.replicate n 1).foldr (· + ·) 0
+theorem ev_deep_ok : ev_deep 20000 = 20000 := sorry
+theorem ev_deep_wrong : ev_deep 20000 = 19999 := sorry
+theorem ev_pap : Nat.add 1 = fun x => Nat.add 1 x := sorry
+theorem ev_pap_wrong : Nat.add 1 = fun x => Nat.add 2 x := sorry
+def ev_rec (n : Nat) : Nat := Nat.rec (motive := fun _ => Nat) 0 (fun _ ih => ih + 2) n
+theorem ev_rec_lit : ev_rec 1000 = 2000 := sorry
+theorem ev_rec_lit_wrong : ev_rec 1000 = 2001 := sorry
+theorem ev_big : decide (2 ^ 100 - (2 ^ 100 - 7) = 7) = true := sorry
+theorem ev_big_wrong : decide (2 ^ 100 - (2 ^ 100 - 7) = 8) = true := sorry
+def ev_let : Nat := let x := ev_sum 1000; x + x
+theorem ev_let_ok : ev_let = 999000 := sorry
+theorem ev_let_wrong : ev_let = 999001 := sorry
+def ev_fn : Nat → Nat := (List.range 5).foldl (fun f _ => fun x => f x + 1) id
+theorem ev_fn_ok : ev_fn 3 = 8 := sorry
+theorem ev_fn_wrong : ev_fn 3 = 7 := sorry
+
 end K

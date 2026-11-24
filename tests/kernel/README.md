@@ -22,6 +22,12 @@ Lean is pinned in `lean-toolchain` (elan), Python in `mise.toml`.
     mise exec -- python -I gen.py --update   # rewrite cases.tsv and exports/
     mise exec -- python -I gen.py --check    # fail if cases.tsv or exports/ are stale
 
+`cargo test` checks the committed exports; after generating,
+`cargo test --release --test kernel_cases -- --ignored` checks every case in
+`out/cases/` too. The `eval-*` cases test the closed-term evaluator
+(`src/check/eval/`); each claim is proved by `Eq.refl`, so only reduction
+decides it, and each has a false twin.
+
 `lean/KCases.lean` holds the valid source declarations. `gen.py` compiles it,
 runs `leanexport` on the closure of a few constants, and applies the mutation
 defined in `cases.py`. Some cases (universe levels) are built from scratch with
