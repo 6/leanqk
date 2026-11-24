@@ -1,0 +1,804 @@
+//! A fast evaluator for closed terms, used by `Tc::whnf` before its own
+//! reduction loop. See `docs/kernel-compute.md` for why it is sound.
+//!
+//! It is an environment machine over the checker's term DAG: a term is
+//! evaluated in an environment of thunks for its loose bound variables, so
+//! beta reduction never substitutes into terms. Arguments are thunks,
+//! evaluated at most once (call-by-need), and every closed subterm has one
+//! shared thunk, so a closed term is evaluated at most once per
+//! declaration. `Nat` literals are machine words or big integers, with the
+//! kernel's literal arithmetic.
+//!
+//! Every step it takes is one of the kernel's own reduction rules (beta,
+//! delta, zeta, iota, projection, quotient, `Nat` and `String` literal
+//! rules), applied as `Tc::whnf` applies them, so the result is a reduct
+//! of the input: definitionally equal to it, by the rules the kernel
+//! itself uses. When the machine meets anything it does not handle (a
+//! stuck term, an unknown constant, a size limit, too deep a recursion) it
+//! gives up, and `whnf` goes on as if it had not been called.
+
+mod nat;
+mod value;
+
+use std::rc::Rc;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::time::Instant;
+
+use crate::env::{Decl, DeclKind, QuotKind};
+use crate::expr::{ExprId, ExprNode};
+use crate::level::{LevelId, LevelList};
+use crate::name::NameId;
+
+use super::ext::NatOp;
+use super::store::IdMap;
+use super::tc::Tc;
+
+use nat::Nat;
+use value::{Env, TState, Th, Thunk, V, Val};
+
+/// Why the machine gave up. Giving up is never a verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bail {
+    /// A term the machine does not reduce (an axiom, an opaque constant,
+    /// a recursor on a stuck major premise, ...).
+    Stuck,
+    /// The recursion got too deep for the stack.
+    Deep,
+    /// A `Nat` operation hit one of the kernel's limits; `whnf` reports it.
+    Limit,
+    /// A thunk depends on itself.
+    Loop,
+}
+
+type ER<T> = Result<T, Bail>;
+
+#[derive(Clone, Debug)]
+pub struct CtorInfo {
+    pub induct: NameId,
+    pub nparams: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct RecInfo {
+    pub major_idx: usize,
+    /// `params + motives + minors`.
+    pub pmm: usize,
+    pub nparams: u32,
+    pub induct: NameId,
+    pub k: bool,
+    /// Per rule: constructor, fields, right-hand side with this constant's
+    /// levels.
+    pub rules: Vec<(NameId, u32, ExprId)>,
+}
+
+/// What a constant (with its levels) does in the machine.
+#[derive(Clone, Debug)]
+enum CInfo {
+    /// A definition or theorem: its value, with the levels substituted.
+    Unfold(ExprId),
+    /// A built-in `Nat` operation; its definition, for arguments that are
+    /// not literals.
+    Op(NatOp, ExprId),
+    Succ,
+    Ctor(Rc<CtorInfo>),
+    Rec(Rc<RecInfo>),
+    QuotLift,
+    QuotInd,
+    /// An inductive type, axiom, opaque constant, `Quot` or `Quot.mk`:
+    /// it does not reduce.
+    Neutral,
+    /// Not visible, or with the wrong number of levels: let `whnf` deal.
+    Bail,
+}
+
+/// Counters for `--stats`, over the whole run.
+static CALLS: AtomicU64 = AtomicU64::new(0);
+static HITS: AtomicU64 = AtomicU64::new(0);
+static STEPS: AtomicU64 = AtomicU64::new(0);
+static BAILS: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+static NANOS: AtomicU64 = AtomicU64::new(0);
+
+/// Whether the evaluator is on (`LEANQK_EVAL=0` turns it off, to compare).
+pub fn enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LEANQK_EVAL").map_or(true, |v| v != "0"))
+}
+
+/// One line about what the evaluator did, for `--stats`.
+pub fn stats() -> String {
+    let b = |i: usize| BAILS[i].load(Relaxed);
+    format!(
+        "evaluator: {} calls, {} answered, {} steps, {:.3} s; gave up: {} stuck, {} deep, {} limit, {} loop",
+        CALLS.load(Relaxed),
+        HITS.load(Relaxed),
+        STEPS.load(Relaxed),
+        NANOS.load(Relaxed) as f64 / 1e9,
+        b(0),
+        b(1),
+        b(2),
+        b(3)
+    )
+}
+
+/// The machine's state for the declaration being checked: everything in
+/// it refers to that declaration's store, so it is dropped with it.
+#[derive(Default)]
+pub struct State {
+    consts: IdMap<ExprId, CInfo>,
+    /// One thunk per closed term.
+    closed: IdMap<ExprId, Th>,
+    steps: u64,
+    depth: u32,
+}
+
+/// How deep `origin` looks through delayed thunks.
+const ORIGIN_DEPTH: u32 = 4;
+
+/// Evaluation recurses (forcing a thunk inside a thunk): deep recursion
+/// runs on extra stack segments of `SEGMENT` bytes, taken when less than
+/// `RED_ZONE` is left. `MAX_DEPTH` nested evaluations (a few GB of stack)
+/// is a resource limit.
+const RED_ZONE: usize = 256 << 10;
+const SEGMENT: usize = 64 << 20;
+const MAX_DEPTH: u32 = 4_000_000;
+
+/// There is no step limit: evaluation is as lazy as `whnf`, so it
+/// terminates whenever `whnf` does. The only limits are the stack and the
+/// kernel's own `Nat` limits.
+struct Machine<'a, 'e> {
+    tc: &'a mut Tc<'e>,
+    s: &'a mut State,
+}
+
+/// The weak head normal form of the closed term `e`, if the machine
+/// computes one. `None`: the caller reduces `e` itself.
+pub fn whnf(tc: &mut Tc<'_>, e: ExprId) -> Option<ExprId> {
+    let mut s = tc.eval.take()?;
+    let t0 = Instant::now();
+    s.depth = 0;
+    s.steps = 0;
+    let r = {
+        let mut m = Machine { tc, s: &mut s };
+        m.top(e)
+    };
+    CALLS.fetch_add(1, Relaxed);
+    STEPS.fetch_add(s.steps, Relaxed);
+    NANOS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
+    match r {
+        Ok(_) => HITS.fetch_add(1, Relaxed),
+        Err(b) => BAILS[b as usize].fetch_add(1, Relaxed),
+    };
+    tc.eval = Some(s);
+    r.ok()
+}
+
+impl<'a, 'e> Machine<'a, 'e> {
+    fn top(&mut self, e: ExprId) -> ER<ExprId> {
+        let v = self.eval(e, &Env::EMPTY)?;
+        // A partial application of a built-in `Nat` operation is not in
+        // weak head normal form (`whnf` would unfold it).
+        if let Val::Pap {
+            kind: Head::Op(..) | Head::Succ,
+            ..
+        } = &*v
+        {
+            return Err(Bail::Stuck);
+        }
+        let mut rb = value::Readback::default();
+        Ok(rb.value(self.tc, &v))
+    }
+
+    /// The shared thunk of the closed term `e`.
+    fn closed(&mut self, e: ExprId) -> Th {
+        if let Some(t) = self.s.closed.get(&e) {
+            return t.clone();
+        }
+        let t = match self.tc.st.node(e) {
+            ExprNode::NatSmall(lo, hi) => {
+                Thunk::closed_done(e, Rc::new(Val::Nat(Nat::small(lo, hi))))
+            }
+            ExprNode::NatBig(b) => {
+                Thunk::closed_done(e, Rc::new(Val::Nat(Nat::big(self.tc.st.big(b).clone()))))
+            }
+            _ => Thunk::closed(e),
+        };
+        self.s.closed.insert(e, t.clone());
+        t
+    }
+
+    /// A thunk for `e` in `env`.
+    fn thunk(&mut self, e: ExprId, env: &Env) -> Th {
+        let d = self.tc.st.data(e);
+        if !d.has_loose_bvars() {
+            return self.closed(e);
+        }
+        if let ExprNode::BVar(i) = self.tc.st.node(e) {
+            return env.get(i).clone();
+        }
+        Thunk::delayed(e, env.clone())
+    }
+
+    fn force(&mut self, t: &Th) -> ER<V> {
+        let (e, env) = {
+            let mut b = t.0.borrow_mut();
+            match &*b {
+                TState::Done(v) => return Ok(v.clone()),
+                TState::Busy => return Err(Bail::Loop),
+                TState::Delayed(..) => {}
+            }
+            let TState::Delayed(e, env) = std::mem::replace(&mut *b, TState::Busy) else {
+                unreachable!()
+            };
+            (e, env)
+        };
+        match self.eval(e, &env) {
+            Ok(v) => {
+                *t.0.borrow_mut() = TState::Done(v.clone());
+                Ok(v)
+            }
+            Err(b) => {
+                *t.0.borrow_mut() = TState::Delayed(e, env);
+                Err(b)
+            }
+        }
+    }
+
+    fn eval(&mut self, e: ExprId, env: &Env) -> ER<V> {
+        if self.s.depth >= MAX_DEPTH {
+            return Err(Bail::Deep);
+        }
+        self.s.depth += 1;
+        let r = stacker::maybe_grow(RED_ZONE, SEGMENT, || self.eval_here(e, env));
+        self.s.depth -= 1;
+        r
+    }
+
+    fn eval_here(&mut self, e: ExprId, env: &Env) -> ER<V> {
+        self.s.steps += 1;
+        let node = self.tc.st.node(e);
+        match node {
+            ExprNode::BVar(i) => {
+                let t = env.get(i).clone();
+                self.force(&t)
+            }
+            ExprNode::NatSmall(lo, hi) => Ok(Rc::new(Val::Nat(Nat::small(lo, hi)))),
+            ExprNode::NatBig(b) => Ok(Rc::new(Val::Nat(Nat::big(self.tc.st.big(b).clone())))),
+            ExprNode::Str(_) => Ok(Rc::new(Val::Str(e))),
+            ExprNode::FVar(_) => Err(Bail::Stuck),
+            ExprNode::Sort(_) | ExprNode::Pi(..) => {
+                // A type: in weak head normal form already.
+                let t = if self.tc.st.has_loose_bvars(e) {
+                    let mut rb = value::Readback::default();
+                    rb.inst(self.tc, e, env)
+                } else {
+                    e
+                };
+                Ok(Rc::new(Val::Neutral {
+                    head: t,
+                    args: Vec::new(),
+                }))
+            }
+            ExprNode::Lam(..) => Ok(Rc::new(Val::Clo {
+                lam: e,
+                env: env.clone(),
+            })),
+            ExprNode::Let(h, b) => {
+                let v = self.tc.st.let_binder(h).value;
+                let t = self.thunk(v, env);
+                let env2 = env.push(t);
+                self.eval(b, &env2)
+            }
+            ExprNode::Const(..) => self.constant(e, Vec::new()),
+            ExprNode::Proj(s, i, x) => {
+                let xv = self.eval(x, env)?;
+                self.proj(s, i, xv)
+            }
+            ExprNode::App(..) => {
+                if !self.tc.st.has_loose_bvars(e) && !env.is_empty() {
+                    // A closed application: share its value.
+                    let t = self.closed(e);
+                    return self.force(&t);
+                }
+                let mut f = e;
+                let mut rev = Vec::new();
+                while let ExprNode::App(g, a) = self.tc.st.node(f) {
+                    rev.push(a);
+                    f = g;
+                }
+                let mut args = Vec::with_capacity(rev.len());
+                for &a in rev.iter().rev() {
+                    args.push(self.thunk(a, env));
+                }
+                match self.tc.st.node(f) {
+                    ExprNode::Const(..) => self.constant(f, args),
+                    ExprNode::Lam(..) => self.beta(f, env.clone(), args),
+                    _ => {
+                        let fv = self.eval(f, env)?;
+                        self.apply(fv, args)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The machine's view of the constant `c`.
+    fn info(&mut self, c: ExprId) -> CInfo {
+        if let Some(i) = self.s.consts.get(&c) {
+            return i.clone();
+        }
+        let i = self.compute_info(c);
+        self.s.consts.insert(c, i.clone());
+        i
+    }
+
+    fn compute_info(&mut self, c: ExprId) -> CInfo {
+        let ExprNode::Const(n, ls) = self.tc.st.node(c) else {
+            unreachable!()
+        };
+        let Some(d) = self.tc.find(n) else {
+            return CInfo::Bail;
+        };
+        if self.tc.st.list(ls).len() != d.level_params.len() {
+            return CInfo::Bail;
+        }
+        let ext = self.tc.ext;
+        if ls == LevelList::EMPTY && Some(n) == ext.nat_succ {
+            return CInfo::Succ;
+        }
+        match d.kind {
+            DeclKind::Definition { value, .. } | DeclKind::Theorem { value, .. } => {
+                let v = self.inst_levels(&d, ls, value);
+                if ls == LevelList::EMPTY
+                    && let Some(op) = ext.nat_op(n)
+                {
+                    return CInfo::Op(op, v);
+                }
+                CInfo::Unfold(v)
+            }
+            DeclKind::Constructor {
+                induct, num_params, ..
+            } => CInfo::Ctor(Rc::new(CtorInfo {
+                induct,
+                nparams: num_params,
+            })),
+            DeclKind::Recursor {
+                num_params,
+                num_indices,
+                num_motives,
+                num_minors,
+                rules,
+                k,
+                ..
+            } => {
+                let Some(induct) = self.tc.major_induct_of(n, &d) else {
+                    return CInfo::Bail;
+                };
+                let rs: Vec<_> = self.tc.st.rec_rules(rules).to_vec();
+                let rules = rs
+                    .iter()
+                    .map(|r| (r.ctor, r.nfields, self.inst_levels(&d, ls, r.rhs)))
+                    .collect();
+                CInfo::Rec(Rc::new(RecInfo {
+                    major_idx: (num_params + num_motives + num_minors + num_indices) as usize,
+                    pmm: (num_params + num_motives + num_minors) as usize,
+                    nparams: num_params,
+                    induct,
+                    k,
+                    rules,
+                }))
+            }
+            DeclKind::Quot { kind } => match kind {
+                QuotKind::Lift => CInfo::QuotLift,
+                QuotKind::Ind => CInfo::QuotInd,
+                QuotKind::Type | QuotKind::Ctor => CInfo::Neutral,
+            },
+            DeclKind::Axiom { .. } | DeclKind::Opaque { .. } | DeclKind::Inductive { .. } => {
+                CInfo::Neutral
+            }
+        }
+    }
+
+    fn inst_levels(&mut self, d: &Decl, ls: LevelList, e: ExprId) -> ExprId {
+        if ls == LevelList::EMPTY {
+            return e;
+        }
+        let ps: Vec<NameId> = self.tc.st.lparams(d).to_vec();
+        let lv: Vec<LevelId> = self.tc.st.list(ls).to_vec();
+        self.tc.st.instantiate_lparams(e, &ps, &lv)
+    }
+
+    /// The constant `c` applied to `args`.
+    fn constant(&mut self, c: ExprId, args: Vec<Th>) -> ER<V> {
+        match self.info(c) {
+            CInfo::Unfold(v) => {
+                let t = self.closed(v);
+                let f = self.force(&t)?;
+                if args.is_empty() {
+                    return Ok(f);
+                }
+                // Arguments that are all known terms: this is the closed
+                // term `c a₁ … aₙ`, whose value is shared through its id,
+                // as `whnf`'s cache shares it after substitution.
+                let Some(key) = self.closed_app(c, &args) else {
+                    return self.apply(f, args);
+                };
+                let kt = self.closed(key);
+                if let TState::Done(v) = &*kt.0.borrow() {
+                    return Ok(v.clone());
+                }
+                let v = self.apply(f, args)?;
+                let mut b = kt.0.borrow_mut();
+                if let TState::Delayed(..) = &*b {
+                    *b = TState::Done(v.clone());
+                }
+                Ok(v)
+            }
+            CInfo::Op(op, _) => self.saturate(c, Head::Op(op), args),
+            CInfo::Succ => self.saturate(c, Head::Succ, args),
+            CInfo::Rec(r) => self.saturate(c, Head::Rec(r), args),
+            CInfo::QuotLift => self.saturate(c, Head::QuotLift, args),
+            CInfo::QuotInd => self.saturate(c, Head::QuotInd, args),
+            CInfo::Ctor(info) => Ok(Rc::new(Val::Ctor { c, info, args })),
+            CInfo::Neutral => Ok(Rc::new(Val::Neutral { head: c, args })),
+            CInfo::Bail => Err(Bail::Stuck),
+        }
+    }
+
+    /// The term `c a₁ … aₙ`, if every argument's term is known.
+    fn closed_app(&mut self, c: ExprId, args: &[Th]) -> Option<ExprId> {
+        let mut r = c;
+        for a in args {
+            let x = self.origin(a)?;
+            r = self.tc.st.app(r, x);
+        }
+        Some(r)
+    }
+
+    /// The closed term a thunk stands for, when it is at hand.
+    fn origin(&mut self, t: &Th) -> Option<ExprId> {
+        self.origin_at(t, 0)
+    }
+
+    fn origin_at(&mut self, t: &Th, depth: u32) -> Option<ExprId> {
+        if let Some(e) = t.1.get() {
+            return Some(e);
+        }
+        let b = t.0.borrow();
+        let v = match &*b {
+            TState::Done(v) => v.clone(),
+            TState::Busy => return None,
+            TState::Delayed(e, env) => {
+                // `e` with its variables replaced by their known terms.
+                if depth >= ORIGIN_DEPTH {
+                    return None;
+                }
+                let (e, env) = (*e, env.clone());
+                drop(b);
+                let n = self.tc.st.data(e).loose_bvar_range();
+                let mut s = Vec::with_capacity(n as usize);
+                let mut cur = &env;
+                for _ in 0..n {
+                    let node = cur.0.as_ref()?;
+                    s.push(self.origin_at(&node.head, depth + 1)?);
+                    cur = &node.tail;
+                }
+                let r = self.tc.st.instantiate(e, &s);
+                t.1.set(Some(r));
+                return Some(r);
+            }
+        };
+        drop(b);
+        match &*v {
+            Val::Nat(Nat::Small(x)) => Some(self.tc.st.nat_u64(*x)),
+            Val::Str(e) => Some(*e),
+            Val::Ctor { c, args, .. } | Val::Neutral { head: c, args } if args.is_empty() => {
+                Some(*c)
+            }
+            _ => None,
+        }
+    }
+
+    /// A head that reduces once it has `arity` arguments.
+    fn saturate(&mut self, c: ExprId, kind: Head, args: Vec<Th>) -> ER<V> {
+        if args.len() < kind.arity() {
+            return Ok(Rc::new(Val::Pap {
+                head: c,
+                kind,
+                args,
+            }));
+        }
+        match kind {
+            Head::Succ => {
+                let mut args = args;
+                let x = self.force(&args[0])?;
+                let rest = args.split_off(1);
+                let r = match self.nat_of(&x) {
+                    Some(n) => Rc::new(Val::Nat(n.succ())),
+                    None => return Err(Bail::Stuck),
+                };
+                self.apply_rest(r, rest)
+            }
+            Head::Op(op) => {
+                let mut args = args;
+                let rest = args.split_off(2);
+                let x = self.force(&args[0])?;
+                let y = self.force(&args[1])?;
+                let r = match (self.nat_of(&x), self.nat_of(&y)) {
+                    (Some(x), Some(y)) => self.nat_op(op, &x, &y)?,
+                    _ => {
+                        // Not literals: the operation is its definition.
+                        let CInfo::Op(_, v) = self.info(c) else {
+                            unreachable!()
+                        };
+                        let t = self.closed(v);
+                        let f = self.force(&t)?;
+                        self.apply(f, args)?
+                    }
+                };
+                self.apply_rest(r, rest)
+            }
+            Head::Rec(r) => self.iota(&r, args),
+            Head::QuotLift | Head::QuotInd => {
+                let (mk_pos, arg_pos) = if matches!(kind, Head::QuotLift) {
+                    (5, 3)
+                } else {
+                    (4, 3)
+                };
+                let q = self.force(&args[mk_pos])?;
+                let Val::Neutral { head, args: margs } = &*q else {
+                    return Err(Bail::Stuck);
+                };
+                let is_mk = match (self.tc.st.node(*head), self.tc.ext.quot.as_ref()) {
+                    (ExprNode::Const(n, _), Some(qn)) => n == qn.mk,
+                    _ => false,
+                };
+                if !is_mk || margs.len() != 3 {
+                    return Err(Bail::Stuck);
+                }
+                let f = self.force(&args[arg_pos])?;
+                let mut rest = vec![margs[2].clone()];
+                rest.extend_from_slice(&args[mk_pos + 1..]);
+                self.apply(f, rest)
+            }
+        }
+    }
+
+    fn apply_rest(&mut self, v: V, rest: Vec<Th>) -> ER<V> {
+        if rest.is_empty() {
+            Ok(v)
+        } else {
+            self.apply(v, rest)
+        }
+    }
+
+    /// The value of a `Nat` (a literal or `Nat.zero`).
+    fn nat_of(&self, v: &V) -> Option<Nat> {
+        match &**v {
+            Val::Nat(n) => Some(n.clone()),
+            Val::Ctor { c, args, .. } if args.is_empty() => match self.tc.st.node(*c) {
+                ExprNode::Const(n, ls)
+                    if Some(n) == self.tc.ext.nat_zero && ls == LevelList::EMPTY =>
+                {
+                    Some(Nat::ZERO)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn mk_bool(&mut self, b: bool) -> ER<V> {
+        let n = if b {
+            self.tc.ext.bool_true
+        } else {
+            self.tc.ext.bool_false
+        };
+        let Some(n) = n else {
+            return Err(Bail::Stuck);
+        };
+        let c = self.tc.st.cnst(n, LevelList::EMPTY);
+        self.constant(c, Vec::new())
+    }
+
+    fn nat_op(&mut self, op: NatOp, x: &Nat, y: &Nat) -> ER<V> {
+        match nat::op(op, x, y)? {
+            nat::OpResult::Nat(n) => Ok(Rc::new(Val::Nat(n))),
+            nat::OpResult::Bool(b) => self.mk_bool(b),
+        }
+    }
+
+    /// Beta: the lambda `lam` (in `env`) applied to `args`.
+    fn beta(&mut self, mut lam: ExprId, env: Env, args: Vec<Th>) -> ER<V> {
+        let mut env = env;
+        let mut i = 0;
+        while i < args.len()
+            && let ExprNode::Lam(_, _, _, b) = self.tc.st.node(lam)
+        {
+            env = env.push(args[i].clone());
+            lam = b;
+            i += 1;
+        }
+        let v = self.eval(lam, &env)?;
+        if i == args.len() {
+            Ok(v)
+        } else {
+            self.apply(v, args[i..].to_vec())
+        }
+    }
+
+    fn apply(&mut self, f: V, args: Vec<Th>) -> ER<V> {
+        if args.is_empty() {
+            return Ok(f);
+        }
+        match &*f {
+            Val::Clo { lam, env } => self.beta(*lam, env.clone(), args),
+            Val::Ctor { c, info, args: a0 } => {
+                let mut a = a0.clone();
+                a.extend(args);
+                Ok(Rc::new(Val::Ctor {
+                    c: *c,
+                    info: info.clone(),
+                    args: a,
+                }))
+            }
+            Val::Neutral { head, args: a0 } => {
+                if !a0.is_empty() || matches!(self.tc.st.node(*head), ExprNode::Const(..)) {
+                    let mut a = a0.clone();
+                    a.extend(args);
+                    Ok(Rc::new(Val::Neutral {
+                        head: *head,
+                        args: a,
+                    }))
+                } else {
+                    // A sort or a Pi applied to arguments: ill-typed.
+                    Err(Bail::Stuck)
+                }
+            }
+            Val::Pap {
+                head,
+                kind,
+                args: a0,
+            } => {
+                let mut a = a0.clone();
+                a.extend(args);
+                self.saturate(*head, kind.clone(), a)
+            }
+            Val::Nat(_) | Val::Str(_) => Err(Bail::Stuck),
+        }
+    }
+
+    /// Projection `i` of the structure `s` out of `x`.
+    fn proj(&mut self, s: NameId, i: u32, x: V) -> ER<V> {
+        let x = match &*x {
+            Val::Str(e) => {
+                let e = *e;
+                self.string_ctor(e)?
+            }
+            _ => x,
+        };
+        match &*x {
+            Val::Ctor { info, args, .. } if info.induct == s => {
+                let k = info.nparams as usize + i as usize;
+                match args.get(k) {
+                    Some(t) => {
+                        let t = t.clone();
+                        self.force(&t)
+                    }
+                    None => Err(Bail::Stuck),
+                }
+            }
+            _ => Err(Bail::Stuck),
+        }
+    }
+
+    /// A string literal as `String.ofList [...]`, evaluated.
+    fn string_ctor(&mut self, e: ExprId) -> ER<V> {
+        let x = self
+            .tc
+            .string_lit_to_constructor(e)
+            .map_err(|_| Bail::Stuck)?;
+        self.eval(x, &Env::EMPTY)
+    }
+
+    /// Iota reduction: the recursor `r` applied to `args` (at least up to
+    /// its major premise).
+    fn iota(&mut self, r: &RecInfo, args: Vec<Th>) -> ER<V> {
+        let mut major = args[r.major_idx].clone();
+        if r.k {
+            // As Lean does, before reducing the major premise: if its type
+            // is the type of the constructor (built from the parameters),
+            // use the constructor.
+            let mut rb = value::Readback::default();
+            let m = rb.thunk(self.tc, &major);
+            let c = self
+                .tc
+                .ctor_when_k_pub(r.induct, r.nparams, m)
+                .map_err(|_| Bail::Stuck)?;
+            if c != m {
+                major = self.closed(c);
+            }
+        }
+        let mut mv = self.force(&major)?;
+        match &*mv {
+            Val::Nat(n) => {
+                mv = self.nat_ctor(n)?;
+            }
+            Val::Str(e) => {
+                let e = *e;
+                mv = self.string_ctor(e)?;
+            }
+            _ => {}
+        }
+        let Val::Ctor { c, args: margs, .. } = &*mv else {
+            return Err(Bail::Stuck);
+        };
+        let ExprNode::Const(cn, _) = self.tc.st.node(*c) else {
+            unreachable!()
+        };
+        let Some(&(_, nfields, rhs)) = r.rules.iter().find(|x| x.0 == cn) else {
+            return Err(Bail::Stuck);
+        };
+        let nfields = nfields as usize;
+        if nfields > margs.len() {
+            return Err(Bail::Stuck);
+        }
+        let mut a = Vec::with_capacity(r.pmm + nfields + args.len() - r.major_idx - 1);
+        a.extend_from_slice(&args[..r.pmm]);
+        a.extend_from_slice(&margs[margs.len() - nfields..]);
+        a.extend_from_slice(&args[r.major_idx + 1..]);
+        let t = self.closed(rhs);
+        let f = self.force(&t)?;
+        self.apply(f, a)
+    }
+
+    /// `n` as `Nat.zero` or `Nat.succ (n - 1)`.
+    fn nat_ctor(&mut self, n: &Nat) -> ER<V> {
+        let (Some(zero), Some(succ)) = (self.tc.ext.nat_zero, self.tc.ext.nat_succ) else {
+            return Err(Bail::Stuck);
+        };
+        match n.pred() {
+            None => {
+                let c = self.tc.st.cnst(zero, LevelList::EMPTY);
+                self.constant(c, Vec::new())
+            }
+            Some(p) => {
+                let c = self.tc.st.cnst(succ, LevelList::EMPTY);
+                let CInfo::Succ = self.info(c) else {
+                    return Err(Bail::Stuck);
+                };
+                let info = Rc::new(CtorInfo {
+                    induct: self.tc.ext.nat.ok_or(Bail::Stuck)?,
+                    nparams: 0,
+                });
+                Ok(Rc::new(Val::Ctor {
+                    c,
+                    info,
+                    args: vec![Thunk::done(Rc::new(Val::Nat(p)))],
+                }))
+            }
+        }
+    }
+}
+
+/// A head that waits for its arguments.
+#[derive(Clone, Debug)]
+pub enum Head {
+    Op(NatOp),
+    Succ,
+    Rec(Rc<RecInfo>),
+    QuotLift,
+    QuotInd,
+}
+
+impl Head {
+    fn arity(&self) -> usize {
+        match self {
+            Head::Op(_) => 2,
+            Head::Succ => 1,
+            Head::Rec(r) => r.major_idx + 1,
+            Head::QuotLift => 6,
+            Head::QuotInd => 5,
+        }
+    }
+}
