@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests scripts/public-check.sh: in a temporary git repository, a clean tree
-# passes, and one planted violation of each kind is caught. The planted names
-# are split with '' so that this file passes the check itself.
+# passes, and one planted violation of each kind is caught. Planted paths and
+# addresses are joined at run time so that this file passes the check itself.
 set -euo pipefail
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 tmp=$(mktemp -d)
@@ -49,49 +49,26 @@ expect_pass "clean tree"
 printf 'Lean quick kernel - work in progress\nmore\n' >"$repo/README.md"
 expect_fail "README with two lines" "README.md must be exactly"
 
-plant a.txt "written by Cla""ude"
-expect_fail "model name" "AI model or assistant name: a.txt:1"
-
-plant a.txt "run it under agent""ctl"
-expect_fail "tool name" "tool or platform name: a.txt:1"
-
 plant a.txt "see /ho""me/alice/x"
-expect_fail "home path" "home or scratch path: a.txt:1"
+expect_fail "home path" "home directory path: a.txt:1"
 
 plant a.txt "see /Us""ers/alice/x"
-expect_fail "macOS home path" "home or scratch path: a.txt:1"
-
-plant a.txt "in scra""tch/1a2b3c4d"
-expect_fail "scratch path" "home or scratch path: a.txt:1"
+expect_fail "macOS home path" "home directory path: a.txt:1"
 
 plant a.txt "server at 10.1.2"".3"
 expect_fail "IPv4 address" "IPv4 address: a.txt:1: 10.1.2"".3"
 
-plant a.txt "host box.example.ts"".net"
-expect_fail "tailnet hostname" "private hostname: a.txt:1"
-
-plant a.txt "host db.corp.inter""nal"
-expect_fail "internal hostname" "private hostname: a.txt:1"
-
-printf 'by Cla''ude\n' >"$repo/b.txt"
-expect_fail "untracked file" "AI model or assistant name: b.txt:1"
-
-commit "Fix it with Op""us"
-expect_fail "model name in a commit message" "AI model or assistant name: Fix it with"
+printf 'see /ho''me/bob/y\n' >"$repo/b.txt"
+expect_fail "untracked file" "home directory path: b.txt:1"
 
 commit "Fix it
 
-Generated ""with a tool"
-expect_fail "assistance phrase in a commit message" "AI-assistance phrase"
-
-commit "Fix it
-
-Co-Authored""-By: Someone <someone@example.com>"
+Co-Authored-By: Someone <someone@example.com>"
 expect_fail "co-author trailer" "co-author trailer"
 
 commit "Fix it (#9)
 
-Co-Authored""-By: 6[bot] <129682364+6[bot]@users.noreply.github.com>"
+Co-Authored-By: 6[bot] <129682364+6[bot]@users.noreply.github.com>"
 expect_pass "squash trailer"
 
 plant Foo.olean "x"

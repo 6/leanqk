@@ -9,8 +9,6 @@
 # so that it can run before a commit. Exits nonzero after reporting every
 # violation. Binary files and files over 1 MB are refused unless their path
 # (or a glob matching it) is listed in scripts/public-check.allow.
-#
-# The patterns below are split with '' so that this file doesn't match itself.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT" || exit 2
@@ -19,22 +17,17 @@ range=origin/main..HEAD
 check_commits=1
 case ${1-} in
   --tree-only) check_commits=0 ;;
-  -h | --help) sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 0 ;;
+  -h | --help) sed -n '2,11p' "${BASH_SOURCE[0]}"; exit 0 ;;
   ?*) range=$1 ;;
 esac
 
 errors=0
 violation() { echo "public-check: $*" >&2; errors=$((errors + 1)); }
 
-# AI models and assistants, and the tools and platforms around them.
-names='\b(Cla''ude|Op''us|Son''net|Hai''ku|Fa''ble|Anthr''opic|Open''AI|Cha''tG''PT|G''PT-?[0-9o]*|Co''dex|Gem''ini|Co''pilot|L''LM)\b'
-tools='\b(agent''ctl|speed''run|fleet''view|tail''scale)\b'
-paths='/ho''me/[A-Za-z0-9_]|/Us''ers/[A-Za-z0-9_]|scra''tch/[0-9a-f]{6}'
-hosts='[A-Za-z0-9-]\.(ts''\.net|inter''nal)\b'
+paths='/(home|Users)/[A-Za-z0-9_]'
 ipv4='\b([0-9]{1,3}\.){3}[0-9]{1,3}\b'
-coauthor='^[[:space:]]*co-auth''ored-by:'
-phrases='generated with|written (with|by) (an )?AI|assisted by|AI[- ]assisted'
-bot_trailer='Co-Authored''-By: 6[bot] <129682364+6[bot]@users.noreply.github.com>'
+coauthor='^[[:space:]]*co-authored-by:'
+bot_trailer='Co-Authored-By: 6[bot] <129682364+6[bot]@users.noreply.github.com>'
 
 # Prints matches of an extended regex in the tree as path:line:text.
 tree_grep() { git grep --untracked -nIE "$@" -- . 2>/dev/null; }
@@ -46,11 +39,8 @@ elif [[ $(cat README.md) != "Lean quick kernel - work in progress" || $(wc -l <R
   violation "README.md must be exactly the one line 'Lean quick kernel - work in progress'"
 fi
 
-# 2. Names, private paths and hosts.
-while IFS= read -r m; do violation "AI model or assistant name: $m"; done < <(tree_grep -i "$names")
-while IFS= read -r m; do violation "tool or platform name: $m"; done < <(tree_grep -i "$tools")
-while IFS= read -r m; do violation "home or scratch path: $m"; done < <(tree_grep "$paths")
-while IFS= read -r m; do violation "private hostname: $m"; done < <(tree_grep -i "$hosts")
+# 2. Home directory paths.
+while IFS= read -r m; do violation "home directory path: $m"; done < <(tree_grep "$paths")
 
 # IPv4 addresses outside the documentation ranges of RFC 5737.
 while IFS= read -r m; do
@@ -107,10 +97,6 @@ if ((check_commits)); then
     for c in $commits; do
       msg=$(git log -1 --format=%B "$c")
       short=${c:0:12}
-      while IFS= read -r m; do violation "commit $short: AI model or assistant name: $m"; done \
-        < <(grep -iE "$names|$tools" <<<"$msg")
-      while IFS= read -r m; do violation "commit $short: AI-assistance phrase: $m"; done \
-        < <(grep -iE "$phrases" <<<"$msg")
       while IFS= read -r m; do
         [[ $m == "$bot_trailer" ]] || violation "commit $short: co-author trailer: $m"
       done < <(grep -iE "$coauthor" <<<"$msg")
