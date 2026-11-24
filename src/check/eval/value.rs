@@ -44,6 +44,21 @@ pub enum Val {
         kind: Head,
         args: Vec<Th>,
     },
+    /// An array as a vector: it stands for `Array.mk ty [elems…]`.
+    Arr(Rc<ArrVal>),
+}
+
+/// The constants of an array's type, at its universe level, and its
+/// elements.
+#[derive(Clone)]
+pub struct ArrVal {
+    /// `Array.mk`, `List.cons` and `List.nil`, with the level.
+    pub mk: ExprId,
+    pub cons: ExprId,
+    pub nil: ExprId,
+    /// The element type.
+    pub ty: Th,
+    pub elems: Vec<Th>,
 }
 
 pub enum TState {
@@ -192,6 +207,18 @@ impl Readback {
                     r = tc.st.app(r, x);
                 }
                 r
+            }
+            Val::Arr(a) => {
+                let ty = self.thunk(tc, &a.ty);
+                let mut l = tc.st.app(a.nil, ty);
+                for e in a.elems.iter().rev() {
+                    let x = self.thunk(tc, e);
+                    let c = tc.st.app(a.cons, ty);
+                    let c = tc.st.app(c, x);
+                    l = tc.st.app(c, l);
+                }
+                let m = tc.st.app(a.mk, ty);
+                tc.st.app(m, l)
             }
         };
         self.vals.insert(key, r);
