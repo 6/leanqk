@@ -67,7 +67,7 @@ impl Default for Levels {
     }
 }
 
-fn list_hash(ls: &[LevelId]) -> u64 {
+pub(crate) fn list_hash(ls: &[LevelId]) -> u64 {
     // Ids are u32; hash their little-endian bytes.
     let mut buf = [0u8; 64];
     if ls.len() <= 16 {
@@ -147,6 +147,22 @@ impl Levels {
 
     pub fn list_has_param(&self, l: LevelList) -> bool {
         self.list_has_param[l.0 as usize]
+    }
+
+    /// The id of `node`, if interned here.
+    #[inline]
+    pub(crate) fn find(&self, node: &LevelNode) -> Option<LevelId> {
+        self.arena.find(node).map(LevelId)
+    }
+
+    /// The id of the list `ls`, if interned here.
+    pub(crate) fn find_list(&self, ls: &[LevelId]) -> Option<LevelList> {
+        if ls.is_empty() {
+            return Some(LevelList::EMPTY);
+        }
+        self.list_table
+            .find(list_hash(ls), |&id| self.list(LevelList(id)) == ls)
+            .map(|&id| LevelList(id))
     }
 
     pub fn intern_list(&mut self, ls: &[LevelId]) -> Result<LevelList, Overflow> {
