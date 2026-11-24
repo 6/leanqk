@@ -954,7 +954,24 @@ impl<'e> Tc<'e> {
         Ok(r)
     }
 
-    fn to_cnstr_when_structure(&mut self, induct: NameId, e: ExprId) -> R<ExprId> {
+    /// Whether the recursor `d` eliminates into any universe: it has one
+    /// universe parameter more than the first type of its block (as
+    /// leanprover/lean4#15371 tests it; the major's own type can be an
+    /// auxiliary nested one).
+    fn is_large_elim(&self, d: &Decl) -> bool {
+        let DeclKind::Recursor { all, .. } = d.kind else {
+            return false;
+        };
+        let Some(&first) = self.st.name_list(all).first() else {
+            return false;
+        };
+        match self.find(first) {
+            Some(i) => d.level_params.len() != i.level_params.len(),
+            None => false,
+        }
+    }
+
+    fn to_cnstr_when_structure(&mut self, rec: &Decl, induct: NameId, e: ExprId) -> R<ExprId> {
         if !self.is_non_rec_structure(induct)
             || self.is_constructor_app(e)
             || matches!(self.st.node(e), ExprNode::Str(_))
@@ -967,7 +984,11 @@ impl<'e> Tc<'e> {
             Some((n, _)) if n == induct => {}
             _ => return Ok(e),
         }
-        if self.is_prop(e_type)? {
+        // Divergence (corpus/divergences.md), after leanprover/lean4#15371:
+        // Lean v4.36.0 never expands a structure in `Prop`; here one whose
+        // recursor eliminates into any universe (such as `And`, whose
+        // fields are all proofs) is expanded too.
+        if !self.is_large_elim(rec) {
             return Ok(e);
         }
         self.expand_eta_struct(e_type, e)
@@ -1014,7 +1035,7 @@ impl<'e> Tc<'e> {
         // `whnf` of the major premise, as leanprover/lean4#15351 proposes,
         // so a major premise without a normal form does not stop the
         // reduction. Both orders agree whenever Lean's terminates.
-        major = self.to_cnstr_when_structure(induct, major)?;
+        major = self.to_cnstr_when_structure(&d, induct, major)?;
         major = self.rec_whnf(major, cheap_rec, cheap_proj)?;
         match self.st.node(major) {
             ExprNode::NatSmall(..) | ExprNode::NatBig(_) => {

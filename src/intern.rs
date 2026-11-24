@@ -11,6 +11,13 @@ use crate::strings::Overflow;
 /// A node that can be hash-consed. Children must be canonical ids.
 pub trait Node: Copy + Eq {
     fn hash(&self) -> u64;
+
+    /// The equality the table interns by; `hash` must agree with it.
+    /// Defaults to `==`.
+    #[inline]
+    fn same(&self, other: &Self) -> bool {
+        self == other
+    }
 }
 
 pub struct Interner<T> {
@@ -52,7 +59,7 @@ impl<T: Node> Interner<T> {
     pub fn find(&self, node: &T) -> Option<u32> {
         let nodes = &self.nodes;
         self.table
-            .find(node.hash(), |&id| nodes[id as usize] == *node)
+            .find(node.hash(), |&id| nodes[id as usize].same(node))
             .copied()
     }
 
@@ -65,7 +72,7 @@ impl<T: Node> Interner<T> {
         let id = nodes.len() as u32;
         match table.entry(
             h,
-            |&id| nodes[id as usize] == node,
+            |&id| nodes[id as usize].same(&node),
             |&id| nodes[id as usize].hash(),
         ) {
             Entry::Occupied(e) => Ok((*e.get(), false)),

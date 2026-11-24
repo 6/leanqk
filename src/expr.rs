@@ -77,12 +77,20 @@ pub struct LetBinder {
     pub nondep: bool,
 }
 
+// Binder names and annotations are not part of a term's identity: nodes
+// that differ only in them are interned as one (keeping the first one's
+// names, which only show in messages). The kernel never looks at them, and
+// Lean's own expression equality ignores them too, so alpha-equivalent
+// terms get equal ids and every cache and quick check sees them as equal.
+
 impl Node for LetBinder {
     fn hash(&self) -> u64 {
-        hash2(
-            (self.name.0 as u64) << 1 | self.nondep as u64,
-            (self.ty.0 as u64) << 32 | self.value.0 as u64,
-        )
+        hash2(0x1e7, (self.ty.0 as u64) << 32 | self.value.0 as u64)
+    }
+
+    #[inline]
+    fn same(&self, o: &Self) -> bool {
+        self.ty == o.ty && self.value == o.value
     }
 }
 
@@ -94,8 +102,8 @@ impl Node for ExprNode {
             ExprNode::Sort(l) => (1, l.0, 0, 0),
             ExprNode::Const(n, ls) => (2, n.0, ls.0, 0),
             ExprNode::App(f, a) => (3, f.0, a.0, 0),
-            ExprNode::Lam(bi, n, t, b) => (4 | (bi as u64) << 4, n.0, t.0, b.0),
-            ExprNode::Pi(bi, n, t, b) => (5 | (bi as u64) << 4, n.0, t.0, b.0),
+            ExprNode::Lam(_, _, t, b) => (4, 0, t.0, b.0),
+            ExprNode::Pi(_, _, t, b) => (5, 0, t.0, b.0),
             ExprNode::Let(h, b) => (6, h.0, b.0, 0),
             ExprNode::NatSmall(lo, hi) => (7, lo, hi, 0),
             ExprNode::NatBig(i) => (8, i.0, 0, 0),
@@ -104,6 +112,15 @@ impl Node for ExprNode {
             ExprNode::FVar(i) => (11, i, 0, 0),
         };
         hash2(tag | (a as u64) << 32, (b as u64) << 32 | c as u64)
+    }
+
+    #[inline]
+    fn same(&self, o: &Self) -> bool {
+        match (*self, *o) {
+            (ExprNode::Lam(_, _, t1, b1), ExprNode::Lam(_, _, t2, b2))
+            | (ExprNode::Pi(_, _, t1, b1), ExprNode::Pi(_, _, t2, b2)) => t1 == t2 && b1 == b2,
+            (a, b) => a == b,
+        }
     }
 }
 

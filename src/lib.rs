@@ -1,9 +1,10 @@
 //! leanqk: an independent, fast, memory-light proof checker for Lean 4.
 //!
-//! So far this crate reads Lean's NDJSON kernel export (format 3, as written
-//! by `leanexport`) into an [`env::Env`]: hash-consed arenas of names,
-//! universe levels and expressions with `u32` ids, plus the declarations.
-//! The type checker is not implemented yet.
+//! The crate reads Lean's NDJSON kernel export (format 3, as written by
+//! `leanexport`) into an [`env::Env`]: hash-consed arenas of names, universe
+//! levels and expressions with `u32` ids, plus the declarations. Then
+//! [`check::check_env`] type-checks every declaration, following Lean's C++
+//! kernel; see the [`check`] module.
 //!
 //! The data model follows Lean's kernel (`src/kernel`, `src/Lean/Expr.lean`,
 //! `src/Lean/Declaration.lean`); the arena-with-ids layout is in the spirit

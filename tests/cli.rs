@@ -48,15 +48,32 @@ fn text(b: &[u8]) -> String {
 }
 
 #[test]
-fn well_formed_export_is_declined_until_type_checking_exists() {
+fn well_typed_export_is_accepted() {
     let out = check("good", &format!("{META}\n{GOOD}"));
-    assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let stdout = text(&out.stdout);
     assert!(stdout.contains("declarations  1"), "{stdout}");
     assert!(
-        stdout.contains("parsed 1 declarations; type checking not implemented yet"),
+        stdout.contains("accepted: 1 declarations checked"),
         "{stdout}"
     );
+}
+
+/// `axiom a : Prop` and `def b : Prop := Prop`, which is ill-typed.
+const BAD_DEF: &str = r#"{"in":1,"str":{"pre":0,"str":"a"}}
+{"in":2,"str":{"pre":0,"str":"b"}}
+{"ie":0,"sort":0}
+{"axiom":{"name":1,"levelParams":[],"type":0,"isUnsafe":false}}
+{"def":{"name":2,"levelParams":[],"type":0,"value":0,"hints":"opaque","safety":"safe","all":[2]}}
+"#;
+
+#[test]
+fn ill_typed_declaration_is_rejected_by_name() {
+    let out = check("bad", &format!("{META}\n{BAD_DEF}"));
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains("rejected: declaration 'b'"), "{stderr}");
+    assert!(stderr.contains("type mismatch"), "{stderr}");
 }
 
 #[test]
@@ -183,7 +200,6 @@ fn help_documents_exit_codes() {
         assert!(stdout.contains("Exit status:"), "{stdout}");
         assert!(stdout.contains("0  accepted"), "{stdout}");
         assert!(stdout.contains("--parse-only"), "{stdout}");
-        assert!(stdout.contains("not implemented yet"), "{stdout}");
         assert!(stdout.contains("1  rejected"), "{stdout}");
         assert!(stdout.contains("2  declined or usage error"), "{stdout}");
     }
