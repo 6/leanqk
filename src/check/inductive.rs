@@ -443,8 +443,8 @@ impl<'a, 'e> AddInd<'a, 'e> {
             let l = self.tc.sort_level(s).unwrap();
             if first {
                 self.result_level = l;
-                self.is_not_zero = univ::is_never_zero(&mut self.tc.st, l);
-            } else if !univ::equiv(&self.tc.st, l, self.result_level) {
+                self.is_not_zero = univ::is_not_zero(&self.tc.st, l);
+            } else if !univ::equiv(&mut self.tc.st, l, self.result_level) {
                 return err("mutually inductive types must live in the same universe");
             }
             let c = self.tc.st.cnst(name, self.levels);
@@ -602,8 +602,8 @@ impl<'a, 'e> AddInd<'a, 'e> {
                         t = self.tc.st.instantiate1(body, self.params[i]);
                     } else {
                         let s = self.tc.ensure_type(dom)?;
-                        if !(univ::leq(&self.tc.st, s, self.result_level)
-                            || univ::is_zero(&self.tc.st, self.result_level))
+                        if !(univ::geq(&mut self.tc.st, self.result_level, s)
+                            || univ::normalizes_to_zero(&self.tc.st, self.result_level))
                         {
                             return err(format!(
                                 "universe level of type_of(arg #{}) of '{}' is too big for the corresponding inductive datatype",
@@ -680,7 +680,7 @@ impl<'a, 'e> AddInd<'a, 'e> {
             let (fv, b) = self.tc.local_for(t);
             if i >= self.nparams {
                 let s = self.tc.ensure_type(dom)?;
-                if !univ::is_zero(&self.tc.st, s) {
+                if !univ::normalizes_to_zero(&self.tc.st, s) {
                     to_check.push(fv);
                 }
             }
@@ -715,7 +715,7 @@ impl<'a, 'e> AddInd<'a, 'e> {
 
     fn init_k_target(&mut self) {
         self.k_target = self.types.len() == 1
-            && univ::is_zero(&self.tc.st, self.result_level)
+            && univ::normalizes_to_zero(&self.tc.st, self.result_level)
             && self.types[0].ctors.len() == 1;
         if !self.k_target {
             return;
