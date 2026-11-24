@@ -166,4 +166,17 @@ def ev_fn : Nat → Nat := (List.range 5).foldl (fun f _ => fun x => f x + 1) id
 theorem ev_fn_ok : ev_fn 3 = 8 := sorry
 theorem ev_fn_wrong : ev_fn 3 = 7 := sorry
 
+def ev_arr (n : Nat) : Array Nat := (List.range n).foldl (fun a i => a.push (i * i)) #[]
+theorem ev_arr_get : (ev_arr 50)[49]! + (ev_arr 50).getD 50 7 = 2408 := sorry
+theorem ev_arr_get_wrong : (ev_arr 50)[49]! + (ev_arr 50).getD 50 7 = 2401 := sorry
+theorem ev_arr_set : ((ev_arr 50).set! 3 100).toList.take 5 = [0, 1, 4, 100, 16] := sorry
+theorem ev_arr_set_wrong : ((ev_arr 50).set! 3 100).toList.take 5 = [0, 1, 4, 9, 16] := sorry
+theorem ev_arr_oob : ((ev_arr 5).set! 9 1).size + (ev_arr 5)[9]! = 5 := sorry
+theorem ev_arr_oob_wrong : ((ev_arr 5).set! 9 1).size + (ev_arr 5)[9]! = 6 := sorry
+theorem ev_arr_eq : decide (ev_arr 20 = (List.range 20).toArray.map (fun i => i * i)) = true := sorry
+theorem ev_arr_eq_wrong : decide (ev_arr 20 = (List.range 20).toArray) = true := sorry
+def ev_arr_fns : Array (Nat → Nat) := #[(· + 1), (· * 2)] |>.push (· + 10)
+theorem ev_arr_fn : ev_arr_fns[2]! 5 + ev_arr_fns[1]! 4 = 23 := sorry
+theorem ev_arr_fn_wrong : ev_arr_fns[2]! 5 + ev_arr_fns[1]! 4 = 24 := sorry
+
 end K

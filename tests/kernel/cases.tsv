@@ -194,3 +194,13 @@ eval-let	eval	accept	accept	a let-bound value used twice
 eval-let-wrong	eval	reject	reject	the same, off by one
 eval-fn	eval	accept	accept	a fold that builds a function (closures of closures), then applied
 eval-fn-wrong	eval	reject	reject	the same, off by one
+eval-arr-get	eval	accept	accept	an array built by push, read by get! and getD (in and out of range)
+eval-arr-get-wrong	eval	reject	reject	the same, wrong sum
+eval-arr-set	eval	accept	accept	set! then the array as a list
+eval-arr-set-wrong	eval	reject	reject	the same, the old element
+eval-arr-oob	eval	accept	accept	set! and get! out of range leave the array alone and give the default
+eval-arr-oob-wrong	eval	reject	reject	the same, off by one
+eval-arr-eq	eval	accept	accept	decidable equality of an array built by push and one made from a list
+eval-arr-eq-wrong	eval	reject	reject	the same, different arrays
+eval-arr-fn	eval	accept	accept	an array of functions, elements applied
+eval-arr-fn-wrong	eval	reject	reject	the same, wrong sum

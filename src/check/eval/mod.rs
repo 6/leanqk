@@ -30,12 +30,12 @@ use crate::expr::{ExprId, ExprNode};
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
-use super::ext::NatOp;
+use super::ext::{ArrayOp, NatOp};
 use super::store::IdMap;
 use super::tc::Tc;
 
 use nat::Nat;
-use value::{Env, TState, Th, Thunk, V, Val};
+use value::{ArrVal, Env, TState, Th, Thunk, V, Val};
 
 /// Why the machine gave up. Giving up is never a verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +85,9 @@ enum CInfo {
     Rec(Rc<RecInfo>),
     QuotLift,
     QuotInd,
+    /// An `Array` operation run on vectors; its definition, for arrays
+    /// that are not values yet.
+    Arr(ArrayOp, ExprId),
     /// An inductive type, axiom, opaque constant, `Quot` or `Quot.mk`:
     /// it does not reduce.
     Neutral,
@@ -140,6 +143,7 @@ pub struct State {
     closed: IdMap<ExprId, Th>,
     steps: u64,
     depth: u32,
+    array_names: Option<Option<(NameId, NameId, NameId)>>,
     /// `LEANQK_EVAL_PROFILE=1`: how often each constant was reached.
     profile: Option<IdMap<ExprId, u64>>,
 }
@@ -175,7 +179,11 @@ pub fn whnf(tc: &mut Tc<'_>, e: ExprId) -> Option<ExprId> {
     }
     let r = {
         let mut m = Machine { tc, s: &mut s };
-        m.top(e)
+        let r = m.top(e);
+        if m.s.steps > 1 << 20 {
+            m.dump_profile();
+        }
+        r
     };
     CALLS.fetch_add(1, Relaxed);
     STEPS.fetch_add(s.steps, Relaxed);
@@ -194,7 +202,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         // A partial application of a built-in `Nat` operation is not in
         // weak head normal form (`whnf` would unfold it).
         if let Val::Pap {
-            kind: Head::Op(..) | Head::Succ,
+            kind: Head::Op(..) | Head::Succ | Head::Arr(..),
             ..
         } = &*v
         {
@@ -388,6 +396,9 @@ impl<'a, 'e> Machine<'a, 'e> {
                 {
                     return CInfo::Op(op, v);
                 }
+                if let Some(&op) = ext.array_ops.get(&n) {
+                    return CInfo::Arr(op, v);
+                }
                 CInfo::Unfold(v)
             }
             DeclKind::Constructor {
@@ -476,6 +487,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             CInfo::Rec(r) => self.saturate(c, Head::Rec(r), args),
             CInfo::QuotLift => self.saturate(c, Head::QuotLift, args),
             CInfo::QuotInd => self.saturate(c, Head::QuotInd, args),
+            CInfo::Arr(op, v) => self.saturate(c, Head::Arr(op, v), args),
             CInfo::Ctor(info) => Ok(Rc::new(Val::Ctor { c, info, args })),
             CInfo::Neutral => Ok(Rc::new(Val::Neutral { head: c, args })),
             CInfo::Bail => Err(stuck(444)),
@@ -576,6 +588,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 self.apply_rest(r, rest)
             }
             Head::Rec(r) => self.iota(&r, args),
+            Head::Arr(op, def) => self.array_op(c, op, def, args),
             Head::QuotLift | Head::QuotInd => {
                 let (mk_pos, arg_pos) = if matches!(kind, Head::QuotLift) {
                     (5, 3)
@@ -701,7 +714,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 a.extend(args);
                 self.saturate(*head, kind.clone(), a)
             }
-            Val::Nat(_) | Val::Str(_) => Err(stuck(667)),
+            Val::Nat(_) | Val::Str(_) | Val::Arr(_) => Err(stuck(667)),
         }
     }
 
@@ -711,6 +724,10 @@ impl<'a, 'e> Machine<'a, 'e> {
             Val::Str(e) => {
                 let e = *e;
                 self.string_ctor(e)?
+            }
+            Val::Arr(a) => {
+                let a = a.clone();
+                self.array_ctor(&a)?
             }
             _ => x,
         };
@@ -765,6 +782,10 @@ impl<'a, 'e> Machine<'a, 'e> {
                 let e = *e;
                 mv = self.string_ctor(e)?;
             }
+            Val::Arr(a) => {
+                let a = a.clone();
+                mv = self.array_ctor(&a)?;
+            }
             _ => {}
         }
         let Val::Ctor { c, args: margs, .. } = &*mv else {
@@ -796,6 +817,154 @@ impl<'a, 'e> Machine<'a, 'e> {
         let t = self.closed(rhs);
         let f = self.force(&t)?;
         self.apply(f, a)
+    }
+
+    /// An `Array` operation applied to (at least) its arguments: on a
+    /// vector if the array is one or is `Array.mk` of a list built to its
+    /// end, else by its definition.
+    fn array_op(&mut self, c: ExprId, op: ArrayOp, def: ExprId, mut args: Vec<Th>) -> ER<V> {
+        let n = Head::Arr(op, def).arity();
+        let rest = args.split_off(n);
+        let r = match self.array_arg(c, &args[1])? {
+            None => None,
+            Some(a) => match op {
+                ArrayOp::Size => Some(Rc::new(Val::Nat(Nat::Small(a.elems.len() as u64)))),
+                ArrayOp::Push => {
+                    let mut a = a;
+                    Rc::make_mut(&mut a).elems.push(args[2].clone());
+                    Some(Rc::new(Val::Arr(a)))
+                }
+                ArrayOp::Get | ArrayOp::Set => {
+                    let i = self.force(&args[2])?;
+                    match self.nat_of(&i) {
+                        Some(Nat::Small(i)) if (i as usize) < a.elems.len() => {
+                            let i = i as usize;
+                            if op == ArrayOp::Get {
+                                let t = a.elems[i].clone();
+                                Some(self.force(&t)?)
+                            } else {
+                                let mut a = a;
+                                Rc::make_mut(&mut a).elems[i] = args[3].clone();
+                                Some(Rc::new(Val::Arr(a)))
+                            }
+                        }
+                        _ => None,
+                    }
+                }
+            },
+        };
+        let r = match r {
+            Some(r) => r,
+            None => {
+                let t = self.closed(def);
+                let f = self.force(&t)?;
+                self.apply(f, args)?
+            }
+        };
+        self.apply_rest(r, rest)
+    }
+
+    /// The array `t` as a vector, if it is one or `Array.mk` of a list
+    /// whose spine evaluates to its end; `c` is the operation (for the
+    /// universe level).
+    fn array_arg(&mut self, c: ExprId, t: &Th) -> ER<Option<Rc<ArrVal>>> {
+        let v = self.force(t)?;
+        let (ty, mut l) = match &*v {
+            Val::Arr(a) => return Ok(Some(a.clone())),
+            Val::Ctor { args, .. } if args.len() == 2 && self.is_array_mk(&v) => {
+                (args[0].clone(), args[1].clone())
+            }
+            _ => return Ok(None),
+        };
+        let Some((mk, cons, nil)) = self.array_consts(c) else {
+            return Ok(None);
+        };
+        let mut elems = Vec::new();
+        loop {
+            let x = self.force(&l)?;
+            match &*x {
+                Val::Ctor { c, args, .. } if *c == cons && args.len() == 3 => {
+                    elems.push(args[1].clone());
+                    l = args[2].clone();
+                }
+                Val::Ctor { c, args, .. } if *c == nil && args.len() == 1 => break,
+                _ => return Ok(None),
+            }
+        }
+        Ok(Some(Rc::new(ArrVal {
+            mk,
+            cons,
+            nil,
+            ty,
+            elems,
+        })))
+    }
+
+    fn is_array_mk(&mut self, v: &V) -> bool {
+        let Val::Ctor { c, .. } = &**v else {
+            return false;
+        };
+        match (self.tc.st.node(*c), self.array_names()) {
+            (ExprNode::Const(n, _), Some((m, _, _))) => n == m,
+            _ => false,
+        }
+    }
+
+    /// `Array.mk`, `List.cons` and `List.nil`, if declared.
+    fn array_names(&mut self) -> Option<(NameId, NameId, NameId)> {
+        *self.s.array_names.get_or_insert_with(|| {
+            let names = &self.tc.st.env.names;
+            Some((
+                names.find_dotted("Array.mk")?,
+                names.find_dotted("List.cons")?,
+                names.find_dotted("List.nil")?,
+            ))
+        })
+    }
+
+    /// `Array.mk`, `List.cons` and `List.nil` at the level of the array
+    /// operation `c`.
+    fn array_consts(&mut self, c: ExprId) -> Option<(ExprId, ExprId, ExprId)> {
+        let ExprNode::Const(_, ls) = self.tc.st.node(c) else {
+            return None;
+        };
+        let (m, c, n) = self.array_names()?;
+        Some((
+            self.tc.st.cnst(m, ls),
+            self.tc.st.cnst(c, ls),
+            self.tc.st.cnst(n, ls),
+        ))
+    }
+
+    /// The vector `a` as the constructor application it stands for.
+    fn array_ctor(&mut self, a: &ArrVal) -> ER<V> {
+        let nil_info = self.ctor_info(a.nil)?;
+        let cons_info = self.ctor_info(a.cons)?;
+        let mk_info = self.ctor_info(a.mk)?;
+        let mut l = Rc::new(Val::Ctor {
+            c: a.nil,
+            info: nil_info,
+            args: vec![a.ty.clone()],
+        });
+        for e in a.elems.iter().rev() {
+            l = Rc::new(Val::Ctor {
+                c: a.cons,
+                info: cons_info.clone(),
+                args: vec![a.ty.clone(), e.clone(), Thunk::done(l)],
+            });
+        }
+        Ok(Rc::new(Val::Ctor {
+            c: a.mk,
+            info: mk_info,
+            args: vec![a.ty.clone(), Thunk::done(l)],
+        }))
+    }
+
+    fn ctor_info(&mut self, c: ExprId) -> ER<Rc<CtorInfo>> {
+        match self.info(c) {
+            CInfo::Ctor(i) => Ok(i),
+            _ => Err(stuck(0)),
+        }
     }
 
     /// `n` as `Nat.zero` or `Nat.succ (n - 1)`.
@@ -835,6 +1004,8 @@ pub enum Head {
     Rec(Rc<RecInfo>),
     QuotLift,
     QuotInd,
+    /// With the operation's definition.
+    Arr(ArrayOp, ExprId),
 }
 
 impl Head {
@@ -845,6 +1016,10 @@ impl Head {
             Head::Rec(r) => r.major_idx + 1,
             Head::QuotLift => 6,
             Head::QuotInd => 5,
+            Head::Arr(ArrayOp::Size, _) => 2,
+            Head::Arr(ArrayOp::Push, _) => 3,
+            Head::Arr(ArrayOp::Get, _) => 4,
+            Head::Arr(ArrayOp::Set, _) => 5,
         }
     }
 }
