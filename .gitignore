@@ -1,2 +1,6 @@
 /target/
 **/*.rs.bk
+/corpus/exports/
+/corpus/.cache/
+/corpus-results.tsv
+/corpus-parse.tsv

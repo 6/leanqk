@@ -1,0 +1,290 @@
+test_id	source	expected	lean	note
+arena/bugs/closure-level-subst	arena	reject	reject	while replaying declaration 'lower': (kernel) declaration type mismatch, 'lower' has type Family
+arena/bugs/constlevels	arena	reject	reject	while replaying declaration '_test': (kernel) let-declaration type mismatch 'x'
+arena/bugs/ctor-num-fields	arena	reject	reject	while replaying declaration '_private.Test.0.h': (kernel) declaration type mismatch, '_private.Test.0.h' has type Eq (S.mk✝ Bool.true) (S.mk✝ Bool.true)
+arena/bugs/eta-ctor-alias	arena	reject	reject	while replaying declaration 'etaCtorAlias': (kernel) declaration type mismatch, 'etaCtorAlias' has type ∀ (f : BoxFn), Eq f f
+arena/bugs/k-rec-conv	arena	reject	reject	while replaying declaration 'bad': (kernel) declaration type mismatch, 'bad' has type Eq t1 t1
+arena/bugs/large-elim-param	arena	reject	reject	while replaying declaration 'false_proof': (kernel) incorrect number of universe levels parameters for 'MyBool.rec', #1 expected, #2 provided
+arena/bugs/large-elim-prop-bool	arena	reject	reject	while replaying declaration 'pick': (kernel) incorrect number of universe levels parameters for 'NewBool.rec', #0 expected, #1 provided
+arena/bugs/level-imax-leq	arena	reject	reject	while replaying declaration 'down': (kernel) declaration type mismatch, 'down' has type Type (imax u v) → Type (imax u v)
+arena/bugs/level-imax-normalization	arena	reject	reject	while replaying declaration 'down': (kernel) declaration type mismatch, 'down' has type Type (imax 0 v) → Type (imax 0 v)
+arena/bugs/loose-bvar-value	arena	reject	reject	while replaying declaration 'f': (kernel) type checker does not support loose bound variables, replace them with free variables before invoking it
+arena/bugs/nat-rec-k-lie	arena	reject	reject	while replaying declaration 'k1': (kernel) declaration type mismatch, 'k1' has type ∀ (n : Nat), True
+arena/bugs/nat-rec-rules	arena	reject	reject	while replaying declaration 'proof_of_false': (kernel) application type mismatch Nat.rec True.intro fun n ih => True.intro
+arena/bugs/nat-shift-huge	arena	accept	accept	
+arena/bugs/nested-name-capture	arena	reject	reject	while replaying declaration 'boom': (kernel) declaration type mismatch, 'boom' has type P (fold sample).1
+arena/bugs/nested-rec-rule-nfields	arena	reject	reject	while replaying declaration 'bad': (kernel) application type mismatch propRepresentationFalse✝ badProp✝ fun b => b
+arena/bugs/nested-unused-param	arena	reject	reject	while replaying declaration 'E': (kernel) invalid projection w.1
+arena/bugs/open-term-cache-context	arena	reject	reject	while replaying declaration 'openDagContextLeakFalse': (kernel) application type mismatch f y
+arena/bugs/orphan-rec	arena	reject	reject	while replaying declaration 'inconsistent': (kernel) unknown constant 'rogue'
+arena/bugs/pi-closure-context	arena	reject	reject	while replaying declaration 'bad': (kernel) declaration type mismatch, 'bad' has type TrueTy → Prop
+arena/bugs/proj-non-structure	arena	reject	reject	while replaying declaration 'bad': (kernel) invalid projection ⋯.1
+arena/bugs/proj-of-imax-prop	arena	reject	reject	while replaying declaration 'imaxProjBool': (kernel) invalid projection p.1
+arena/bugs/proj-of-stuck-prop	arena	reject	reject	while replaying declaration 'Native64ResultSortOwner': (kernel) type expected Native64ResultSortGate.rec Prop h
+arena/bugs/proj-of-subst-prop	arena	reject	reject	while replaying declaration 'PR14806Subst.observe': (kernel) type expected PR14806Subst.gate PR14806Subst.witness
+arena/bugs/quot-bad-type	arena	reject	reject	while replaying declaration 'inconsistent': (kernel) declaration type mismatch, 'inconsistent' has type {α : Prop} → (α → α → Prop) → Prop
+arena/bugs/rec-k-lie	arena	reject	reject	while replaying declaration 'bad': (kernel) declaration type mismatch, 'bad' has type True
+arena/bugs/rec-missing-ih	arena	reject	reject	while replaying declaration 'Native64TwoHashOwner': (kernel) arg #3 of 'Native64TwoHashOwner.step' contains a non valid occurrence of the datatypes being declared
+arena/bugs/rec-of-subst-prop	arena	reject	reject	while replaying declaration 'Issue.forallFalse': (kernel) type expected Issue.resultSort Issue.gateWitness
+arena/bugs/rec-rule-proof-irrel	arena	reject	reject	while replaying declaration 'badApp': (kernel) application type mismatch key junkApp rfl
+arena/bugs/rec-rule-proof-irrel-nested	arena	reject	reject	while replaying declaration 'badNested': (kernel) application type mismatch key junkNested rfl
+arena/bugs/rec-rule-wrong-arg	arena	reject	reject	while replaying declaration 'bad': (kernel) application type mismatch Eq.subst (Subtype.property wx) True.intro
+arena/bugs/rec-type-proof-irrel	arena	reject	reject	while replaying declaration 'badRecType': (kernel) application type mismatch @Q.rec (fun h x => Eq (read h) Bool.true) rfl
+arena/bugs/str-lit-utf8	arena	accept	accept	
+arena/bugs/str-lit-utf8-bad	arena	reject	reject	while replaying declaration 'strLitUtf8Bad': (kernel) declaration type mismatch, 'strLitUtf8Bad' has type Eq "é" "é"
+arena/bugs/unit-rec-rule	arena	reject	reject	while replaying declaration 'badR': (kernel) declaration type mismatch, 'badR' has type PUnit
+arena/corner-cases/alg-conv-trans-acc	arena	either	reject	while replaying declaration 'trans': (kernel) declaration type mismatch, 'trans' has type ∀ (a : Acc (fun x1 x2 => LT.lt x1 x2) 1), Eq (f 1 a) (f 1 a)
+arena/corner-cases/alg-conv-trans-acc-left	arena	either	accept	
+arena/corner-cases/alg-conv-trans-acc-right	arena	either	accept	
+arena/corner-cases/alg-conv-trans-quot	arena	either	reject	while replaying declaration 'trans': (kernel) declaration type mismatch, 'trans' has type ∀ {P : Prop} {r : P → P → Prop} {α : Type} (f : P → α) (h : ∀ (x y : P), r x y → Eq (f x) (f y)) (q : Quot r),
+arena/corner-cases/alg-conv-trans-quot-left	arena	either	reject	while replaying declaration 'left': (kernel) declaration type mismatch, 'left' has type ∀ {P : Prop} {r : P → P → Prop} {α : Type} (f : P → α) (h : ∀ (x y : P), r x y → Eq (f x) (f y)) (q : Quot r),
+arena/corner-cases/alg-conv-trans-quot-left-def	arena	either	accept	
+arena/corner-cases/alg-conv-trans-quot-right	arena	either	accept	
+arena/corner-cases/eta-ctor	arena	either	reject	while replaying declaration 'etaCtor': (kernel) declaration type mismatch, 'etaCtor' has type ∀ (x : True → T), Eq x x
+arena/corner-cases/eta-rec-struct	arena	either	reject	while replaying declaration 'etaRecStruct': (kernel) declaration type mismatch, 'etaRecStruct' has type ∀ (a : Prod Bool Bool → Bool), Eq a a
+arena/corner-cases/eta-rule-k	arena	either	reject	while replaying declaration 'etaRuleK': (kernel) declaration type mismatch, 'etaRuleK' has type ∀ (a : Eq Bool.true Bool.true → Bool), Eq a a
+arena/corner-cases/eta-struct-major-and	arena	either	reject	while replaying declaration 'andMajorEta': (kernel) declaration type mismatch, 'andMajorEta' has type ∀ (P Q : Prop) (A : Type) (f : P → Q → A) (x : And P Q), Eq (And.rec f x) (And.rec f x)
+arena/corner-cases/eta-struct-major-and-no-whnf	arena	either	timeout	no verdict within 180 s
+arena/corner-cases/eta-struct-major-no-whnf	arena	either	timeout	no verdict within 180 s
+arena/corner-cases/eta-unit-like-nested	arena	either	reject	while replaying declaration 'unitLikeNested': (kernel) declaration type mismatch, 'unitLikeNested' has type ∀ (p q : Mixed Nat (Bool → UnitField)), Eq q q
+arena/corner-cases/eta-unit-like-pi	arena	either	reject	while replaying declaration 'unitLikePi': (kernel) declaration type mismatch, 'unitLikePi' has type ∀ (α : Type) (p q : α → Unit), Eq q q
+arena/corner-cases/eta-unit-like-proof-field	arena	either	reject	while replaying declaration 'unitLikeProofField': (kernel) declaration type mismatch, 'unitLikeProofField' has type ∀ (p q : ProofField), Eq q q
+arena/corner-cases/eta-unit-like-struct	arena	either	reject	while replaying declaration 'unitLikeStruct': (kernel) declaration type mismatch, 'unitLikeStruct' has type ∀ (p q : UnitField), Eq q q
+arena/corner-cases/imax-nested-absorption	arena	either	reject	while replaying declaration 'imaxAbsorbRight': (kernel) declaration type mismatch, 'imaxAbsorbRight' has type Type (imax u v)
+arena/corner-cases/imax-right-successor	arena	either	reject	while replaying declaration 'imaxRightOne': (kernel) declaration type mismatch, 'imaxRightOne' has type Type (imax u 1)
+arena/corner-cases/large-elim-maybe-prop	arena	either	reject	while replaying declaration 'MaybePropBox.get': (kernel) incorrect number of universe levels parameters for 'MaybePropBox.rec', #1 expected, #2 provided
+arena/corner-cases/let-value-type-mismatch	arena	either	reject	while replaying declaration 'EcosystemCase': (kernel) let-declaration type mismatch 'u'
+arena/corner-cases/nested-nonuniform-param	arena	either	reject	while replaying declaration 'E': (kernel) invalid occurrence of datatype 'E' being declared: it must be applied to the parameters and universe levels of the mutual declaration
+arena/corner-cases/nested-redex-aux	arena	either	accept	
+arena/corner-cases/positivity-whnf	arena	either	reject	while replaying declaration 'LALReduciblePositivity': (kernel) arg #1 of 'LALReduciblePositivity.mk' has a non positive occurrence of the datatypes being declared
+arena/corner-cases/proj-maybe-prop	arena	either	accept	
+arena/corner-cases/proj-maybe-prop-past	arena	either	accept	
+arena/corner-cases/proof-param-ok	arena	accept	accept	
+arena/corner-cases/proof-param-swap	arena	either	reject	while replaying declaration 'LALProofParameterSwap': (kernel) invalid occurrence of datatype 'LALProofParameterSwap' being declared: it must be applied to the parameters and universe levels of the mut
+arena/corner-cases/subject-reduction-redex	arena	either	accept	
+arena/corner-cases/subject-reduction-reduct	arena	either	reject	while replaying declaration 'reduct': (kernel) application type mismatch k x0
+arena/corner-cases/vanishing-occurrence	arena	either	accept	
+arena/init-prelude	arena	accept	accept	
+arena/other/extra-rec	arena	reject	reject	while replaying declaration 'inconsistent': (kernel) unknown constant 'rogue'
+arena/other/inductive-undeclared-universe	arena	reject	reject	while replaying declaration 'U': (kernel) invalid reference to undefined universe level parameter 'u'
+arena/other/level-index-out-of-order	arena	accept	accept	
+arena/other/nat-lit-add	arena	accept	accept	
+arena/other/nat-lit-add-bad	arena	reject	reject	while replaying declaration 'natAddLitBad': (kernel) declaration type mismatch, 'natAddLitBad' has type Eq (Nat.add 123456789 987654321) (Nat.add 123456789 987654321)
+arena/other/nat-lit-ble	arena	accept	accept	
+arena/other/nat-lit-sub	arena	accept	accept	
+arena/other/orphan-ctor	arena	reject	reject	while replaying declaration 'inconsistent': (kernel) unknown constant 'rogue'
+arena/other/proj-of-prop	arena	reject	reject	while replaying declaration 'badFalse': (kernel) application type mismatch Wrapper.mk True.intro
+arena/other/sparse-name-index	arena	accept	accept	
+arena/perf/app-lam	arena	accept	accept	
+arena/perf/args-before-unfold	arena	accept	accept	
+arena/perf/beta-ladder	arena	accept	accept	
+arena/perf/church-numerals	arena	accept	accept	
+arena/perf/discarded-argument	arena	accept	accept	
+arena/perf/discarded-argument-match	arena	accept	accept	
+arena/perf/folded-constant-first	arena	accept	accept	
+arena/perf/folded-constant-last	arena	accept	accept	
+arena/perf/fueled-chain	arena	accept	accept	
+arena/perf/grind-ring-5	arena	accept	accept	
+arena/perf/identical-nesting	arena	accept	accept	
+arena/perf/irrelevance-before-evaluation	arena	accept	accept	
+arena/perf/irrelevance-refutes	arena	accept	accept	
+arena/perf/ite-taken-branch	arena	accept	accept	
+arena/perf/ite-taken-branch-bad	arena	reject	reject	while replaying declaration 'ite_taken_branch_bad': (kernel) declaration type mismatch, 'ite_taken_branch_bad' has type Eq piA piA
+arena/perf/let-fold	arena	accept	accept	
+arena/perf/let-ladder	arena	accept	accept	
+arena/perf/loop-unfolded-once	arena	accept	accept	
+arena/perf/loop-unfolded-once-bad	arena	reject	reject	while replaying declaration 'loop_unfolded_once_bad': (kernel) declaration type mismatch, 'loop_unfolded_once_bad' has type ∀ (w : Nat) (g : Nat → Nat → Bool),
+arena/perf/magma-list-deep-n21	arena	accept	accept	
+arena/perf/magma-list-deep-n36	arena	accept	accept	
+arena/perf/magma-list-pair-n21	arena	accept	accept	
+arena/perf/magma-list-pair-n7	arena	accept	accept	
+arena/perf/magma-string-n4	arena	accept	accept	
+arena/perf/magma-string-pair-n9	arena	accept	accept	
+arena/perf/proj-app-lazy-delta	arena	accept	accept	
+arena/perf/proj-applied-struct	arena	accept	accept	
+arena/perf/proj-applied-struct-arg-bad	arena	reject	reject	while replaying declaration 'proj_applied_struct_arg_bad_3': (kernel) declaration type mismatch, 'proj_applied_struct_arg_bad_3' has type ∀ (c x : Nat), Eq ((gC' slowC c).fn (HAdd.hAdd x 2)) ((gC' slo
+arena/perf/proj-applied-struct-bad	arena	reject	reject	while replaying declaration 'proj_applied_struct_bad': (kernel) declaration type mismatch, 'proj_applied_struct_bad' has type ∀ (c x : Nat), Eq (HAdd.hAdd x c) (HAdd.hAdd x c)
+arena/perf/proj-cheap-struct	arena	accept	accept	
+arena/perf/proj-lazy-struct	arena	accept	accept	
+arena/perf/proj-stuck-struct	arena	accept	accept	
+arena/perf/prop-struct-projections	arena	accept	accept	
+arena/perf/refute-cheap-first	arena	reject	reject	while replaying declaration 'kernel_refute_cheap_first': (kernel) declaration type mismatch, 'kernel_refute_cheap_first' has type Eq
+arena/perf/refute-cheap-last	arena	reject	reject	while replaying declaration 'kernel_refute_cheap_last': (kernel) declaration type mismatch, 'kernel_refute_cheap_last' has type Eq
+arena/perf/repeated-subproblem	arena	accept	accept	
+arena/perf/shared-subterm	arena	accept	accept	
+arena/perf/shift-cascade	arena	accept	accept	
+arena/perf/short-circuit-and	arena	accept	accept	
+arena/perf/short-circuit-and-bad	arena	reject	reject	while replaying declaration 'short_circuit_and_bad': (kernel) declaration type mismatch, 'short_circuit_and_bad' has type ∀ (p q : Nat), Eq (Bool.true.and (p.beq q)) (Bool.true.and (p.beq q))
+arena/perf/unfold-before-literal	arena	accept	accept	
+arena/perf/unfold-before-literal-bad	arena	reject	reject	while replaying declaration 'unfold_before_literal_bad': (kernel) declaration type mismatch, 'unfold_before_literal_bad' has type Eq (HAdd.hAdd slowA (HAdd.hAdd 2 0)) (HAdd.hAdd slowA (HAdd.hAdd 2 0))
+arena/perf/unfold-before-literal-fallback	arena	accept	accept	
+arena/perf/unroll-versus-evaluate	arena	accept	accept	
+arena/tutorial/001_basicDef	arena	accept	accept	
+arena/tutorial/002_badDef	arena	reject	reject	while replaying declaration 'badDef': (kernel) declaration type mismatch, 'badDef' has type Type 1
+arena/tutorial/003_arrowType	arena	accept	accept	
+arena/tutorial/004_dependentType	arena	accept	accept	
+arena/tutorial/005_constType	arena	accept	accept	
+arena/tutorial/006_betaReduction	arena	accept	accept	
+arena/tutorial/007_betaReduction2	arena	accept	accept	
+arena/tutorial/008_forallSortWhnf	arena	accept	accept	
+arena/tutorial/009_forallSortBad	arena	reject	reject	while replaying declaration 'forallSortBad': (kernel) type expected x
+arena/tutorial/010_nonTypeType	arena	reject	reject	while replaying declaration 'nonTypeType': (kernel) type expected constType
+arena/tutorial/011_nonTypeAxiom	arena	reject	reject	while replaying declaration 'nonTypeAxiom': (kernel) type expected constType
+arena/tutorial/012_nonPropThm	arena	reject	reject	while replaying declaration 'nonPropThm': (kernel) type of theorem 'nonPropThm' is not a proposition Prop
+arena/tutorial/013_thmProof	arena	accept	accept	
+arena/tutorial/014_selfProof	arena	reject	reject	while replaying declaration 'selfProof': (kernel) unknown constant 'selfProof'
+arena/tutorial/015_levelComp1	arena	accept	accept	
+arena/tutorial/016_levelComp2	arena	accept	accept	
+arena/tutorial/017_levelComp3	arena	accept	accept	
+arena/tutorial/018_levelParams	arena	accept	accept	
+arena/tutorial/019_tut06_bad01	arena	reject	reject	while replaying declaration 'tut06_bad01': (kernel) failed to add declaration to environment, duplicate universe level parameter: 'u'
+arena/tutorial/020_levelComp4	arena	accept	accept	
+arena/tutorial/021_levelComp5	arena	accept	accept	
+arena/tutorial/022_imax1	arena	accept	accept	
+arena/tutorial/023_imax2	arena	accept	accept	
+arena/tutorial/024_levelMaxComm	arena	accept	accept	
+arena/tutorial/025_levelMaxAssoc	arena	accept	accept	
+arena/tutorial/026_levelMaxIdem	arena	accept	accept	
+arena/tutorial/027_levelMaxAbsorb	arena	accept	accept	
+arena/tutorial/028_inferVar	arena	accept	accept	
+arena/tutorial/029_defEqLambda	arena	accept	accept	
+arena/tutorial/030_peano1	arena	accept	accept	
+arena/tutorial/031_peano2	arena	accept	accept	
+arena/tutorial/032_peano3	arena	accept	accept	
+arena/tutorial/033_letType	arena	accept	accept	
+arena/tutorial/034_letTypeDep	arena	accept	accept	
+arena/tutorial/035_letRed	arena	accept	accept	
+arena/tutorial/036_empty	arena	accept	accept	
+arena/tutorial/037_boolType	arena	accept	accept	
+arena/tutorial/038_twoBool	arena	accept	accept	
+arena/tutorial/039_andType	arena	accept	accept	
+arena/tutorial/040_prodType	arena	accept	accept	
+arena/tutorial/041_pprodType	arena	accept	accept	
+arena/tutorial/042_pUnitType	arena	accept	accept	
+arena/tutorial/043_eqType	arena	accept	accept	
+arena/tutorial/044_natDef	arena	accept	accept	
+arena/tutorial/045_rbTreeDef	arena	accept	accept	
+arena/tutorial/046_inductBadNonSort	arena	reject	reject	while replaying declaration 'inductBadNonSort': (kernel) type expected fun x y => x
+arena/tutorial/047_inductBadNonSort2	arena	reject	reject	while replaying declaration 'inductBadNonSort2': (kernel) type expected aType
+arena/tutorial/048_inductLevelParam	arena	reject	reject	while replaying declaration 'inductLevelParam': (kernel) failed to add declaration to environment, duplicate universe level parameter: 'u'
+arena/tutorial/049_inductTooFewParams	arena	reject	reject	while replaying declaration 'inductTooFewParams': (kernel) invalid inductive datatype declaration, incorrect number of parameters
+arena/tutorial/050_inductWrongCtorParams	arena	reject	reject	while replaying declaration 'inductWrongCtorParams': (kernel) invalid occurrence of datatype 'inductWrongCtorParams' being declared: it must be applied to the parameters and universe levels of the mut
+arena/tutorial/051_inductWrongCtorResParams	arena	reject	reject	while replaying declaration 'inductWrongCtorResParams': (kernel) invalid occurrence of datatype 'inductWrongCtorResParams' being declared: it must be applied to the parameters and universe levels of t
+arena/tutorial/052_inductWrongCtorResLevel	arena	reject	reject	while replaying declaration 'inductWrongCtorResLevel': (kernel) invalid occurrence of datatype 'inductWrongCtorResLevel' being declared: it must be applied to the parameters and universe levels of the
+arena/tutorial/053_inductInIndex	arena	reject	reject	while replaying declaration 'inductInIndex': (kernel) invalid return type for 'inductInIndex.mk'
+arena/tutorial/054_indNeg	arena	reject	reject	while replaying declaration 'indNeg': (kernel) arg #1 of 'indNeg.mk' has a non positive occurrence of the datatypes being declared
+arena/tutorial/055_reduceCtorParam.mk	arena	accept	accept	
+arena/tutorial/056_reduceCtorType.mk	arena	reject	reject	while replaying declaration 'reduceCtorType': (kernel) invalid return type for 'reduceCtorType.mk'
+arena/tutorial/057_indNegReducible	arena	reject	reject	while replaying declaration 'indNegReducible': (kernel) arg #1 of 'indNegReducible.mk' has a non positive occurrence of the datatypes being declared
+arena/tutorial/058_predWithTypeField	arena	accept	accept	
+arena/tutorial/059_typeWithTypeField	arena	accept	accept	
+arena/tutorial/060_typeWithTypeFieldPoly	arena	accept	accept	
+arena/tutorial/061_typeWithTooHighTypeField.mk	arena	reject	reject	while replaying declaration 'typeWithTooHighTypeField': (kernel) universe level of type_of(arg #1) of 'typeWithTooHighTypeField.mk' is too big for the corresponding inductive datatype
+arena/tutorial/062_emptyRec	arena	accept	accept	
+arena/tutorial/063_boolRec	arena	accept	accept	
+arena/tutorial/064_twoBoolRec	arena	accept	accept	
+arena/tutorial/065_andRec	arena	accept	accept	
+arena/tutorial/066_prodRec	arena	accept	accept	
+arena/tutorial/067_pprodRec	arena	accept	accept	
+arena/tutorial/068_punitRec	arena	accept	accept	
+arena/tutorial/069_eqRec	arena	accept	accept	
+arena/tutorial/070_nRec	arena	accept	accept	
+arena/tutorial/071_rbTreeRef	arena	accept	accept	
+arena/tutorial/072_boolPropRec	arena	accept	accept	
+arena/tutorial/073_BogusRecursor	arena	reject	reject	while replaying declaration 'bogusRecursorFalse': (kernel) incorrect number of universe levels parameters for 'BogusRecursor.rec', #1 expected, #0 provided
+arena/tutorial/074_existsRec	arena	accept	accept	
+arena/tutorial/075_typeSingletonRecReduction	arena	accept	accept	
+arena/tutorial/076_sortElimPropRec	arena	accept	accept	
+arena/tutorial/077_sortElimProp2Rec	arena	accept	accept	
+arena/tutorial/078_boolRecEqns	arena	accept	accept	
+arena/tutorial/079_prodRecEqns	arena	accept	accept	
+arena/tutorial/080_nRecReduction	arena	accept	accept	
+arena/tutorial/081_listRecReduction	arena	accept	accept	
+arena/tutorial/082_RBTree.id_spec	arena	accept	accept	
+arena/tutorial/083_And.right	arena	accept	accept	
+arena/tutorial/084_Prod.snd	arena	accept	accept	
+arena/tutorial/085_PProd.snd	arena	accept	accept	
+arena/tutorial/086_PSigma.snd	arena	accept	accept	
+arena/tutorial/087_projOutOfRange	arena	reject	reject	while replaying declaration 'projOutOfRange': (kernel) invalid projection z.3
+arena/tutorial/088_projNotStruct	arena	reject	reject	while replaying declaration 'projNotStruct': (kernel) invalid projection x.1
+arena/tutorial/089_projProp1	arena	accept	accept	
+arena/tutorial/090_projProp2	arena	reject	reject	while replaying declaration 'projProp2': (kernel) invalid projection x.2
+arena/tutorial/091_projProp3	arena	accept	accept	
+arena/tutorial/092_projProp4	arena	reject	reject	while replaying declaration 'projProp4': (kernel) invalid projection x.4
+arena/tutorial/093_projProp5	arena	reject	reject	while replaying declaration 'projProp5': (kernel) invalid projection x.4
+arena/tutorial/094_projProp6	arena	reject	reject	while replaying declaration 'projProp6': (kernel) invalid projection x.6
+arena/tutorial/095_projDataIndexRec	arena	accept	accept	
+arena/tutorial/096_projIndexData	arena	reject	reject	while replaying declaration 'projIndexData': (kernel) invalid projection x.1
+arena/tutorial/097_projIndexData2	arena	reject	reject	while replaying declaration 'projIndexData2': (kernel) invalid projection x.2
+arena/tutorial/098_projRed	arena	accept	accept	
+arena/tutorial/099_ruleK	arena	accept	accept	
+arena/tutorial/100_ruleKbad	arena	reject	reject	while replaying declaration 'ruleKbad': (kernel) declaration type mismatch, 'ruleKbad' has type Eq Bool.true Bool.false → ∀ (a : Bool), Eq a a
+arena/tutorial/101_ruleKAcc	arena	reject	reject	while replaying declaration 'ruleKAcc': (kernel) declaration type mismatch, 'ruleKAcc' has type ∀ (α : Sort u) (p : α → α → Prop) (x : α), Acc p x → ∀ (a : Bool), Eq a a
+arena/tutorial/102_aNatLit	arena	accept	accept	
+arena/tutorial/103_natLitEq	arena	accept	accept	
+arena/tutorial/104_proofIrrelevance	arena	accept	accept	
+arena/tutorial/105_proofIrrelevanceBad	arena	reject	reject	while replaying declaration 'proofIrrelevanceBad': (kernel) declaration type mismatch, 'proofIrrelevanceBad' has type ∀ (p : Type) (h1 h2 : p), Eq h1 h1
+arena/tutorial/106_proofIrrelevanceWhnf	arena	accept	accept	
+arena/tutorial/107_proofIrrelevanceUnderBinder	arena	accept	accept	
+arena/tutorial/108_unitEta1	arena	accept	accept	
+arena/tutorial/109_unitEta2	arena	accept	accept	
+arena/tutorial/110_unitEta3	arena	accept	accept	
+arena/tutorial/111_indexedUnitEta	arena	reject	reject	while replaying declaration 'indexedUnitEta': (kernel) declaration type mismatch, 'indexedUnitEta' has type ∀ (x y : IndexedUnit Bool.true), Eq x x
+arena/tutorial/112_structEta	arena	accept	accept	
+arena/tutorial/113_indexedStructEta	arena	reject	reject	while replaying declaration 'indexedStructEta': (kernel) declaration type mismatch, 'indexedStructEta' has type ∀ (x : IndexedSingleton Bool.true), Eq x x
+arena/tutorial/114_funEta	arena	accept	accept	
+arena/tutorial/115_funEtaDep	arena	accept	accept	
+arena/tutorial/116_funEtaBad	arena	reject	reject	while replaying declaration 'funEtaBad': (kernel) declaration type mismatch, 'funEtaBad' has type ∀ (x x_1 : Type) (x_2 : x → x) (f : x → x_1), Eq f f
+arena/tutorial/117_reflOccLeft	arena	reject	reject	while replaying declaration 'reflOccLeft': (kernel) arg #1 of 'reflOccLeft.mk' has a non positive occurrence of the datatypes being declared
+arena/tutorial/118_reflOccInIndex	arena	reject	reject	while replaying declaration 'reflOccInIndex': (kernel) application type mismatch reflOccInIndex x
+arena/tutorial/119_reduceCtorParamRefl.mk	arena	accept	accept	
+arena/tutorial/120_reduceCtorParamRefl2.mk	arena	accept	accept	
+arena/tutorial/121_rTreeRec	arena	accept	accept	
+arena/tutorial/122_rtreeRecReduction	arena	accept	accept	
+arena/tutorial/123_accRecType	arena	accept	accept	
+arena/tutorial/124_accRecReduction	arena	accept	accept	
+arena/tutorial/125_accRecNoEta	arena	reject	reject	while replaying declaration 'accRecNoEta': (kernel) declaration type mismatch, 'accRecNoEta' has type ∀ (α : Type) (r : α → α → Prop) (a : α), Acc r a → ∀ (p : Bool), Eq p p
+arena/tutorial/126_quotMkType	arena	accept	accept	
+arena/tutorial/127_quotIndType	arena	accept	accept	
+arena/tutorial/128_quotLiftType	arena	accept	accept	
+arena/tutorial/129_quotSoundType	arena	accept	accept	
+arena/tutorial/130_quotLiftReduction	arena	accept	accept	
+arena/tutorial/131_quotIndReduction	arena	accept	accept	
+arena/tutorial/132_dup_defs	arena	reject	reject	uncaught exception: Duplicate declaration: dup_defs
+arena/tutorial/133_dup_ind_def	arena	reject	reject	uncaught exception: Duplicate declaration: dup_ind_def
+arena/tutorial/134_dup_ctor_def	arena	reject	reject	uncaught exception: Duplicate declaration: dup_ctor_def.mk
+arena/tutorial/135_dup_rec_def	arena	reject	reject	uncaught exception: Duplicate declaration: dup_rec_def.rec
+arena/tutorial/136_misnamed_rec_user	arena	reject	reject	while replaying declaration 'misnamed_rec_user': (kernel) unknown constant 'misnamed_rec.not_rec'
+arena/tutorial/137_dup_rec_def2	arena	reject	reject	while replaying declaration 'dup_rec_def2': (kernel) constant has already been declared 'dup_rec_def2.rec'
+arena/tutorial/138_dup_ctor_rec	arena	reject	reject	uncaught exception: Duplicate declaration: dup_ctor_rec.rec
+arena/tutorial/139_DupConCon	arena	reject	reject	uncaught exception: Duplicate declaration: dup_ind_con_con.mk
+arena/tutorial/140_falseFromUnsafe	arena	reject	reject	while replaying declaration 'falseFromUnsafe': (kernel) unknown constant 'unsafeLoop'
+arena/tutorial/141_falseFromPartial	arena	reject	reject	while replaying declaration 'falseFromPartial': (kernel) unknown constant 'partialLoop'
+historical/001_HB1781.boom	historical	reject	reject	while replaying declaration 'HB1781.down': (kernel) declaration type mismatch, 'HB1781.down' has type Type (imax u v) → Type (imax u v)
+historical/002_HB1781.upCtrl	historical	accept	accept	
+historical/003_HB2125.unsound	historical	reject	reject	while replaying declaration 'HB2125.C': (kernel) invalid return type for 'HB2125.C.c'
+historical/004_HB1433.unsound	historical	reject	reject	while replaying declaration 'HB1433.wrong': (kernel) declaration type mismatch, 'HB1433.wrong' has type Eq HB1433.wrongRem HB1433.wrongRem
+historical/005_HB1433.correctCtrl	historical	accept	accept	
+historical/006_HB8060.show_false	historical	reject	reject	while replaying declaration 'HB8060.mythm': (kernel) declaration type mismatch, 'HB8060.mythm' has type True
+historical/007_HB12746.hugeProj	historical	reject	reject	while replaying declaration 'HB12746.hugeProj': (kernel) invalid projection (HB12746.PairBox.mk 0 1).4294967298
+historical/008_HB12746.smallProjCtrl	historical	accept	accept	
+historical/009_HB16279.boxNat	historical	reject	accept	Lean accepts, upstream expects reject
+historical/010_HB15908.contra	historical	reject	accept	Lean accepts, upstream expects reject
+historical/011_HB16730.boom	historical	reject	reject	while replaying declaration 'HB16730.PB2': (kernel) invalid occurrence of datatype 'HB16730.PA2' being declared: it must be applied to the parameters and universe levels of the mutual declaration
+historical/012_HB16730.honestProjCtrl	historical	accept	accept	
+lean4lean/001_L4LMutB	lean4lean	reject	accept	Lean accepts, upstream expects reject
+lean4lean/002_L4LMutGoodB	lean4lean	accept	accept	
+lean4lean/003_L4LKIPData.mk	lean4lean	accept	accept	
+lean4lean/004_L4LKIPLeak	lean4lean	reject	reject	while replaying declaration 'L4LKIPLeak': (kernel) invalid projection proof.1
+lean4lean/005_L4LProjHuge	lean4lean	reject	reject	while replaying declaration 'L4LProjHuge': (kernel) invalid projection (ProjB.mk 7).4294967297
+lean4lean/006_L4LProjGood	lean4lean	accept	accept	
+lean4lean/007_L4LDeepNat	lean4lean	accept	accept	
+leanchecker/AddFalse	leanchecker	reject	reject	while replaying declaration 'false': (kernel) declaration type mismatch, 'false' has type Prop
+leanchecker/AddFalseConstructor	leanchecker	accept	accept	
+leanchecker/OpenPrivate	leanchecker	accept	accept	
+leanchecker/PrivateConflictA2	leanchecker	accept	accept	
+leanchecker/PrivateConflictB2	leanchecker	accept	accept	
+leanchecker/QuotEq	leanchecker	accept	accept	
+leanchecker/ReplaceAxiom	leanchecker	reject	reject	while replaying declaration 'efsq': (kernel) application type mismatch False.elim @propext
+nanoda/Empty	nanoda	accept	accept	
+nanoda/ProjFromProp	nanoda	reject	reject	while replaying declaration 'explosion_helper': (kernel) invalid projection w1.1
