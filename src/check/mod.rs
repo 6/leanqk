@@ -106,7 +106,7 @@ fn check_env_here(env: &Env) -> Result<Report, Failure> {
     // time (seconds) to FILE, for benchmarks.
     let mut times = std::env::var_os("LEANQK_DECL_TIMES")
         .and_then(|p| std::fs::File::create(p).ok())
-        .map(std::io::BufWriter::new);
+        .map(std::io::LineWriter::new);
     for b in &env.blocks {
         let decls = env.block_decls(b);
         let first = decls.first().map(|d| d.name);

@@ -140,6 +140,8 @@ pub struct State {
     closed: IdMap<ExprId, Th>,
     steps: u64,
     depth: u32,
+    /// `LEANQK_EVAL_PROFILE=1`: how often each constant was reached.
+    profile: Option<IdMap<ExprId, u64>>,
 }
 
 /// How deep `origin` looks through delayed thunks.
@@ -168,6 +170,9 @@ pub fn whnf(tc: &mut Tc<'_>, e: ExprId) -> Option<ExprId> {
     let t0 = Instant::now();
     s.depth = 0;
     s.steps = 0;
+    if s.profile.is_none() && std::env::var_os("LEANQK_EVAL_PROFILE").is_some() {
+        s.profile = Some(IdMap::default());
+    }
     let r = {
         let mut m = Machine { tc, s: &mut s };
         m.top(e)
@@ -266,6 +271,9 @@ impl<'a, 'e> Machine<'a, 'e> {
 
     fn eval_here(&mut self, e: ExprId, env: &Env) -> ER<V> {
         self.s.steps += 1;
+        if self.s.steps & ((1 << 24) - 1) == 0 && self.s.profile.is_some() {
+            self.dump_profile();
+        }
         let node = self.tc.st.node(e);
         match node {
             ExprNode::BVar(i) => {
@@ -329,6 +337,22 @@ impl<'a, 'e> Machine<'a, 'e> {
                     }
                 }
             }
+        }
+    }
+
+    #[cold]
+    fn dump_profile(&mut self) {
+        let Some(p) = self.s.profile.as_ref() else {
+            return;
+        };
+        let mut v: Vec<(u64, ExprId)> = p.iter().map(|(&c, &n)| (n, c)).collect();
+        v.sort_unstable_by(|a, b| b.cmp(a));
+        eprintln!(
+            "evaluator: {} steps, depth {}; most reached:",
+            self.s.steps, self.s.depth
+        );
+        for (n, c) in v.into_iter().take(400) {
+            eprintln!("  {n:>12} {}", self.tc.pp(c));
         }
     }
 
@@ -420,6 +444,9 @@ impl<'a, 'e> Machine<'a, 'e> {
 
     /// The constant `c` applied to `args`.
     fn constant(&mut self, c: ExprId, args: Vec<Th>) -> ER<V> {
+        if let Some(p) = self.s.profile.as_mut() {
+            *p.entry(c).or_default() += 1;
+        }
         match self.info(c) {
             CInfo::Unfold(v) => {
                 let t = self.closed(v);
