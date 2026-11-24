@@ -14,8 +14,8 @@ use crate::name::{NameId, Names};
 /// A list of names, as a range into [`Env::name_list`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct NameList {
-    start: u32,
-    len: u32,
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 impl NameList {
@@ -31,8 +31,8 @@ impl NameList {
 /// A range of recursor rules in [`Env::rec_rules`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct RuleList {
-    start: u32,
-    len: u32,
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 impl RuleList {
