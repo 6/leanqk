@@ -42,8 +42,8 @@ tree_grep() { git grep --untracked -nIE "$@" -- . 2>/dev/null; }
 # 1. README.md is exactly one line.
 if [[ ! -f README.md ]]; then
   violation "README.md is missing"
-elif [[ $(cat README.md) != "Lean quick kernel" || $(wc -l <README.md) != 1 ]]; then
-  violation "README.md must be exactly the one line 'Lean quick kernel'"
+elif [[ $(cat README.md) != "Lean quick kernel - work in progress" || $(wc -l <README.md) != 1 ]]; then
+  violation "README.md must be exactly the one line 'Lean quick kernel - work in progress'"
 fi
 
 # 2. Names, private paths and hosts.
