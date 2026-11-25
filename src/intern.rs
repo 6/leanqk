@@ -151,16 +151,28 @@ impl<T> Chunked<T> {
         &self.chunks[(i >> CHUNK_BITS) as usize][(i & CHUNK_MASK) as usize]
     }
 
+    #[inline]
     pub fn push(&mut self, v: T) {
         match self.chunks.last_mut() {
-            Some(c) if c.len() < CHUNK => c.push(v),
-            _ => {
-                let mut c = Vec::with_capacity(if self.chunks.is_empty() { 0 } else { CHUNK });
-                c.push(v);
-                self.chunks.push(c);
-            }
+            // No reallocation, and the chunk is not full.
+            Some(c) if c.len() < c.capacity().min(CHUNK) => c.push(v),
+            _ => self.push_chunk(v),
         }
         self.len += 1;
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn push_chunk(&mut self, v: T) {
+        if let Some(c) = self.chunks.last_mut()
+            && c.len() < CHUNK
+        {
+            c.push(v);
+            return;
+        }
+        let mut c = Vec::with_capacity(if self.chunks.is_empty() { 0 } else { CHUNK });
+        c.push(v);
+        self.chunks.push(c);
     }
 
     pub fn reserve(&mut self, extra: usize) {
