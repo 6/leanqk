@@ -25,9 +25,10 @@ use num_bigint::BigUint;
 
 use crate::expr::{BigId, ExprData, ExprId, ExprNode, Exprs, LetBinder, LetId};
 use crate::hash::hash_bytes;
-use crate::intern::{Big, CHUNK, CHUNK_BITS, Chunked, IdTable, Interner, Node, SHARDS, shard_of};
+use crate::intern::{Big, CHUNK, CHUNK_BITS, IdTable, Interner, Node, SHARDS, shard_of};
 use crate::level::{LevelId, LevelList, LevelNode, Levels};
 use crate::name::{NameId, NameNode, Names};
+use crate::slab::Slab;
 use crate::strings::{Overflow, StrId, StrPool};
 
 const MAX_CHUNKS: usize = 1 << (32 - CHUNK_BITS);
@@ -692,7 +693,7 @@ impl Par {
         drop(strs);
         let (ntable, nnodes, _, _) = names.into_parts(threads, NameNode::unpack, |_| ());
         let ns = Names::from_parts(
-            Big::from_parts(Chunked::from_chunks(nnodes), ntable, "too many names"),
+            Big::from_parts(Slab::from_chunks(nnodes), ntable, "too many names"),
             pool,
         );
         let ls = levels.into_inner().expect("levels lock");
@@ -703,9 +704,9 @@ impl Par {
         let (etable, enodes, edata, _) =
             exprs.into_parts(threads, ExprNode::unpack, ExprData::from_bits);
         let es = Exprs::from_parts(
-            Chunked::from_chunks(enodes),
+            Slab::from_chunks(enodes),
             etable,
-            Chunked::from_chunks(edata),
+            Slab::from_chunks(edata),
             li,
             bigs,
         );

@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use hashbrown::HashTable;
 use hashbrown::hash_table::Entry;
 
+use crate::slab::Slab;
 use crate::strings::Overflow;
 
 /// A node that can be hash-consed. Children must be canonical ids.
@@ -117,119 +118,9 @@ impl<T: Node> Interner<T> {
     }
 }
 
-/// Ids per chunk of a [`Chunked`] store.
+/// Ids per chunk of the `.olean` loader's stores.
 pub const CHUNK_BITS: u32 = 20;
 pub const CHUNK: usize = 1 << CHUNK_BITS;
-const CHUNK_MASK: u32 = CHUNK as u32 - 1;
-
-/// A vector in chunks of [`CHUNK`] elements: growing it never moves (or
-/// copies) what is already there, and the loader can build the chunks on
-/// several threads and hand them over as they are. Indexing is two loads,
-/// the chunk directory being small enough to stay in cache.
-pub struct Chunked<T> {
-    chunks: Vec<Vec<T>>,
-    len: usize,
-}
-
-impl<T> Default for Chunked<T> {
-    fn default() -> Self {
-        Chunked {
-            chunks: Vec::new(),
-            len: 0,
-        }
-    }
-}
-
-impl<T> Chunked<T> {
-    /// A store of full chunks (every chunk but the last has [`CHUNK`]
-    /// elements).
-    pub(crate) fn from_chunks(chunks: Vec<Vec<T>>) -> Self {
-        let len = chunks.iter().map(|c| c.len()).sum();
-        debug_assert!(chunks.iter().rev().skip(1).all(|c| c.len() == CHUNK));
-        Chunked { chunks, len }
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    #[inline]
-    pub fn get(&self, i: u32) -> &T {
-        &self.chunks[(i >> CHUNK_BITS) as usize][(i & CHUNK_MASK) as usize]
-    }
-
-    /// The chunks, in order (each but the last full).
-    pub fn chunks(&self) -> &[Vec<T>] {
-        &self.chunks
-    }
-
-    pub fn chunks_mut(&mut self) -> &mut [Vec<T>] {
-        &mut self.chunks
-    }
-
-    #[inline]
-    pub fn push(&mut self, v: T) {
-        match self.chunks.last_mut() {
-            // No reallocation, and the chunk is not full.
-            Some(c) if c.len() < c.capacity().min(CHUNK) => c.push(v),
-            _ => self.push_chunk(v),
-        }
-        self.len += 1;
-    }
-
-    /// Push copies of `v` until there are `n` elements.
-    pub fn fill_to(&mut self, n: usize, v: T)
-    where
-        T: Clone,
-    {
-        while self.len < n {
-            let room = match self.chunks.last() {
-                Some(c) if c.len() < CHUNK => CHUNK - c.len(),
-                _ => {
-                    let cap = if self.chunks.is_empty() { 0 } else { CHUNK };
-                    self.chunks.push(Vec::with_capacity(cap));
-                    CHUNK
-                }
-            };
-            let k = room.min(n - self.len);
-            let c = self.chunks.last_mut().expect("a chunk");
-            c.resize(c.len() + k, v.clone());
-            self.len += k;
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn push_chunk(&mut self, v: T) {
-        if let Some(c) = self.chunks.last_mut()
-            && c.len() < CHUNK
-        {
-            c.push(v);
-            return;
-        }
-        let mut c = Vec::with_capacity(if self.chunks.is_empty() { 0 } else { CHUNK });
-        c.push(v);
-        self.chunks.push(c);
-    }
-
-    pub fn reserve(&mut self, extra: usize) {
-        if let Some(c) = self.chunks.last_mut() {
-            let room = CHUNK - c.len();
-            c.reserve(extra.min(room));
-        }
-    }
-
-    pub fn heap_bytes(&self) -> usize {
-        self.chunks.iter().map(|c| c.capacity()).sum::<usize>() * size_of::<T>()
-            + self.chunks.capacity() * size_of::<Vec<T>>()
-    }
-}
 
 /// Slots per probe line: one 64-byte cache line.
 const LINE: usize = 8;
@@ -436,11 +327,12 @@ impl IdTable {
 }
 
 /// The arena of the environment's big kinds (expressions, names): like
-/// [`Interner`], but with chunked storage and an [`IdTable`], so that the
-/// `.olean` loader can build both on several threads and hand them over
-/// without copying. The checker's small overlay arenas stay [`Interner`]s.
-pub struct Big<T> {
-    nodes: Chunked<T>,
+/// [`Interner`], but with its nodes in a [`Slab`] (one array that never
+/// moves; the checker's stores add their own expressions above the
+/// environment's) and an [`IdTable`], which the `.olean` loader can build
+/// on several threads.
+pub struct Big<T: Copy> {
+    nodes: Slab<T>,
     table: IdTable,
     what: &'static str,
 }
@@ -448,7 +340,7 @@ pub struct Big<T> {
 impl<T: Node> Big<T> {
     pub fn new(what: &'static str) -> Self {
         Big {
-            nodes: Chunked::default(),
+            nodes: Slab::new(),
             table: IdTable::with_capacity(16),
             what,
         }
@@ -459,7 +351,7 @@ impl<T: Node> Big<T> {
     /// can be looked up, each under its [`Node::hash`], pairwise distinct
     /// under [`Node::same`]. (Ids not in the table are allowed: the
     /// loader's unused ids, which no term refers to.)
-    pub(crate) fn from_parts(nodes: Chunked<T>, table: IdTable, what: &'static str) -> Self {
+    pub(crate) fn from_parts(nodes: Slab<T>, table: IdTable, what: &'static str) -> Self {
         Big { nodes, table, what }
     }
 
@@ -478,7 +370,7 @@ impl<T: Node> Big<T> {
         self.nodes.get(id)
     }
 
-    pub fn nodes(&self) -> &Chunked<T> {
+    pub fn nodes(&self) -> &Slab<T> {
         &self.nodes
     }
 
@@ -499,8 +391,8 @@ impl<T: Node> Big<T> {
             return Ok((id, false));
         }
         let id = self.nodes.len();
-        // u32::MAX is kept free as a sentinel.
-        if id >= u32::MAX as usize - 1 {
+        // Ids stay below 2^31 (the slab), u32::MAX free as a sentinel.
+        if id >= crate::slab::CAP {
             return Err(Overflow(self.what));
         }
         if !self.table.has_room(1) {
@@ -520,7 +412,7 @@ impl<T: Node> Big<T> {
     /// [`Big::index`], lookups do not see it.
     pub fn push_unindexed(&mut self, node: T) -> Result<u32, Overflow> {
         let id = self.nodes.len();
-        if id >= u32::MAX as usize - 1 {
+        if id >= crate::slab::CAP {
             return Err(Overflow(self.what));
         }
         self.nodes.push(node);
@@ -626,20 +518,16 @@ impl<T: Node> Big<T> {
         // Entries of a bucket that is full (and, below, those that would
         // go past the end of the table), inserted last.
         let mut spill = Vec::new();
-        let mut id = 0u32;
         let ents = groups.each_mut().map(|g| g.ents());
-        for chunk in &nodes.chunks {
-            for node in chunk {
-                let h = node.hash();
-                let b = (h as u32 >> (32 - BITS)) as usize;
-                let k = fill[b];
-                if k < cap {
-                    ents[b / PER][(b % PER) * cap + k] = entry(h, id);
-                    fill[b] = k + 1;
-                } else {
-                    spill.push((h, id));
-                }
-                id += 1;
+        for (id, node) in (0u32..).zip(nodes.as_slice()) {
+            let h = node.hash();
+            let b = (h as u32 >> (32 - BITS)) as usize;
+            let k = fill[b];
+            if k < cap {
+                ents[b / PER][(b % PER) * cap + k] = entry(h, id);
+                fill[b] = k + 1;
+            } else {
+                spill.push((h, id));
             }
         }
         let digit = |l: u32, d: u32| (l >> (d * DIGIT)) as usize & ((1 << DIGIT) - 1);
@@ -738,7 +626,6 @@ impl<T: Node> Big<T> {
 
     /// Make room for `extra` more nodes without growing the table.
     pub fn reserve(&mut self, extra: usize) {
-        self.nodes.reserve(extra);
         if !self.table.has_room(extra) {
             self.grow(self.table.len() + extra);
         }
@@ -753,7 +640,7 @@ impl<T: Node> Big<T> {
 /// a node equal to one before it: their ids (the later, the earlier).
 #[cold]
 #[inline(never)]
-fn equal_before<T: Node>(nodes: &Chunked<T>, sorted: &[[u32; 3]], i: usize) -> Option<(u32, u32)> {
+fn equal_before<T: Node>(nodes: &Slab<T>, sorted: &[[u32; 3]], i: usize) -> Option<(u32, u32)> {
     let [l, hi, id] = sorted[i];
     let node = nodes.get(id);
     for &[l2, hi2, other] in sorted[..i].iter().rev() {

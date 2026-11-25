@@ -15,9 +15,10 @@
 use num_bigint::BigUint;
 
 use crate::hash::{hash_bytes, hash2};
-use crate::intern::{Big, CHUNK, Chunked, IdTable, Interner, Node};
+use crate::intern::{Big, IdTable, Interner, Node};
 use crate::level::{LevelId, LevelList, Levels};
 use crate::name::NameId;
+use crate::slab::{Block, Pool, Reader, Slab};
 use crate::strings::{Overflow, StrId};
 
 /// Id of an interned expression.
@@ -129,7 +130,7 @@ impl Node for ExprNode {
 /// The data of a compound node (else `None`), from its children's.
 #[inline]
 fn compound_data(
-    data: &Chunked<ExprData>,
+    data: &Slab<ExprData>,
     lets: &Interner<LetBinder>,
     node: ExprNode,
 ) -> Option<ExprData> {
@@ -256,7 +257,10 @@ impl From<Overflow> for ExprError {
 
 pub struct Exprs {
     arena: Big<ExprNode>,
-    data: Chunked<ExprData>,
+    data: Slab<ExprData>,
+    /// Lends the checker's stores blocks of ids above the nodes, for their
+    /// own terms (see `crate::slab`).
+    pool: Pool,
     /// Compound nodes appended without hash-consing ([`Exprs::append`])
     /// get their data at [`Exprs::index`]: from this id on, theirs is not
     /// set yet (`u32::MAX`: all is).
@@ -280,7 +284,8 @@ impl Exprs {
     pub fn new() -> Self {
         Exprs {
             arena: Big::new("too many expressions"),
-            data: Chunked::default(),
+            data: Slab::new(),
+            pool: Pool::default(),
             data_from: u32::MAX,
             lets: Interner::new("too many let binders"),
             bigs: Vec::new(),
@@ -292,9 +297,9 @@ impl Exprs {
     /// order, the table indexing them (see [`Big::from_parts`]), each node's
     /// data, the let binders and the big literals.
     pub(crate) fn from_parts(
-        nodes: Chunked<ExprNode>,
+        nodes: Slab<ExprNode>,
         table: IdTable,
-        data: Chunked<ExprData>,
+        data: Slab<ExprData>,
         lets: Interner<LetBinder>,
         bigs: Vec<BigUint>,
     ) -> Self {
@@ -306,6 +311,7 @@ impl Exprs {
         Exprs {
             arena: Big::from_parts(nodes, table, "too many expressions"),
             data,
+            pool: Pool::default(),
             data_from: u32::MAX,
             lets,
             bigs,
@@ -324,7 +330,6 @@ impl Exprs {
     /// Make room for `extra` more nodes.
     pub fn reserve(&mut self, extra: usize) {
         self.arena.reserve(extra);
-        self.data.reserve(extra);
     }
 
     pub fn let_count(&self) -> usize {
@@ -352,6 +357,22 @@ impl Exprs {
 
     pub fn big(&self, b: BigId) -> &BigUint {
         &self.bigs[b.0 as usize]
+    }
+
+    /// Reads any expression's node: the environment's, or one of a
+    /// store's own (see `crate::slab`).
+    pub(crate) fn node_reader(&self) -> Reader<'_, ExprNode> {
+        self.arena.nodes().reader()
+    }
+
+    /// Likewise for the data.
+    pub(crate) fn data_reader(&self) -> Reader<'_, ExprData> {
+        self.data.reader()
+    }
+
+    /// A block of ids above the arena's, for a store's own expressions.
+    pub(crate) fn take_block(&self) -> Option<Block<'_, ExprNode, ExprData>> {
+        self.pool.take(self.arena.nodes(), &self.data)
     }
 
     /// Intern a node. Its children must already be interned here, and its
@@ -407,14 +428,10 @@ impl Exprs {
             return;
         }
         self.data.fill_to(self.arena.len(), ExprData(0));
-        let (lets, data) = (&self.lets, &mut self.data);
-        for (c, chunk) in self.arena.nodes().chunks().iter().enumerate() {
-            let start = c * CHUNK;
-            let skip = from.saturating_sub(start).min(chunk.len());
-            for (j, &node) in chunk.iter().enumerate().skip(skip) {
-                if let Some(d) = compound_data(data, lets, node) {
-                    data.chunks_mut()[c][j] = d;
-                }
+        let (lets, data, nodes) = (&self.lets, &mut self.data, self.arena.nodes());
+        for (j, &node) in nodes.as_slice().iter().enumerate().skip(from) {
+            if let Some(d) = compound_data(data, lets, node) {
+                data.set(j as u32, d);
             }
         }
         self.data_from = u32::MAX;
