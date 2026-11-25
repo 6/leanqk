@@ -181,6 +181,17 @@ fn read_node(words: &[u32], off: u32) -> Node {
     }
 }
 
+/// A pending record.
+#[derive(Clone, Copy)]
+struct Pend {
+    /// Its export id.
+    id: u64,
+    node: Node,
+    /// Its arena id once interned (else `NONE`, or [`NEEDED`] within
+    /// [`Builder::promote`]); at the flush, its new reference.
+    r: u32,
+}
+
 /// Intern record `n` in `env`, its children's arena ids being `ids` (in
 /// the order of [`Node::kids`]); its arena id.
 #[inline]
@@ -222,9 +233,7 @@ fn add(env: &mut Env, append: bool, n: Node, ids: [u32; 3]) -> R<u32> {
 pub(super) struct Builder {
     words: Vec<u32>,
     /// The records since the last declaration line: export id, record.
-    pending: Vec<(u64, Node)>,
-    /// The arena id of each pending record, once interned.
-    pend_ids: Vec<u32>,
+    pending: Vec<Pend>,
     /// `mdata` records among them: export id, the reference it stands for.
     aliases: Vec<(u64, u32)>,
     /// Per lazy value, its root reference (pending until the flush).
@@ -252,8 +261,11 @@ impl Builder {
         if i >= PEND {
             return bad("too many expressions before one declaration");
         }
-        self.pending.push((id, n));
-        self.pend_ids.push(NONE);
+        self.pending.push(Pend {
+            id,
+            node: n,
+            r: NONE,
+        });
         Ok(PEND | i)
     }
 
@@ -266,7 +278,7 @@ impl Builder {
         match r & KIND {
             0 => Some(r),
             PEND => {
-                let v = self.pend_ids[(r & !KIND) as usize];
+                let v = self.pending[(r & !KIND) as usize].r;
                 (v != NONE).then_some(v)
             }
             _ => {
@@ -278,7 +290,7 @@ impl Builder {
 
     fn node(&self, r: u32) -> Node {
         if r & KIND == PEND {
-            self.pending[(r & !KIND) as usize].1
+            self.pending[(r & !KIND) as usize].node
         } else {
             read_node(&self.words, r & !KIND)
         }
@@ -300,20 +312,20 @@ impl Builder {
     /// the records it needs (until none is left to find), and a pass up
     /// interns them.
     fn promote_pending(&mut self, env: &mut Env, append: bool, i: usize) -> R<ExprId> {
-        let p = &mut self.pend_ids;
-        p[i] = NEEDED;
+        let p = &mut self.pending;
+        p[i].r = NEEDED;
         // Records marked and not yet passed.
         let mut left = 1usize;
         let mut j = i;
         loop {
-            if p[j] == NEEDED {
+            if p[j].r == NEEDED {
                 left -= 1;
-                let (kids, k) = self.pending[j].1.kids();
+                let (kids, k) = p[j].node.kids();
                 for &c in &kids[..k] {
                     if c & KIND == PEND {
                         let c = (c & !KIND) as usize;
-                        if p[c] == NONE {
-                            p[c] = NEEDED;
+                        if p[c].r == NONE {
+                            p[c].r = NEEDED;
                             left += 1;
                         }
                     }
@@ -326,26 +338,26 @@ impl Builder {
             j -= 1;
         }
         for x in j..=i {
-            if self.pend_ids[x] != NEEDED {
+            if self.pending[x].r != NEEDED {
                 continue;
             }
-            let n = self.pending[x].1;
+            let n = self.pending[x].node;
             let (kids, k) = n.kids();
             let mut ids = [0u32; 3];
             for (&c, id) in kids[..k].iter().zip(&mut ids) {
                 *id = match c & KIND {
                     0 => c,
                     // Marked, so interned by now.
-                    PEND => self.pend_ids[(c & !KIND) as usize],
+                    PEND => self.pending[(c & !KIND) as usize].r,
                     _ => match self.known(c) {
                         Some(v) => v,
                         None => self.promote_stored(env, append, c)?.0,
                     },
                 };
             }
-            self.pend_ids[x] = add(env, append, n, ids)?;
+            self.pending[x].r = add(env, append, n, ids)?;
         }
-        Ok(ExprId(self.pend_ids[i]))
+        Ok(ExprId(self.pending[i].r))
     }
 
     /// [`Builder::promote`] for a stored record (which refers to nothing
@@ -378,7 +390,7 @@ impl Builder {
                 }
                 let id = add(env, append, n, ids)?;
                 if top & KIND == PEND {
-                    self.pend_ids[(top & !KIND) as usize] = id;
+                    self.pending[(top & !KIND) as usize].r = id;
                 } else {
                     let off = (top & !KIND) as usize;
                     self.words[off] |= DONE;
@@ -410,42 +422,41 @@ impl Builder {
     /// At the end of a declaration: store what is still pending, and
     /// rebind each pending export id in `ids` to its new reference.
     pub(super) fn flush(&mut self, ids: &mut IdMap) -> R<()> {
-        // Each pending record's new reference replaces its entry in
-        // `pend_ids`; records only refer to earlier ones, which are done.
+        // Each pending record's new reference replaces its arena id (in
+        // `r`); records only refer to earlier ones, which are done.
         let n = self.pending.len();
         if self.words.len() + 5 * n >= PEND as usize {
             return Err(Fail::from(Overflow("too many stored expressions")));
         }
         self.words.reserve(5 * n);
-        let refs = &mut self.pend_ids;
+        let pend = &mut self.pending;
         let words = &mut self.words;
-        let tr = |refs: &[u32], r: u32| -> u32 {
+        let tr = |pend: &[Pend], r: u32| -> u32 {
             if r & KIND == PEND {
-                refs[(r & !KIND) as usize]
+                pend[(r & !KIND) as usize].r
             } else {
                 r
             }
         };
-        for (i, &(id, node)) in self.pending.iter().enumerate() {
-            let mut r = refs[i];
+        for i in 0..n {
+            let Pend { id, node, mut r } = pend[i];
             if r == NONE {
                 r = STORED | words.len() as u32;
                 match node {
-                    Node::App(f, a) => words.extend([T_APP, tr(refs, f), tr(refs, a)]),
-                    node => push_node(words, node.map(|c| tr(refs, c))),
+                    Node::App(f, a) => words.extend([T_APP, tr(pend, f), tr(pend, a)]),
+                    node => push_node(words, node.map(|c| tr(pend, c))),
                 }
-                refs[i] = r;
+                pend[i].r = r;
             }
             ids.rebind(id, r);
         }
         for &(id, r) in &self.aliases {
-            ids.rebind(id, tr(refs, r));
+            ids.rebind(id, tr(pend, r));
         }
         for k in self.roots_from..self.roots.len() {
-            self.roots[k] = tr(refs, self.roots[k]);
+            self.roots[k] = tr(pend, self.roots[k]);
         }
         self.pending.clear();
-        self.pend_ids.clear();
         self.aliases.clear();
         self.roots_from = self.roots.len();
         Ok(())
