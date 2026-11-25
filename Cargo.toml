@@ -31,3 +31,8 @@ mimalloc = { version = "0.1", default-features = false }
 num-bigint = "0.5"
 sha2 = "0.11.1"
 stacker = "0.1"
+
+# The repository's tooling (`cargo xtask <command>`, see xtask/README.md); not
+# part of the published crate.
+[workspace]
+members = ["xtask"]
