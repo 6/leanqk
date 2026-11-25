@@ -465,6 +465,21 @@ million (3.1 to 2.6 s in the evaluator), on lrat06 from 43.0 to 36.0
 million (3.09 to 2.84 s), on `cartan_A7` from 36.7 to 30.5 million and on
 `qnr_100003` from 21.1 to 16.9 million.
 
+The detectors are shared with the evaluating checker (`src/check/shape.rs`).
+Its `whnf` (`src/check/nbe/cases.rs`, switched by `CASES_DIRECT`) reduces an
+application of a definition of either shape the same way: the major premises
+are brought to weak head normal form, and if they are constructors (a `Nat`
+or string literal counting as one), the chosen minor premise or leaf is
+applied to the fields and the remaining arguments. The motive and the other
+minor premises are never made values, and no `casesOn` or recursor
+application is built on the way. A major premise that is not a constructor
+(a free variable, a structure value that only eta-expands), or a projection
+in the spine, leaves the application to the usual unfolding, so the result
+is the weak head normal form `whnf` gave before. Definitional equality
+still unfolds such definitions one step at a time. On the corpus
+(`cargo xtask corpus`, 289 exports) the checking time goes from 34.1 to
+21.9 s.
+
 ## Built-in operations of several Lean versions
 
 The fingerprint table (`src/check/fingerprint_table.rs`, written by

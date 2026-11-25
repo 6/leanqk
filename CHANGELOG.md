@@ -17,6 +17,12 @@
   (so `match`), enabled on the definitions of known Lean versions
   (`docs/kernel-compute.md`). Arrays are persistent, so `set` and `push`
   take constant time even while an old version is still referenced.
+- The evaluating checker reduces `casesOn`s and matchers whose major premises
+  are constructors straight to the chosen branch, and both checkers compute
+  `Nat` operations on literals below 2^64 without big integers. Universe
+  levels: normal forms are remembered, a constant at its own parameters is
+  not substituted, and substitutions are shared by parameter names
+  (`docs/reduction-shortcuts.md`; 3.8% fewer instructions checking Mathlib).
 
 ## 0.1.0-alpha.1
 

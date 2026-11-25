@@ -16,7 +16,7 @@ use crate::expr::{BinderInfo, ExprId, ExprNode};
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
-use super::ext::{Ext, NatOp};
+use super::ext::{Ext, NatOp, SMALL_NAT, SmallNat};
 use super::store::{IdMap, IdSet, Store};
 use super::univ;
 
@@ -1135,6 +1135,18 @@ impl<'e> Tc<'e> {
 
     /// `n` as `Nat.zero` or `Nat.succ (n - 1)`.
     pub fn nat_lit_to_constructor(&mut self, e: ExprId) -> R<ExprId> {
+        if SMALL_NAT
+            && let ExprNode::NatSmall(lo, hi) = self.st.node(e)
+            && let (Some(zero), Some(succ)) = (self.ext.nat_zero, self.ext.nat_succ)
+        {
+            let v = (hi as u64) << 32 | lo as u64;
+            if v == 0 {
+                return Ok(self.st.cnst(zero, LevelList::EMPTY));
+            }
+            let p = self.st.nat_u64(v - 1);
+            let s = self.st.cnst(succ, LevelList::EMPTY);
+            return Ok(self.st.app(s, p));
+        }
         let Some(v) = self.nat_value(e) else {
             unreachable!()
         };
@@ -1222,6 +1234,35 @@ impl<'e> Tc<'e> {
         }
     }
 
+    /// The value of a literal below 2^64 or of `Nat.zero`.
+    fn nat_small_ext(&self, e: ExprId) -> Option<u64> {
+        match self.st.node(e) {
+            ExprNode::NatSmall(lo, hi) => Some((hi as u64) << 32 | lo as u64),
+            ExprNode::Const(n, ls) if Some(n) == self.ext.nat_zero && ls == LevelList::EMPTY => {
+                Some(0)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether `e` is a literal or `Nat.zero`.
+    fn is_nat_lit_ext(&self, e: ExprId) -> bool {
+        match self.st.node(e) {
+            ExprNode::NatSmall(..) | ExprNode::NatBig(_) => true,
+            ExprNode::Const(n, ls) => Some(n) == self.ext.nat_zero && ls == LevelList::EMPTY,
+            _ => false,
+        }
+    }
+
+    /// `op x y` on literals below 2^64, if the result is one (`NatOp::small`).
+    fn nat_op_small(&mut self, op: NatOp, x: ExprId, y: ExprId) -> Option<R<ExprId>> {
+        let r = op.small(self.nat_small_ext(x)?, self.nat_small_ext(y)?)?;
+        Some(match r {
+            SmallNat::Nat(n) => Ok(self.st.nat_u64(n)),
+            SmallNat::Bool(b) => self.mk_bool(b),
+        })
+    }
+
     /// The value of a literal or of `Nat.zero`.
     fn nat_lit_ext(&self, e: ExprId) -> Option<BigUint> {
         match self.st.node(e) {
@@ -1261,6 +1302,12 @@ impl<'e> Tc<'e> {
         match self.st.node(f) {
             ExprNode::Const(n, ls) if ls == LevelList::EMPTY && Some(n) == self.ext.nat_succ => {
                 let a = self.whnf(a2)?;
+                if SMALL_NAT
+                    && let Some(x) = self.nat_small_ext(a)
+                    && let Some(r) = x.checked_add(1)
+                {
+                    return Ok(Some(self.st.nat_u64(r)));
+                }
                 let Some(v) = self.nat_lit_ext(a) else {
                     return Ok(None);
                 };
@@ -1279,10 +1326,16 @@ impl<'e> Tc<'e> {
                     return Ok(None);
                 };
                 let x = self.whnf(a1)?;
+                if !self.is_nat_lit_ext(x) {
+                    return Ok(None);
+                }
+                let y = self.whnf(a2)?;
+                if SMALL_NAT && let Some(r) = self.nat_op_small(op, x, y) {
+                    return r.map(Some);
+                }
                 let Some(x) = self.nat_lit_ext(x) else {
                     return Ok(None);
                 };
-                let y = self.whnf(a2)?;
                 let Some(y) = self.nat_lit_ext(y) else {
                     return Ok(None);
                 };

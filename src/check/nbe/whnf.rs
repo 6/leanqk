@@ -8,7 +8,7 @@ use crate::env::{Decl, DeclKind};
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
-use super::super::ext::NatOp;
+use super::super::ext::{NatOp, SMALL_NAT, SmallNat};
 use super::super::tc::{KErr, NAT_MAX_BYTES, R};
 use super::val::{Elim, Sp, V, Val};
 use super::{BOTTOM, Nbe};
@@ -176,7 +176,7 @@ impl Nbe<'_> {
         Ok(Some(self.apply_all(r, &args[mk_pos + 1..])))
     }
 
-    fn major_induct(&mut self, rec: NameId, d: &Decl) -> Option<NameId> {
+    pub(super) fn major_induct(&mut self, rec: NameId, d: &Decl) -> Option<NameId> {
         if let Some(&n) = self.major_induct.get(&rec) {
             return Some(n);
         }
@@ -428,6 +428,18 @@ impl Nbe<'_> {
 
     /// `n` as `Nat.zero` or `Nat.succ (n - 1)`.
     pub fn nat_lit_to_constructor(&mut self, v: V) -> R<V> {
+        if SMALL_NAT
+            && let Val::Nat(lo, hi) = self.a.get(v)
+            && let (Some(zero), Some(succ)) = (self.ext.nat_zero, self.ext.nat_succ)
+        {
+            let n = (hi as u64) << 32 | lo as u64;
+            if n == 0 {
+                return Ok(self.cnst(zero, LevelList::EMPTY));
+            }
+            let p = self.nat_u64(n - 1);
+            let s = self.cnst(succ, LevelList::EMPTY);
+            return Ok(self.apply(s, p));
+        }
         let Some(n) = self.nat_value(v) else {
             unreachable!()
         };
@@ -506,6 +518,28 @@ impl Nbe<'_> {
         Some(r)
     }
 
+    /// The value of a literal below 2^64 or of `Nat.zero`.
+    fn nat_small_ext(&self, v: V) -> Option<u64> {
+        match self.a.get(v) {
+            Val::Nat(lo, hi) => Some((hi as u64) << 32 | lo as u64),
+            Val::Const(n, ls, Sp::NIL)
+                if Some(n) == self.ext.nat_zero && ls == LevelList::EMPTY =>
+            {
+                Some(0)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether `v` is a literal or `Nat.zero`.
+    fn is_nat_lit_ext(&self, v: V) -> bool {
+        match self.a.get(v) {
+            Val::Nat(..) | Val::NatBig(_) => true,
+            Val::Const(n, ls, Sp::NIL) => Some(n) == self.ext.nat_zero && ls == LevelList::EMPTY,
+            _ => false,
+        }
+    }
+
     /// The value of a literal or of `Nat.zero`.
     fn nat_lit_ext(&self, v: V) -> Option<BigUint> {
         match self.a.get(v) {
@@ -556,6 +590,12 @@ impl Nbe<'_> {
                     unreachable!()
                 };
                 let a = self.whnf(a)?;
+                if SMALL_NAT
+                    && let Some(x) = self.nat_small_ext(a)
+                    && let Some(r) = x.checked_add(1)
+                {
+                    return Ok(Some(self.nat_u64(r)));
+                }
                 let Some(x) = self.nat_lit_ext(a) else {
                     return Ok(None);
                 };
@@ -573,10 +613,22 @@ impl Nbe<'_> {
                     unreachable!()
                 };
                 let x = self.whnf(a_l)?;
+                if !self.is_nat_lit_ext(x) {
+                    return Ok(None);
+                }
+                let y = self.whnf(a_r)?;
+                if SMALL_NAT
+                    && let (Some(a), Some(b)) = (self.nat_small_ext(x), self.nat_small_ext(y))
+                    && let Some(r) = op.small(a, b)
+                {
+                    return match r {
+                        SmallNat::Nat(n) => Ok(Some(self.nat_u64(n))),
+                        SmallNat::Bool(b) => self.mk_bool(b).map(Some),
+                    };
+                }
                 let Some(x) = self.nat_lit_ext(x) else {
                     return Ok(None);
                 };
-                let y = self.whnf(a_r)?;
                 let Some(y) = self.nat_lit_ext(y) else {
                     return Ok(None);
                 };
@@ -727,6 +779,12 @@ impl Nbe<'_> {
                     self.a.rm(n).whnf = n.0;
                     return Ok(n);
                 }
+            }
+            if super::cases::CASES_DIRECT
+                && let Some(n) = self.cases_direct(t_l)?
+            {
+                t = n;
+                continue;
             }
             match self.unfold_definition(t_l) {
                 Some(n) => t = n,

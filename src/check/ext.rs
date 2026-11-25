@@ -39,6 +39,57 @@ pub enum NatOp {
     Pow,
 }
 
+/// Whether the checkers compute `Nat` operations on literals below 2^64
+/// without `BigUint` (`NatOp::small`).
+pub const SMALL_NAT: bool = true;
+
+/// The result of `NatOp::small`.
+pub enum SmallNat {
+    Nat(u64),
+    Bool(bool),
+}
+
+impl NatOp {
+    /// The operation on two numbers below 2^64, when its result is one too
+    /// (or a `Bool`). It is what the `BigUint` path gives; `None` leaves
+    /// the operation to that path (a result past 2^64, `Nat.pow` and
+    /// `Nat.shiftLeft` beyond it), which also decides the kernel's limits,
+    /// none of which a result below 2^64 reaches.
+    pub fn small(self, x: u64, y: u64) -> Option<SmallNat> {
+        use SmallNat::{Bool, Nat};
+        Some(match self {
+            NatOp::Add => Nat(x.checked_add(y)?),
+            NatOp::Sub => Nat(x.saturating_sub(y)),
+            NatOp::Mul => Nat(x.checked_mul(y)?),
+            NatOp::Div => Nat(x.checked_div(y).unwrap_or(0)),
+            NatOp::Mod => Nat(if y == 0 { x } else { x % y }),
+            NatOp::Gcd => {
+                let (mut a, mut b) = (x, y);
+                while b != 0 {
+                    (a, b) = (b, a % b);
+                }
+                Nat(a)
+            }
+            NatOp::Beq => Bool(x == y),
+            NatOp::Ble => Bool(x <= y),
+            NatOp::Land => Nat(x & y),
+            NatOp::Lor => Nat(x | y),
+            NatOp::Xor => Nat(x ^ y),
+            NatOp::ShiftLeft => {
+                if x == 0 {
+                    Nat(0)
+                } else if y < 64 && (x << y) >> y == x {
+                    Nat(x << y)
+                } else {
+                    return None;
+                }
+            }
+            NatOp::ShiftRight => Nat(if y < 64 { x >> y } else { 0 }),
+            NatOp::Pow => Nat(x.checked_pow(u32::try_from(y).ok()?)?),
+        })
+    }
+}
+
 pub const NAT_OPS: [(&str, NatOp); 14] = [
     ("Nat.add", NatOp::Add),
     ("Nat.sub", NatOp::Sub),
@@ -566,5 +617,131 @@ impl Shapes<'_> {
             list_cons: cons,
             list_nil: nil,
         })
+    }
+}
+
+#[cfg(test)]
+mod small_nat_tests {
+    use super::{NatOp, SmallNat};
+    use num_bigint::BigUint;
+
+    /// What the checkers' `BigUint` paths compute, without the size limits
+    /// (no result below 2^64 reaches them).
+    fn big(op: NatOp, x: u64, y: u64) -> Option<SmallNat> {
+        let (a, b) = (BigUint::from(x), BigUint::from(y));
+        let z = BigUint::ZERO;
+        let r = match op {
+            NatOp::Add => a + b,
+            NatOp::Sub => {
+                if a >= b {
+                    a - b
+                } else {
+                    z
+                }
+            }
+            NatOp::Mul => a * b,
+            NatOp::Div => {
+                if b == z {
+                    z
+                } else {
+                    a / b
+                }
+            }
+            NatOp::Mod => {
+                if b == z {
+                    a
+                } else {
+                    a % b
+                }
+            }
+            NatOp::Gcd => {
+                let (mut a, mut b) = (a, b);
+                while b != BigUint::ZERO {
+                    let r = &a % &b;
+                    a = b;
+                    b = r;
+                }
+                a
+            }
+            NatOp::Beq => return Some(SmallNat::Bool(a == b)),
+            NatOp::Ble => return Some(SmallNat::Bool(a <= b)),
+            NatOp::Land => a & b,
+            NatOp::Lor => a | b,
+            NatOp::Xor => a ^ b,
+            // Past 2^128: not small, and too large to compute here.
+            NatOp::Pow if x > 1 && y > 128 => return None,
+            NatOp::Pow => a.pow(u32::try_from(y).ok()?),
+            NatOp::ShiftLeft => {
+                if x == 0 {
+                    z
+                } else if y > 128 {
+                    return None;
+                } else {
+                    a << u32::try_from(y).ok()?
+                }
+            }
+            NatOp::ShiftRight => match u64::try_from(&b) {
+                Ok(k) if k < a.bits() => a >> k,
+                _ => z,
+            },
+        };
+        u64::try_from(&r).ok().map(SmallNat::Nat)
+    }
+
+    #[test]
+    fn small_agrees_with_big() {
+        let ops = [
+            NatOp::Add,
+            NatOp::Sub,
+            NatOp::Mul,
+            NatOp::Div,
+            NatOp::Mod,
+            NatOp::Gcd,
+            NatOp::Beq,
+            NatOp::Ble,
+            NatOp::Land,
+            NatOp::Lor,
+            NatOp::Xor,
+            NatOp::ShiftLeft,
+            NatOp::ShiftRight,
+            NatOp::Pow,
+        ];
+        let xs = [
+            0,
+            1,
+            2,
+            3,
+            7,
+            63,
+            64,
+            65,
+            1000,
+            u32::MAX as u64,
+            u32::MAX as u64 + 1,
+            u64::MAX / 3,
+            u64::MAX - 1,
+            u64::MAX,
+        ];
+        for op in ops {
+            for &x in &xs {
+                for &y in &xs {
+                    let s = op.small(x, y);
+                    let b = big(op, x, y);
+                    let same = match (&s, &b) {
+                        (Some(SmallNat::Nat(p)), Some(SmallNat::Nat(q))) => p == q,
+                        (Some(SmallNat::Bool(p)), Some(SmallNat::Bool(q))) => p == q,
+                        // `None`: the `BigUint` path decides.
+                        (None, _) => true,
+                        _ => false,
+                    };
+                    assert!(same, "{op:?} {x} {y}");
+                    // Only a result past 2^64 (or an operation too large to
+                    // compute here) is left to the `BigUint` path.
+                    if s.is_none() {
+                        assert!(b.is_none(), "{op:?} {x} {y} left to BigUint");
+                    }
+                }
+            }
+        }
     }
 }
