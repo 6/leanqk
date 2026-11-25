@@ -196,6 +196,13 @@ pub struct State {
 const MEMO_TRIAL: u32 = 256;
 const MEMO_RATIO: u32 = 32;
 
+/// What evaluation goes on with: a value, or a term to evaluate in place
+/// of the current one (a tail call).
+enum Next {
+    V(V),
+    Eval(ExprId, Env),
+}
+
 /// A method's argument thunks `p₁ … pₖ` and the value of `c p₁ … pₖ`.
 type Method = (Box<[Th]>, V);
 
@@ -448,14 +455,19 @@ impl<'a, 'e> Machine<'a, 'e> {
             return env.get(i).clone();
         }
         if !self.s.keep_proofs && self.is_proof(e) {
-            // The proof's term, if the terms of its variables are known;
-            // else it is erased.
-            return match self.term_in(e, env, 0) {
-                Some(r) => Thunk::closed(r),
-                None => Thunk::erased(e, env),
-            };
+            return self.proof_thunk(e, env);
         }
         Thunk::delayed(e, env.clone())
+    }
+
+    /// The proof's term, if the terms of its variables are known; else it
+    /// is erased.
+    #[inline(never)]
+    fn proof_thunk(&mut self, e: ExprId, env: &Env) -> Th {
+        match self.term_in(e, env, 0) {
+            Some(r) => Thunk::closed(r),
+            None => Thunk::erased(e, env),
+        }
     }
 
     /// Whether the inductive type `n` is a proposition (its type ends in
@@ -548,7 +560,26 @@ impl<'a, 'e> Machine<'a, 'e> {
         r
     }
 
+    /// Evaluation of `e` in `env`, with calls in tail position (a beta
+    /// step that takes all the arguments, a `let` body, a recursor's
+    /// minor premise) run in this loop rather than nested, so that the
+    /// stack grows only with non-tail evaluations.
     fn eval_here(&mut self, e: ExprId, env: &Env) -> ER<V> {
+        let mut e = e;
+        let mut owned: Option<Env> = None;
+        loop {
+            let next = self.step(e, owned.as_ref().unwrap_or(env))?;
+            match next {
+                Next::V(v) => return Ok(v),
+                Next::Eval(e2, env2) => {
+                    e = e2;
+                    owned = Some(env2);
+                }
+            }
+        }
+    }
+
+    fn step(&mut self, e: ExprId, env: &Env) -> ER<Next> {
         self.s.steps += 1;
         if self.s.steps & ((1 << 24) - 1) == 0 && self.s.profile.is_some() {
             self.dump_profile();
@@ -557,49 +588,35 @@ impl<'a, 'e> Machine<'a, 'e> {
         match node {
             ExprNode::BVar(i) => {
                 let t = env.get(i).clone();
-                self.force(&t)
+                self.force(&t).map(Next::V)
             }
-            ExprNode::NatSmall(lo, hi) => Ok(Rc::new(Val::Nat(Nat::small(lo, hi)))),
-            ExprNode::NatBig(b) => Ok(Rc::new(Val::Nat(Nat::big(self.tc.st.big(b).clone())))),
-            ExprNode::Str(_) => Ok(Rc::new(Val::Str(e))),
+            ExprNode::NatSmall(lo, hi) => Ok(Next::V(Rc::new(Val::Nat(Nat::small(lo, hi))))),
+            ExprNode::NatBig(b) => Ok(Next::V(Rc::new(Val::Nat(Nat::big(
+                self.tc.st.big(b).clone(),
+            ))))),
+            ExprNode::Str(_) => Ok(Next::V(Rc::new(Val::Str(e)))),
             ExprNode::FVar(_) => Err(stuck(268)),
-            ExprNode::Sort(_) | ExprNode::Pi(..) => {
-                // A type: in weak head normal form already.
-                let t = if self.tc.st.has_loose_bvars(e) {
-                    let mut rb = value::Readback::default();
-                    let t = rb.inst(self.tc, e, env);
-                    if rb.erased {
-                        return Err(Bail::Erased);
-                    }
-                    t
-                } else {
-                    e
-                };
-                Ok(Rc::new(Val::Neutral {
-                    head: t,
-                    args: Vec::new(),
-                }))
-            }
-            ExprNode::Lam(..) => Ok(Rc::new(Val::Clo {
+            ExprNode::Sort(_) | ExprNode::Pi(..) => self.type_value(e, env).map(Next::V),
+            ExprNode::Lam(..) => Ok(Next::V(Rc::new(Val::Clo {
                 lam: e,
                 env: env.clone(),
-            })),
+            }))),
             ExprNode::Let(h, b) => {
                 let v = self.tc.st.let_binder(h).value;
                 let t = self.thunk(v, env);
                 let env2 = env.push(t);
-                self.eval(b, &env2)
+                Ok(Next::Eval(b, env2))
             }
-            ExprNode::Const(..) => self.constant(e, Vec::new()),
+            ExprNode::Const(..) => self.constant_n(e, Vec::new()),
             ExprNode::Proj(s, i, x) => {
                 let xv = self.eval(x, env)?;
-                self.proj(s, i, xv)
+                self.proj(s, i, xv).map(Next::V)
             }
             ExprNode::App(..) => {
                 if !self.tc.st.has_loose_bvars(e) && !env.is_empty() {
                     // A closed application: share its value.
                     let t = self.closed(e);
-                    return self.force(&t);
+                    return self.force(&t).map(Next::V);
                 }
                 let mut f = e;
                 let mut n = 0;
@@ -615,15 +632,35 @@ impl<'a, 'e> Machine<'a, 'e> {
                 }
                 args.reverse();
                 match self.tc.st.node(f) {
-                    ExprNode::Const(..) => self.constant(f, args),
-                    ExprNode::Lam(..) => self.beta(f, env.clone(), args),
+                    ExprNode::Const(..) => self.constant_n(f, args),
+                    ExprNode::Lam(..) => self.beta_n(f, env.clone(), args),
                     _ => {
                         let fv = self.eval(f, env)?;
-                        self.apply(fv, args)
+                        self.apply_n(fv, args)
                     }
                 }
             }
         }
+    }
+
+    /// A sort or a Pi: in weak head normal form already.
+    #[inline(never)]
+    fn type_value(&mut self, e: ExprId, env: &Env) -> ER<V> {
+        // A type: in weak head normal form already.
+        let t = if self.tc.st.has_loose_bvars(e) {
+            let mut rb = value::Readback::default();
+            let t = rb.inst(self.tc, e, env);
+            if rb.erased {
+                return Err(Bail::Erased);
+            }
+            t
+        } else {
+            e
+        };
+        Ok(Rc::new(Val::Neutral {
+            head: t,
+            args: Vec::new(),
+        }))
     }
 
     #[cold]
@@ -652,6 +689,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         i
     }
 
+    #[inline(never)]
     fn compute_info(&mut self, c: ExprId) -> CInfo {
         let ExprNode::Const(n, ls) = self.tc.st.node(c) else {
             unreachable!()
@@ -750,69 +788,85 @@ impl<'a, 'e> Machine<'a, 'e> {
 
     /// The constant `c` applied to `args`.
     fn constant(&mut self, c: ExprId, args: Vec<Th>) -> ER<V> {
+        let n = self.constant_n(c, args)?;
+        self.finish(n)
+    }
+
+    fn constant_n(&mut self, c: ExprId, args: Vec<Th>) -> ER<Next> {
         if let Some(p) = self.s.profile.as_mut() {
             *p.entry(c).or_default() += 1;
         }
         match self.info(c) {
-            CInfo::Unfold(v, k) => {
-                let k = k as usize;
-                if k > 0 && args.len() > k {
-                    return self.method(c, v, k, args);
-                }
-                let t = self.closed(v);
-                let f = self.force(&t)?;
-                if args.is_empty() {
-                    return Ok(f);
-                }
-                // Arguments that are all known terms: this is the closed
-                // term `c a₁ … aₙ`, whose value is shared through its id,
-                // as `whnf`'s cache shares it after substitution.
-                // Building the key costs a term; constants whose keys
-                // rarely hit are not memoized any more.
-                let st = self.s.memo.entry(c).or_default();
-                if st.0 >= MEMO_TRIAL && st.1 * MEMO_RATIO < st.0 {
-                    return self.apply(f, args);
-                }
-                st.0 += 1;
-                let Some(key) = self.closed_app(c, &args) else {
-                    return self.apply(f, args);
-                };
-                let kt = self.closed(key);
-                let st = self.s.memo.entry(c).or_default();
-                if let TState::Done(v) = &*kt.0.borrow() {
-                    st.1 += 1;
-                    return Ok(v.clone());
-                }
-                let v = self.apply(f, args)?;
-                let mut b = kt.0.borrow_mut();
-                if let TState::Delayed(..) = &*b {
-                    *b = TState::Done(v.clone());
-                }
-                Ok(v)
-            }
-            CInfo::Op(op, _) => self.saturate(c, Head::Op(op), args),
-            CInfo::Succ => self.saturate(c, Head::Succ, args),
-            CInfo::Rec(r) => self.saturate(c, Head::Rec(r), args),
-            CInfo::QuotLift => self.saturate(c, Head::QuotLift, args),
-            CInfo::QuotInd => self.saturate(c, Head::QuotInd, args),
-            CInfo::Arr(op, v) => self.saturate(c, Head::Arr(op, v), args),
-            CInfo::List(op, v) => self.saturate(c, Head::List(op, v), args),
-            CInfo::DecEq(op, v) => self.saturate(c, Head::DecEq(op, v), args),
-            CInfo::BEqProd(v) => self.saturate(c, Head::BEqProd(v), args),
-            CInfo::Int(op, v) => self.saturate(c, Head::Int(op, v), args),
+            CInfo::Unfold(v, k) => self.unfold_n(c, v, k, args),
+            CInfo::Op(op, _) => self.saturate_n(c, Head::Op(op), args),
+            CInfo::Succ => self.saturate_n(c, Head::Succ, args),
+            CInfo::Rec(r) => self.saturate_n(c, Head::Rec(r), args),
+            CInfo::QuotLift => self.saturate_n(c, Head::QuotLift, args),
+            CInfo::QuotInd => self.saturate_n(c, Head::QuotInd, args),
+            CInfo::Arr(op, v) => self.saturate_n(c, Head::Arr(op, v), args),
+            CInfo::List(op, v) => self.saturate_n(c, Head::List(op, v), args),
+            CInfo::DecEq(op, v) => self.saturate_n(c, Head::DecEq(op, v), args),
+            CInfo::BEqProd(v) => self.saturate_n(c, Head::BEqProd(v), args),
+            CInfo::Int(op, v) => self.saturate_n(c, Head::Int(op, v), args),
             CInfo::Ctor(info) if args.is_empty() => {
                 // One shared value per constructor constant.
                 if let Some(v) = self.s.nullary.get(&c) {
-                    return Ok(v.clone());
+                    return Ok(Next::V(v.clone()));
                 }
                 let v = Rc::new(Val::Ctor { c, info, args });
                 self.s.nullary.insert(c, v.clone());
-                Ok(v)
+                Ok(Next::V(v))
             }
-            CInfo::Ctor(info) => Ok(Rc::new(Val::Ctor { c, info, args })),
-            CInfo::Neutral => Ok(Rc::new(Val::Neutral { head: c, args })),
+            CInfo::Ctor(info) => Ok(Next::V(Rc::new(Val::Ctor { c, info, args }))),
+            CInfo::Neutral => Ok(Next::V(Rc::new(Val::Neutral { head: c, args }))),
             CInfo::Bail => Err(stuck(444)),
         }
+    }
+
+    /// The definition `c`, of value `v`, applied to `args` (see
+    /// `CInfo::Unfold`). Not inlined into `constant_n`, which is on the
+    /// stack at every recursor reduction.
+    #[inline(never)]
+    fn unfold_n(&mut self, c: ExprId, v: ExprId, k: u32, args: Vec<Th>) -> ER<Next> {
+        let k = k as usize;
+        if k > 0 && args.len() > k {
+            return self.method_n(c, v, k, args);
+        }
+        let t = self.closed(v);
+        let f = self.force(&t)?;
+        if args.is_empty() {
+            return Ok(Next::V(f));
+        }
+        // Arguments that are all known terms: this is the closed
+        // term `c a₁ … aₙ`, whose value is shared through its id,
+        // as `whnf`'s cache shares it after substitution.
+        // Building the key costs a term; constants whose keys
+        // rarely hit are not memoized any more.
+        let st = self.s.memo.entry(c).or_default();
+        if st.0 >= MEMO_TRIAL && st.1 * MEMO_RATIO < st.0 {
+            return self.apply_n(f, args);
+        }
+        st.0 += 1;
+        self.memo_app(c, f, args)
+    }
+
+    #[inline(never)]
+    fn memo_app(&mut self, c: ExprId, f: V, args: Vec<Th>) -> ER<Next> {
+        let Some(key) = self.closed_app(c, &args) else {
+            return self.apply_n(f, args);
+        };
+        let kt = self.closed(key);
+        let st = self.s.memo.entry(c).or_default();
+        if let TState::Done(v) = &*kt.0.borrow() {
+            st.1 += 1;
+            return Ok(Next::V(v.clone()));
+        }
+        let v = self.apply(f, args)?;
+        let mut b = kt.0.borrow_mut();
+        if let TState::Delayed(..) = &*b {
+            *b = TState::Done(v.clone());
+        }
+        Ok(Next::V(v))
     }
 
     /// The projection function `c` (with value `v`, `fun p₁ … pₖ self =>
@@ -821,7 +875,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     /// instance's field, is kept per argument thunks (the same thunks
     /// stand for the same terms), and the rest of the arguments are
     /// applied to it, as `whnf` does after unfolding `c` and projecting.
-    fn method(&mut self, c: ExprId, v: ExprId, k: usize, mut args: Vec<Th>) -> ER<V> {
+    fn method_n(&mut self, c: ExprId, v: ExprId, k: usize, mut args: Vec<Th>) -> ER<Next> {
         let rest = args.split_off(k);
         let hit = self.s.methods.get(&c).and_then(|es| {
             es.iter()
@@ -833,31 +887,34 @@ impl<'a, 'e> Machine<'a, 'e> {
                 FAST[4].fetch_add(1, Relaxed);
                 f
             }
+            None => self.method_miss(c, v, args)?,
+        };
+        self.apply_n(f, rest)
+    }
+
+    #[inline(never)]
+    fn method_miss(&mut self, c: ExprId, v: ExprId, args: Vec<Th>) -> ER<V> {
+        let f = match self.closed_app(c, &args) {
+            Some(key) => {
+                let t = self.closed(key);
+                self.force(&t)?
+            }
             None => {
-                let f = match self.closed_app(c, &args) {
-                    Some(key) => {
-                        let t = self.closed(key);
-                        self.force(&t)?
-                    }
-                    None => {
-                        let t = self.closed(v);
-                        let u = self.force(&t)?;
-                        self.apply(u, args.clone())?
-                    }
-                };
-                let es = self.s.methods.entry(c).or_default();
-                let e = (args.into_boxed_slice(), f.clone());
-                if es.len() < METHOD_CACHE {
-                    es.push(e);
-                } else {
-                    // Replace the oldest.
-                    es.remove(0);
-                    es.push(e);
-                }
-                f
+                let t = self.closed(v);
+                let u = self.force(&t)?;
+                self.apply(u, args.clone())?
             }
         };
-        self.apply(f, rest)
+        let es = self.s.methods.entry(c).or_default();
+        let e = (args.into_boxed_slice(), f.clone());
+        if es.len() < METHOD_CACHE {
+            es.push(e);
+        } else {
+            // Replace the oldest.
+            es.remove(0);
+            es.push(e);
+        }
+        Ok(f)
     }
 
     /// The term `c a₁ … aₙ`, if every argument's term is known.
@@ -923,6 +980,19 @@ impl<'a, 'e> Machine<'a, 'e> {
     }
 
     /// A head that reduces once it has `arity` arguments.
+    fn saturate_n(&mut self, c: ExprId, kind: Head, args: Vec<Th>) -> ER<Next> {
+        if let Head::Rec(r) = &kind
+            && args.len() >= kind.arity()
+        {
+            let r = r.clone();
+            return self.iota_n(&r, args);
+        }
+        self.saturate(c, kind, args).map(Next::V)
+    }
+
+    // Not inlined into `saturate_n`, which is on the stack at every
+    // recursor reduction: its frame would be this one's size.
+    #[inline(never)]
     fn saturate(&mut self, c: ExprId, kind: Head, args: Vec<Th>) -> ER<V> {
         if args.len() < kind.arity() {
             return Ok(Rc::new(Val::Pap {
@@ -932,65 +1002,73 @@ impl<'a, 'e> Machine<'a, 'e> {
             }));
         }
         match kind {
-            Head::Succ => {
-                let mut args = args;
-                let x = self.force(&args[0])?;
-                let rest = args.split_off(1);
-                let r = match self.nat_of(&x) {
-                    Some(n) => Rc::new(Val::Nat(n.succ())),
-                    None => return Err(stuck(518)),
-                };
-                self.apply_rest(r, rest)
+            Head::Succ => self.succ_head(args),
+            Head::Op(op) => self.nat_head(c, op, args),
+            Head::Rec(r) => {
+                let n = self.iota_n(&r, args)?;
+                self.finish(n)
             }
-            Head::Op(op) => {
-                let mut args = args;
-                let rest = args.split_off(2);
-                let x = self.force(&args[0])?;
-                let y = self.force(&args[1])?;
-                let r = match (self.nat_of(&x), self.nat_of(&y)) {
-                    (Some(x), Some(y)) => self.nat_op(op, &x, &y)?,
-                    _ => {
-                        // Not literals: the operation is its definition.
-                        let CInfo::Op(_, v) = self.info(c) else {
-                            unreachable!()
-                        };
-                        let t = self.closed(v);
-                        let f = self.force(&t)?;
-                        self.apply(f, args)?
-                    }
-                };
-                self.apply_rest(r, rest)
-            }
-            Head::Rec(r) => self.iota(&r, args),
             Head::Arr(op, def) => self.array_op(c, op, def, args),
             Head::List(op, def) => self.list_op(c, op, def, args),
             Head::DecEq(op, def) => self.dec_eq_op(c, op, def, args),
             Head::BEqProd(def) => self.beq_prod(def, args),
             Head::BEqProdFn => self.beq_prod_fn(c, args),
             Head::Int(op, def) => self.int_op(op, def, args),
-            Head::QuotLift | Head::QuotInd => {
-                let (mk_pos, arg_pos) = if matches!(kind, Head::QuotLift) {
-                    (5, 3)
-                } else {
-                    (4, 3)
-                };
-                let q = self.force(&args[mk_pos])?;
-                let Val::Neutral { head, args: margs } = &*q else {
-                    return Err(stuck(550));
-                };
-                let is_mk = match (self.tc.st.node(*head), self.tc.ext.quot.as_ref()) {
-                    (ExprNode::Const(n, _), Some(qn)) => n == qn.mk,
-                    _ => false,
-                };
-                if !is_mk || margs.len() != 3 {
-                    return Err(stuck(557));
-                }
-                let f = self.force(&args[arg_pos])?;
-                let mut rest = vec![margs[2].clone()];
-                rest.extend_from_slice(&args[mk_pos + 1..]);
-                self.apply(f, rest)
-            }
+            Head::QuotLift | Head::QuotInd => self.quot_head(matches!(kind, Head::QuotLift), args),
         }
+    }
+
+    #[inline(never)]
+    fn succ_head(&mut self, args: Vec<Th>) -> ER<V> {
+        let mut args = args;
+        let x = self.force(&args[0])?;
+        let rest = args.split_off(1);
+        let r = match self.nat_of(&x) {
+            Some(n) => Rc::new(Val::Nat(n.succ())),
+            None => return Err(stuck(518)),
+        };
+        self.apply_rest(r, rest)
+    }
+
+    #[inline(never)]
+    fn nat_head(&mut self, c: ExprId, op: NatOp, args: Vec<Th>) -> ER<V> {
+        let mut args = args;
+        let rest = args.split_off(2);
+        let x = self.force(&args[0])?;
+        let y = self.force(&args[1])?;
+        let r = match (self.nat_of(&x), self.nat_of(&y)) {
+            (Some(x), Some(y)) => self.nat_op(op, &x, &y)?,
+            _ => {
+                // Not literals: the operation is its definition.
+                let CInfo::Op(_, v) = self.info(c) else {
+                    unreachable!()
+                };
+                let t = self.closed(v);
+                let f = self.force(&t)?;
+                self.apply(f, args)?
+            }
+        };
+        self.apply_rest(r, rest)
+    }
+
+    #[inline(never)]
+    fn quot_head(&mut self, lift: bool, args: Vec<Th>) -> ER<V> {
+        let (mk_pos, arg_pos) = if lift { (5, 3) } else { (4, 3) };
+        let q = self.force(&args[mk_pos])?;
+        let Val::Neutral { head, args: margs } = &*q else {
+            return Err(stuck(550));
+        };
+        let is_mk = match (self.tc.st.node(*head), self.tc.ext.quot.as_ref()) {
+            (ExprNode::Const(n, _), Some(qn)) => n == qn.mk,
+            _ => false,
+        };
+        if !is_mk || margs.len() != 3 {
+            return Err(stuck(557));
+        }
+        let f = self.force(&args[arg_pos])?;
+        let mut rest = vec![margs[2].clone()];
+        rest.extend_from_slice(&args[mk_pos + 1..]);
+        self.apply(f, rest)
     }
 
     fn apply_rest(&mut self, v: V, rest: Vec<Th>) -> ER<V> {
@@ -1038,7 +1116,15 @@ impl<'a, 'e> Machine<'a, 'e> {
     }
 
     /// Beta: the lambda `lam` (in `env`) applied to `args`.
-    fn beta(&mut self, mut lam: ExprId, env: Env, mut args: Vec<Th>) -> ER<V> {
+    /// The value of a tail call.
+    fn finish(&mut self, n: Next) -> ER<V> {
+        match n {
+            Next::V(v) => Ok(v),
+            Next::Eval(e, env) => self.eval(e, &env),
+        }
+    }
+
+    fn beta_n(&mut self, mut lam: ExprId, env: Env, mut args: Vec<Th>) -> ER<Next> {
         let mut i = 0;
         while i < args.len()
             && let ExprNode::Lam(_, _, _, b) = self.tc.st.node(lam)
@@ -1048,20 +1134,45 @@ impl<'a, 'e> Machine<'a, 'e> {
         }
         if i == 0 {
             let v = self.eval(lam, &env)?;
-            return self.apply(v, args);
+            return self.apply_n(v, args);
         }
         let rest = args.split_off(i);
         let env = env.push_all(args);
+        if rest.is_empty() {
+            return Ok(Next::Eval(lam, env));
+        }
         let v = self.eval(lam, &env)?;
-        self.apply_rest(v, rest)
+        self.apply_n(v, rest)
     }
 
     fn apply(&mut self, f: V, args: Vec<Th>) -> ER<V> {
+        let n = self.apply_n(f, args)?;
+        self.finish(n)
+    }
+
+    fn apply_n(&mut self, f: V, args: Vec<Th>) -> ER<Next> {
         if args.is_empty() {
-            return Ok(f);
+            return Ok(Next::V(f));
         }
         match &*f {
-            Val::Clo { lam, env } => self.beta(*lam, env.clone(), args),
+            Val::Clo { lam, env } => self.beta_n(*lam, env.clone(), args),
+            Val::Pap {
+                head,
+                kind,
+                args: a0,
+            } => {
+                let mut a = a0.clone();
+                a.extend(args);
+                self.saturate_n(*head, kind.clone(), a)
+            }
+            _ => self.apply_data(f, args).map(Next::V),
+        }
+    }
+
+    /// A constructor or a neutral term applied to more arguments.
+    #[inline(never)]
+    fn apply_data(&mut self, f: V, args: Vec<Th>) -> ER<V> {
+        match &*f {
             Val::Ctor { c, info, args: a0 } => {
                 let mut a = a0.clone();
                 a.extend(args);
@@ -1084,16 +1195,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                     Err(stuck(655))
                 }
             }
-            Val::Pap {
-                head,
-                kind,
-                args: a0,
-            } => {
-                let mut a = a0.clone();
-                a.extend(args);
-                self.saturate(*head, kind.clone(), a)
-            }
-            Val::Nat(_) | Val::Str(_) | Val::Arr(_) => Err(stuck(667)),
+            _ => Err(stuck(667)),
         }
     }
 
@@ -1136,50 +1238,17 @@ impl<'a, 'e> Machine<'a, 'e> {
 
     /// Iota reduction: the recursor `r` applied to `args` (at least up to
     /// its major premise).
-    fn iota(&mut self, r: &RecInfo, args: Vec<Th>) -> ER<V> {
+    fn iota_n(&mut self, r: &RecInfo, args: Vec<Th>) -> ER<Next> {
         let mut major = args[r.major_idx].clone();
         if r.k {
-            // As Lean does, before reducing the major premise: if its type
-            // is the type of the constructor (built from the parameters),
-            // use the constructor.
-            let mut rb = value::Readback::default();
-            let m = rb.thunk(self.tc, &major);
-            if rb.erased {
-                return Err(Bail::Erased);
-            }
-            let c = self
-                .tc
-                .ctor_when_k_pub(r.induct, r.nparams, m)
-                .map_err(|_| Bail::Stuck)?;
-            if c != m {
-                major = self.closed(c);
-            }
+            major = self.k_major(r, major)?;
         }
         let mut mv = self.force(&major)?;
-        match &*mv {
-            Val::Nat(n) => {
-                mv = self.nat_ctor(n)?;
-            }
-            Val::Str(e) => {
-                let e = *e;
-                mv = self.string_ctor(e)?;
-            }
-            Val::Arr(a) => {
-                let a = a.clone();
-                mv = self.array_ctor(&a)?;
-            }
-            _ => {}
+        if matches!(&*mv, Val::Nat(_) | Val::Str(_) | Val::Arr(_)) {
+            mv = self.as_ctor(mv)?;
         }
         let Val::Ctor { c, args: margs, .. } = &*mv else {
-            if std::env::var_os("NITROLEAN_EVAL_DEBUG").is_some() {
-                let mut rb = value::Readback::default();
-                let x = rb.value(self.tc, &mv);
-                eprintln!(
-                    "evaluator: stuck major of a recursor on {}: {}",
-                    self.tc.show(r.induct),
-                    self.tc.pp(x).chars().take(400).collect::<String>()
-                );
-            }
+            self.stuck_major(r, &mv);
             return Err(stuck(734));
         };
         let ExprNode::Const(cn, _) = self.tc.st.node(*c) else {
@@ -1198,12 +1267,61 @@ impl<'a, 'e> Machine<'a, 'e> {
         a.extend_from_slice(&args[r.major_idx + 1..]);
         let t = self.closed(rhs);
         let f = self.force(&t)?;
-        self.apply(f, a)
+        self.apply_n(f, a)
+    }
+
+    /// As Lean does, before reducing a `K`-like recursor's major premise:
+    /// if its type is the type of the constructor (built from the
+    /// parameters), use the constructor.
+    #[inline(never)]
+    fn k_major(&mut self, r: &RecInfo, major: Th) -> ER<Th> {
+        let mut rb = value::Readback::default();
+        let m = rb.thunk(self.tc, &major);
+        if rb.erased {
+            return Err(Bail::Erased);
+        }
+        let c = self
+            .tc
+            .ctor_when_k_pub(r.induct, r.nparams, m)
+            .map_err(|_| Bail::Stuck)?;
+        Ok(if c != m { self.closed(c) } else { major })
+    }
+
+    /// A literal, string or array value as a constructor application.
+    #[inline(never)]
+    fn as_ctor(&mut self, v: V) -> ER<V> {
+        match &*v {
+            Val::Nat(n) => self.nat_ctor(n),
+            Val::Str(e) => {
+                let e = *e;
+                self.string_ctor(e)
+            }
+            Val::Arr(a) => {
+                let a = a.clone();
+                self.array_ctor(&a)
+            }
+            _ => Ok(v),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn stuck_major(&mut self, r: &RecInfo, mv: &V) {
+        if std::env::var_os("NITROLEAN_EVAL_DEBUG").is_some() {
+            let mut rb = value::Readback::default();
+            let x = rb.value(self.tc, mv);
+            eprintln!(
+                "evaluator: stuck major of a recursor on {}: {}",
+                self.tc.show(r.induct),
+                self.tc.pp(x).chars().take(400).collect::<String>()
+            );
+        }
     }
 
     /// An `Array` operation applied to (at least) its arguments: on a
     /// vector if the array is one or is `Array.mk` of a list built to its
     /// end, else by its definition.
+    #[inline(never)]
     fn array_op(&mut self, c: ExprId, op: ArrayOp, def: ExprId, mut args: Vec<Th>) -> ER<V> {
         let n = Head::Arr(op, def).arity();
         let rest = args.split_off(n);
@@ -1345,6 +1463,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     /// `instBEqProd α β bα bβ`: the definition's `BEq.mk T f`, with the
     /// field `f` held as `BEqProdFn` applied to `α β bα bβ`, whose head is
     /// the term `fun α β bα bβ => f` (so it stands for `f`, by beta).
+    #[inline(never)]
     fn beq_prod(&mut self, def: ExprId, mut args: Vec<Th>) -> ER<V> {
         let rest = args.split_off(4);
         let head = match self.s.beq_fields.get(&def) {
@@ -1410,6 +1529,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     /// b₂`, forcing what the definition forces, in its order. `head` is
     /// the term the field stands for, used where the arguments are not
     /// pairs or the comparisons not booleans.
+    #[inline(never)]
     fn beq_prod_fn(&mut self, head: ExprId, mut args: Vec<Th>) -> ER<V> {
         let rest = args.split_off(6);
         let r = match self.beq_prod_fast(&args)? {
@@ -1467,6 +1587,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     /// definition. It forces each argument, as the definitions' matches do,
     /// except the divisor of `emod` on `Int.ofNat m`, which the definition
     /// leaves under `Int.ofNat`; that one is forced here too.
+    #[inline(never)]
     fn int_op(&mut self, op: IntOp, def: ExprId, mut args: Vec<Th>) -> ER<V> {
         let n = Head::Int(op, def).arity();
         let rest = args.split_off(n);
@@ -1674,6 +1795,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     /// in the same order. If the list or a test is not a value of the
     /// expected kind, the operation is its definition (from the original
     /// arguments: what was forced stays evaluated).
+    #[inline(never)]
     fn list_op(&mut self, c: ExprId, op: ListOp, def: ExprId, mut args: Vec<Th>) -> ER<V> {
         let n = Head::List(op, def).arity();
         let rest = args.split_off(n);
@@ -2067,6 +2189,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     /// `isTrue (x = y) h` or `isFalse (x = y) h`, with `h` an erased proof:
     /// a run that needs it gives up and is done again keeping proofs, and
     /// then the instance is its definition.
+    #[inline(never)]
     fn dec_eq_op(&mut self, c: ExprId, op: DecEqOp, def: ExprId, mut args: Vec<Th>) -> ER<V> {
         let n = Head::DecEq(op, def).arity();
         let rest = args.split_off(n);

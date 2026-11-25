@@ -52,6 +52,16 @@ over the checker's hash-consed term DAG:
 - Deep recursion (a long chain of thunks each needing the next) runs on extra
   stack segments allocated on demand (`stacker`), up to `MAX_DEPTH` nested
   evaluations.
+- **Tail calls** do not nest. A beta step that takes all of a closure's
+  arguments, a `let` body and a recursor's minor premise (with the fields
+  and further arguments) are what `eval_here` evaluates next, in its loop.
+  So the stack grows only where a value is needed before going on: a forced
+  argument, a major premise, the head of an application. The functions on
+  that path keep their frames small: the fast paths and rare cases are
+  out of line. Their frames add up to about 1 KB per nested evaluation.
+  On `npowRec`-style unary powers in `Fin p` (100002 multiplications), the
+  check goes from 1.26 GB to 0.57 GB. The public corpus's peak goes from
+  4.5 to 1.8 GB.
 
 ## Why the answers are right
 
