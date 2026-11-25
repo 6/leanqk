@@ -294,6 +294,7 @@ pub struct Ext {
     pub bool_true: Option<NameId>,
     pub bool_false: Option<NameId>,
     pub ops: IdMap<NameId, NatOp>,
+    pub nat_ops_complete: bool,
     pub array_ops: IdMap<NameId, ArrayOp>,
     pub list_ops: IdMap<NameId, ListOp>,
     pub dec_eq_ops: IdMap<NameId, DecEqOp>,
@@ -358,6 +359,7 @@ impl Ext {
             x.bool_true = Some(t);
         }
         let fp = fingerprint::Checker::with_decls(env, decls);
+        let mut recognized_ops = 0;
         for (name, op) in NAT_OPS {
             let Some(n) = env.names.find_dotted(name) else {
                 continue;
@@ -372,10 +374,12 @@ impl Ext {
             match fp.matches(n) {
                 Ok(_) => {
                     x.ops.insert(n, op);
+                    recognized_ops += 1;
                 }
                 Err(why) => x.notes.push(format!("no built-in `{name}`: {why}")),
             }
         }
+        x.nat_ops_complete = recognized_ops == NAT_OPS.len();
         for (name, op) in ARRAY_OPS {
             let Some(n) = env.names.find_dotted(name) else {
                 continue;

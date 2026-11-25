@@ -36,7 +36,7 @@ use crate::name::NameId;
 use ext::Ext;
 use inductive::{IndDecl, IndType, RecNaming, alpha_eq};
 use nbe::Nbe;
-use store::{LOCAL, Store};
+use store::{LOCAL, NatUnfoldLimit, Store};
 use tc::{KErr, Mode, R, Tc, err};
 
 pub use fingerprint::{Checker as Fingerprints, hex as hex_digest, key as fingerprint_key};
@@ -254,7 +254,7 @@ impl Shared<'_> {
 
 fn worker(sh: &Shared<'_>, jobs: usize) {
     let env = sh.env;
-    let store = || Store::with_decls(env, sh.decls);
+    let store = || Store::with_decls(env, sh.decls, !sh.ext.nat_ops_complete);
     let mut tc = Tc::new(store(), sh.ext, 0);
     let mut nb = Nbe::new(store(), sh.ext);
     let mut i = 0;
@@ -293,11 +293,14 @@ fn worker(sh: &Shared<'_>, jobs: usize) {
         let res = match res {
             Ok(r) => r.map_err(|e| (FailKind::Rejected, *e.0)),
             Err(p) => {
-                let msg = p
-                    .downcast_ref::<String>()
-                    .cloned()
-                    .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
-                    .unwrap_or_else(|| "internal error".into());
+                let msg = if p.is::<NatUnfoldLimit>() {
+                    NatUnfoldLimit::MESSAGE.into()
+                } else {
+                    p.downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "internal error".into())
+                };
                 // Rebuild: the checker's state may be inconsistent.
                 tc = Tc::new(store(), sh.ext, 0);
                 nb = Nbe::new(store(), sh.ext);
@@ -380,7 +383,7 @@ fn check_nbe(tc: &mut Tc<'_>, nb: &mut Nbe<'_>, b: &Block, d: &Decl) -> R<()> {
             Ok(Ok(())) => return Ok(()),
             Ok(Err(_)) | Err(_) if !nb.is_fresh() => nb.reset(b.start),
             Ok(Err(e)) => return Err(e),
-            Err(p) if p.is::<nbe::OutOfRoom>() => {
+            Err(p) if p.is::<nbe::OutOfRoom>() || p.is::<NatUnfoldLimit>() => {
                 nb.reset(b.start);
                 return check_single(tc, d);
             }

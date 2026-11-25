@@ -94,3 +94,55 @@ fn failures_do_not_depend_on_threads() {
     }
     assert!(seen >= 50, "only {seen} cases read");
 }
+
+/// Without a recognized arithmetic definition, reducing a large literal
+/// through Nat.rec must stop before expanding it into a unary computation.
+#[test]
+fn large_nat_unary_reduction_declines() {
+    use nitrolean::check::{FailKind, check_env_jobs};
+    use nitrolean::reader::read_str;
+
+    // Reuse the Nat and Eq declarations and their export ids.
+    let prelude = include_str!("kernel/exports/nat-succ-big.ndjson")
+        .split_once("{\"in\":23,")
+        .unwrap()
+        .0;
+    let check = |n, step| {
+        let export = format!(
+            r#"{prelude}{{"in":23,"str":{{"pre":0,"str":"natRecClaim"}}}}
+{{"ie":73,"natVal":"{n}"}}
+{{"ie":74,"const":{{"name":19,"us":[3]}}}}
+{{"ie":75,"lam":{{"binderInfo":"default","body":43,"name":0,"type":43}}}}
+{{"ie":76,"lam":{{"binderInfo":"default","body":{step},"name":0,"type":43}}}}
+{{"ie":77,"lam":{{"binderInfo":"default","body":76,"name":0,"type":43}}}}
+{{"ie":78,"app":{{"fn":74,"arg":75}}}}
+{{"ie":79,"app":{{"fn":78,"arg":46}}}}
+{{"ie":80,"app":{{"fn":79,"arg":77}}}}
+{{"ie":81,"app":{{"fn":80,"arg":73}}}}
+{{"ie":82,"const":{{"name":1,"us":[3]}}}}
+{{"ie":83,"app":{{"fn":82,"arg":43}}}}
+{{"ie":84,"app":{{"fn":83,"arg":81}}}}
+{{"ie":85,"app":{{"fn":84,"arg":46}}}}
+{{"ie":86,"const":{{"name":9,"us":[3]}}}}
+{{"ie":87,"app":{{"fn":86,"arg":43}}}}
+{{"ie":88,"app":{{"fn":87,"arg":46}}}}
+{{"thm":{{"all":[23],"levelParams":[],"name":23,"type":85,"value":88}}}}
+"#,
+        );
+        check_env_jobs(&read_str(&export).unwrap(), 1)
+    };
+    // A successor case that returns the recursive result needs every step.
+    assert!(check(12, 1).is_ok());
+    for large in [1u128 << 40, 1u128 << 80] {
+        let failure = check(large, 1).unwrap_err();
+        assert_eq!(failure.kind, FailKind::Resource);
+        assert_eq!(failure.decl, "natRecClaim");
+        assert!(
+            failure
+                .msg
+                .contains("unary reduction of large Nat literals")
+        );
+        // A successor case that ignores the recursive result needs one step.
+        assert!(check(large, 46).is_ok());
+    }
+}

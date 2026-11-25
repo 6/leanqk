@@ -3026,8 +3026,7 @@ fn fuzz_cases(v: &mut Cases) {
         "quot",
         "accept",
         "the quot declaration of Quot without those of Quot.mk, Quot.lift and Quot.ind, and \
-         without their names: Lean accepts (it adds the quotient package at Quot); with the \
-         names Quot.mk, Quot.lift, Quot.ind still bound (and unused), nitrolean accepts too",
+         without their names: Lean adds the quotient package at Quot",
         |tc| {
             let mut e = tc.export(&QUOT, false)?;
             for c in ["Quot.mk", "Quot.lift", "Quot.ind"] {

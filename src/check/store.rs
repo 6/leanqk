@@ -36,6 +36,14 @@ pub fn is_local(id: u32) -> bool {
 pub const OVERFLOW_MSG: &str =
     "nitrolean: resource limit: a declaration built more than 2^31 terms";
 
+/// Raised when unary reduction of a literal exhausts its allocation budget.
+pub(super) struct NatUnfoldLimit;
+
+impl NatUnfoldLimit {
+    pub(super) const MESSAGE: &str =
+        "resource limit: too much unary reduction of large Nat literals";
+}
+
 fn local_id(i: u32) -> u32 {
     assert!(i < LOCAL, "{OVERFLOW_MSG}");
     i | LOCAL
@@ -44,6 +52,8 @@ fn local_id(i: u32) -> u32 {
 pub struct Store<'e> {
     pub env: &'e Env,
     pub(super) decls: &'e [Decl],
+    limit_nat_unfold: bool,
+    nat_unfold_work: u64,
     names: Interner<NameNode>,
     levels: Interner<LevelNode>,
     level_hp: Vec<bool>,
@@ -65,14 +75,17 @@ pub struct Store<'e> {
 }
 
 impl<'e> Store<'e> {
+    #[cfg(test)]
     pub fn new(env: &'e Env) -> Self {
-        Self::with_decls(env, &env.decls)
+        Self::with_decls(env, &env.decls, true)
     }
 
-    pub(super) fn with_decls(env: &'e Env, decls: &'e [Decl]) -> Self {
+    pub(super) fn with_decls(env: &'e Env, decls: &'e [Decl], limit_nat_unfold: bool) -> Self {
         Store {
             env,
             decls,
+            limit_nat_unfold,
+            nat_unfold_work: 0,
             names: Interner::new("too many names"),
             levels: Interner::new("too many levels"),
             level_hp: Vec::new(),
@@ -94,7 +107,29 @@ impl<'e> Store<'e> {
 
     /// Drop the overlay. Every overlay id becomes invalid.
     pub fn clear(&mut self) {
-        *self = Store::with_decls(self.env, self.decls);
+        *self = self.fresh();
+    }
+
+    pub(super) fn fresh(&self) -> Self {
+        Self::with_decls(self.env, self.decls, self.limit_nat_unfold)
+    }
+
+    pub(super) fn reset_nat_unfold_work(&mut self) {
+        self.nat_unfold_work = 0;
+    }
+
+    /// One constructor view of a literal is cheap, but recursing on its
+    /// predecessors can build huge stacks and retain every intermediate Nat.
+    /// Without all the checked Nat shortcuts, charge for large literals,
+    /// with a larger charge for larger integer copies.
+    /// The store follows both evaluators, so a fallback shares the budget.
+    pub(super) fn charge_nat_unfold(&mut self, bits: u64) {
+        if bits > 16 && self.limit_nat_unfold {
+            self.nat_unfold_work += bits.div_ceil(1 << 16);
+            if self.nat_unfold_work > 1 << 15 {
+                std::panic::resume_unwind(Box::new(NatUnfoldLimit));
+            }
+        }
     }
 
     /// Number of overlay expressions.

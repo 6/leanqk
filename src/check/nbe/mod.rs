@@ -305,6 +305,7 @@ impl<'e> Nbe<'e> {
     /// universe parameters are known to be well-formed. Past a size, all
     /// of it goes.
     pub fn begin(&mut self, limit: u32) {
+        self.st.reset_nat_unfold_work();
         if self.a.len() > KEEP_VALUES
             || self.st.local_exprs() > KEEP_VALUES + self.name_exprs + self.read_exprs
             || self.name_exprs > NAMES_KEEP
@@ -378,6 +379,7 @@ impl<'e> Nbe<'e> {
 
     /// Forget everything.
     pub fn reset(&mut self, limit: u32) {
+        self.st.reset_nat_unfold_work();
         self.limit = limit;
         self.lparams_key = None;
         if self.checked_closed.len() > CHECKED_KEEP {
