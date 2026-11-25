@@ -14,13 +14,13 @@ export it must accept. `cases.tsv` lists them:
 
 ## Generating
 
-Lean is pinned in `lean-toolchain` (elan), Python in `mise.toml`.
+Lean is pinned in `lean-toolchain` (elan).
 
-    cd tests/kernel
-    mise exec -- python -I gen.py            # all cases into out/cases/ (about 23 MB, not committed)
-    mise exec -- python -I gen.py --lean     # also run leanchecker on each case
-    mise exec -- python -I gen.py --update   # rewrite cases.tsv and exports/
-    mise exec -- python -I gen.py --check    # fail if cases.tsv or exports/ are stale
+    cargo xtask kernel-cases            # all cases into out/cases/ (about 23 MB, not committed)
+    cargo xtask kernel-cases --lean     # also run leanchecker on each case
+    cargo xtask kernel-cases --update   # rewrite cases.tsv and exports/
+    cargo xtask kernel-cases --check    # fail if cases.tsv or exports/ are stale
+    cargo xtask kernel-cases --only ID,ID   # only these cases
 
 `cargo test` checks the committed exports; after generating,
 `cargo test --release --test kernel_cases -- --ignored` checks every case in
@@ -29,17 +29,20 @@ Lean is pinned in `lean-toolchain` (elan), Python in `mise.toml`.
 decides it, and each has a false twin.
 
 The `eval434-*` cases come from `lean/KCases434.lean`, built with Lean
-v4.34.0 and exported with the lean4export commit for it (pinned in `gen.py`;
-the first run fetches it from GitHub and builds it into `out/`). They test
-the evaluator's fast paths that are only for Lean versions before v4.36.0.
+v4.34.0 and exported with the lean4export commit for it (pinned in
+`xtask/src/kernel_cases/mod.rs`; the first run fetches it from GitHub and
+builds it into `out/`). They test the evaluator's fast paths that are only for Lean versions before v4.36.0.
 Their `lean` column is still the verdict of v4.36.0's `leanchecker`, which
 checks any export.
 
-`lean/KCases.lean` holds the valid source declarations. `gen.py` compiles it,
-runs `leanexport` on the closure of a few constants, and applies the mutation
-defined in `cases.py`. Some cases (universe levels) are built from scratch with
-`exportlib.py`. The output is deterministic. Exports up to 16 KB are committed
-under `exports/`. The rest (mostly the Nat and String cases, whose closures
+`lean/KCases.lean` holds the valid source declarations.
+`cargo xtask kernel-cases` compiles it, runs `leanexport` on the closure of a
+few constants, and applies the mutation defined in
+`xtask/src/kernel_cases/cases.rs`. Some cases (universe levels) are built from
+scratch (`export.rs` there). The output is deterministic. Lean names the module
+after its path from `tests/kernel`, where the generator runs it, and `sorry`
+records its source line, so moving lines in the Lean files (even comment lines)
+changes the exports. Exports up to 16 KB are committed under `exports/`. The rest (mostly the Nat and String cases, whose closures
 pull in much of the prelude) are only generated.
 
 Cases that Lean itself rejects as Lean source are built in two ways:

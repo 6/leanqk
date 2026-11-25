@@ -1,7 +1,7 @@
 /-! Valid source of the kernel test cases built with Lean v4.34.0, for the
 evaluator's fast paths that are only for versions before v4.36.0 (where
 `Decidable` is the inductive type with `isTrue` and `isFalse`). Every
-statement is proved by `sorry`; `gen.py` replaces the proof by `Eq.refl`. -/
+statement is proved by `sorry`; kernel-cases replaces the proof by `Eq.refl`. -/
 
 namespace K34
 

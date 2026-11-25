@@ -14,7 +14,7 @@ fn committed_kernel_cases_get_their_verdicts() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
-/// All the cases, including the large ones `gen.py` writes to `out/cases/`
+/// All the cases, including the large ones `cargo xtask kernel-cases` writes to `out/cases/`
 /// (not committed): `cargo test --release -- --ignored` after generating them.
 #[test]
 #[ignore]
@@ -22,7 +22,7 @@ fn generated_kernel_cases_get_their_verdicts() {
     let (ran, wrong) = run_cases("out/cases");
     assert!(
         ran >= 190,
-        "only {ran} generated cases found: run tests/kernel/gen.py"
+        "only {ran} generated cases found: run cargo xtask kernel-cases"
     );
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
