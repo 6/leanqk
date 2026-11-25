@@ -43,6 +43,7 @@ pub fn cases() -> Vec<Case> {
     irrel_cases(&mut v);
     format_cases(&mut v);
     eval_cases(&mut v);
+    fuzz_cases(&mut v);
     v.0
 }
 
@@ -2736,5 +2737,263 @@ fn eval_cases(v: &mut Cases) {
         "K34.ev_filter_lazy_wrong",
         "reject",
         "the same, the wrong head",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Disagreements with Lean found by the differential fuzzer (tests/fuzz,
+// `cargo xtask difffuzz`). The ones nitrolean still gets wrong are listed in
+// tests/kernel/open.tsv.
+
+fn mdata(e: &mut Export, x: Id) -> Id {
+    e.expr("mdata", json!({"data": {}, "expr": x}))
+}
+
+/// The binder `depth` Pis deep in a declaration's type, renamed or with
+/// another binder info.
+fn retouch_type(e: &mut Export, name: &str, depth: usize, field: &str, value: Value) {
+    let mut chain = vec![e.decl_id(name, "type")];
+    for _ in 0..depth {
+        let b = e.exprs[chain.last().unwrap()].1["body"].as_u64().unwrap();
+        chain.push(b);
+    }
+    let (k, mut p) = e.exprs[chain.last().unwrap()].clone();
+    p[field] = value;
+    let mut new = e.expr(&k, p);
+    for x in chain.iter().rev().skip(1) {
+        let (k, mut p) = e.exprs[x].clone();
+        p["body"] = json!(new);
+        new = e.expr(&k, p);
+    }
+    e.set(name, "type", json!(new));
+}
+
+fn fuzz_cases(v: &mut Cases) {
+    v.text(
+        "fuzz-quot-lift-direct",
+        "quot",
+        "accept",
+        "a theorem stated with Quot.lift and Quot.mk, with the names the fuzzer's seed had: valid, \
+         but leanchecker --from-export says unknown constant Quot.lift; with other names \
+         (K.fz_quot_direct as exported) it accepts",
+        |tc| {
+            let mut text = as_is(tc, "K.fz_quot_direct")?.text();
+            for (a, b) in [
+                ("\"str\":\"lean\"", "\"str\":\"seeds\""),
+                ("\"str\":\"KCases\"", "\"str\":\"FuzzSeeds\""),
+                ("\"str\":\"K\"}", "\"str\":\"FZ\"}"),
+                ("\"str\":\"fz_quot_direct\"", "\"str\":\"q_lift_id\""),
+            ] {
+                assert!(text.contains(a), "{a}");
+                text = text.replace(a, b);
+            }
+            let re = regex::Regex::new(r#""num":\{"i":\d+,"pre":(\d+)\}"#).unwrap();
+            Ok(re
+                .replacen(&text, 1, r#""num":{"i":4092553897,"pre":$1}"#)
+                .into_owned())
+        },
+    );
+    v.add(
+        "fuzz-str-deceq",
+        "eval.string",
+        "accept",
+        "decide (\"abc\" = \"abc\") = true by decide: valid (Lean compiles it, and leanchecker \
+         accepts the .olean), but leanchecker --from-export fails to reduce it",
+        |tc| as_is(tc, "K.fz_str_deceq"),
+    );
+    v.add(
+        "fuzz-mdata-ctor-type",
+        "inductive.mdata",
+        "reject",
+        "Bool.true's type is mdata around Bool: Lean rejects (invalid return type)",
+        |tc| {
+            let mut e = tc.export(&["Bool.true"], false)?;
+            let t = e.decl_id("Bool.true", "type");
+            let m = mdata(&mut e, t);
+            e.set("Bool.true", "type", json!(m));
+            Ok(e)
+        },
+    );
+    v.add(
+        "fuzz-mdata-rec-rule",
+        "inductive.mdata",
+        "reject",
+        "a rule of Bool.rec has its right-hand side under mdata: Lean rejects (invalid recursor)",
+        |tc| {
+            let mut e = tc.export(&["Bool.rec"], false)?;
+            let rhs = e.decl("Bool.rec")["rules"][0]["rhs"].as_u64().unwrap();
+            let m = mdata(&mut e, rhs);
+            e.decl("Bool.rec")["rules"][0]["rhs"] = json!(m);
+            Ok(e)
+        },
+    );
+    v.add(
+        "fuzz-mdata-quot-type",
+        "quot",
+        "reject",
+        "the type of Quot.ind under mdata: Lean's quotient check rejects it (constant mismatch)",
+        |tc| {
+            let mut e = tc.export(&QUOT, false)?;
+            let t = e.decl_id("Quot.ind", "type");
+            let m = mdata(&mut e, t);
+            e.set("Quot.ind", "type", json!(m));
+            Ok(e)
+        },
+    );
+    v.add(
+        "fuzz-quot-binder-name",
+        "quot",
+        "accept",
+        "the binder of the relation in Quot's type renamed: Lean accepts (binder names do not \
+         matter)",
+        |tc| {
+            let mut e = tc.export(&QUOT, false)?;
+            let n = e.name("fuzz_renamed");
+            retouch_type(&mut e, "Quot", 1, "name", json!(n));
+            Ok(e)
+        },
+    );
+    v.add(
+        "fuzz-quot-binder-info",
+        "quot",
+        "accept",
+        "the first binder of Quot.mk's type made explicit: Lean accepts (binder info does not \
+         matter to the kernel)",
+        |tc| {
+            let mut e = tc.export(&QUOT, false)?;
+            retouch_type(&mut e, "Quot.mk", 0, "binderInfo", json!("default"));
+            Ok(e)
+        },
+    );
+    v.text(
+        "fuzz-quot-type-alone",
+        "quot",
+        "accept",
+        "the quot declaration of Quot without those of Quot.mk, Quot.lift and Quot.ind, and \
+         without their names: Lean accepts (it adds the quotient package at Quot); with the \
+         names Quot.mk, Quot.lift, Quot.ind still bound (and unused), nitrolean accepts too",
+        |tc| {
+            let mut e = tc.export(&QUOT, false)?;
+            for c in ["Quot.mk", "Quot.lift", "Quot.ind"] {
+                assert!(e.remove_decl(c), "{c}");
+            }
+            let gone: Vec<Id> = ["Quot.mk", "Quot.lift", "Quot.ind"]
+                .iter()
+                .map(|c| e.name_id(c).expect("bound"))
+                .collect();
+            let text = e.text();
+            let recs: Vec<Value> = text
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+            let used: BTreeSet<Id> = recs
+                .iter()
+                .skip(1)
+                .flat_map(|r| crate::kernel_cases::export::deps(r))
+                .filter(|d| d.0 == "in")
+                .map(|d| d.1)
+                .collect();
+            let kept: Vec<&str> = text
+                .lines()
+                .zip(&recs)
+                .filter(|(_, r)| {
+                    !r["in"]
+                        .as_u64()
+                        .is_some_and(|i| gone.contains(&i) && !used.contains(&i))
+                })
+                .map(|(l, _)| l)
+                .collect();
+            Ok(kept.join("\n") + "\n")
+        },
+    );
+    v.add(
+        "fuzz-quot-lift-wrong-type",
+        "quot",
+        "reject",
+        "Quot.lift declared with a wrong type (its motive in Sort 0 instead of Sort v), and no \
+         Quot.ind (control for fuzz-quot-type-alone: Lean's quotient post-check rejects it)",
+        |tc| {
+            let mut e = tc.export(&QUOT, false)?;
+            assert!(e.remove_decl("Quot.ind"));
+            let t = e.decl_id("Quot.lift", "type");
+            let v = e.lparam("v");
+            let mut zero = |_: &mut Export, l: Id| if l == v { 0 } else { l };
+            let t2 = e.map_levels(t, &mut zero);
+            assert_ne!(t, t2);
+            e.set("Quot.lift", "type", json!(t2));
+            Ok(e)
+        },
+    );
+    v.add(
+        "fuzz-ctor-unsafe-flag",
+        "inductive.meta",
+        "accept",
+        "Bool.true's record says isUnsafe while Bool is safe: Lean takes the constructor from \
+         the inductive type and ignores the flag",
+        |tc| {
+            let mut e = tc.export(&["Bool.true"], false)?;
+            e.set("Bool.true", "isUnsafe", json!(true));
+            Ok(e)
+        },
+    );
+    v.add(
+        "fuzz-rec-unsafe-flag",
+        "inductive.meta",
+        "accept",
+        "Bool.rec's record says isUnsafe while Bool is safe: Lean takes the recursor from the \
+         inductive type and ignores the flag",
+        |tc| {
+            let mut e = tc.export(&["Bool.rec"], false)?;
+            e.set("Bool.rec", "isUnsafe", json!(true));
+            Ok(e)
+        },
+    );
+    v.add(
+        "fuzz-type-isrec-flag",
+        "inductive.meta",
+        "accept",
+        "Bool's type record says isRec: Lean computes the flag itself and ignores it",
+        |tc| {
+            let mut e = tc.export(&["Bool.rec"], false)?;
+            ind_record(&mut e, "Bool")["types"][0]["isRec"] = json!(true);
+            Ok(e)
+        },
+    );
+    v.add(
+        "fuzz-type-unsafe-flag",
+        "inductive.meta",
+        "reject",
+        "Bool's type record says isUnsafe while its constructors and recursor say safe: Lean \
+         rejects (No such constructor Bool.false)",
+        |tc| {
+            let mut e = tc.export(&["Bool.rec"], false)?;
+            ind_record(&mut e, "Bool")["types"][0]["isUnsafe"] = json!(true);
+            Ok(e)
+        },
+    );
+    v.add(
+        "fuzz-type-unsafe-flag-neg",
+        "inductive.meta",
+        "reject",
+        "the same inconsistency on a negative inductive (Neg.mk : (Neg → Nat) → Neg): a safe \
+         kernel must not accept it as declared",
+        |tc| {
+            let mut e = tc.export(&["K.Neg"], true)?;
+            make_safe(&mut e, "K.Neg");
+            ind_record(&mut e, "K.Neg")["types"][0]["isUnsafe"] = json!(true);
+            Ok(e)
+        },
+    );
+    v.add(
+        "fuzz-hints-regular-u32",
+        "decl.hints",
+        "reject",
+        "a definition with reducibility hint regular 2^32 + 1: the field is a UInt32 (Lean \
+         v4.36.0 truncates it and accepts; nitrolean rejects it, as for numParams)",
+        |tc| {
+            let mut e = tc.export(&["K.fz_two"], false)?;
+            e.set("K.fz_two", "hints", json!({"regular": U32 as u64 + 1}));
+            Ok(e)
+        },
     );
 }

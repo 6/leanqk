@@ -237,3 +237,18 @@ eval434-list	eval	accept	accept	List.any, all, filter, getLast?, foldl and rever
 eval434-list-wrong	eval	reject	reject	the same fold, off by one
 eval434-filter-lazy	eval	accept	accept	the head of a filter, whose later tests would divide by zero
 eval434-filter-lazy-wrong	eval	reject	reject	the same, the wrong head
+fuzz-quot-lift-direct	quot	accept	reject	a theorem stated with Quot.lift and Quot.mk, with the names the fuzzer's seed had: valid, but leanchecker --from-export says unknown constant Quot.lift; with other names (K.fz_quot_direct as exported) it accepts
+fuzz-str-deceq	eval.string	accept	reject	decide ("abc" = "abc") = true by decide: valid (Lean compiles it, and leanchecker accepts the .olean), but leanchecker --from-export fails to reduce it
+fuzz-mdata-ctor-type	inductive.mdata	reject	reject	Bool.true's type is mdata around Bool: Lean rejects (invalid return type)
+fuzz-mdata-rec-rule	inductive.mdata	reject	reject	a rule of Bool.rec has its right-hand side under mdata: Lean rejects (invalid recursor)
+fuzz-mdata-quot-type	quot	reject	reject	the type of Quot.ind under mdata: Lean's quotient check rejects it (constant mismatch)
+fuzz-quot-binder-name	quot	accept	accept	the binder of the relation in Quot's type renamed: Lean accepts (binder names do not matter)
+fuzz-quot-binder-info	quot	accept	accept	the first binder of Quot.mk's type made explicit: Lean accepts (binder info does not matter to the kernel)
+fuzz-quot-type-alone	quot	accept	accept	the quot declaration of Quot without those of Quot.mk, Quot.lift and Quot.ind, and without their names: Lean accepts (it adds the quotient package at Quot); with the names Quot.mk, Quot.lift, Quot.ind still bound (and unused), nitrolean accepts too
+fuzz-quot-lift-wrong-type	quot	reject	reject	Quot.lift declared with a wrong type (its motive in Sort 0 instead of Sort v), and no Quot.ind (control for fuzz-quot-type-alone: Lean's quotient post-check rejects it)
+fuzz-ctor-unsafe-flag	inductive.meta	accept	accept	Bool.true's record says isUnsafe while Bool is safe: Lean takes the constructor from the inductive type and ignores the flag
+fuzz-rec-unsafe-flag	inductive.meta	accept	accept	Bool.rec's record says isUnsafe while Bool is safe: Lean takes the recursor from the inductive type and ignores the flag
+fuzz-type-isrec-flag	inductive.meta	accept	accept	Bool's type record says isRec: Lean computes the flag itself and ignores it
+fuzz-type-unsafe-flag	inductive.meta	reject	reject	Bool's type record says isUnsafe while its constructors and recursor say safe: Lean rejects (No such constructor Bool.false)
+fuzz-type-unsafe-flag-neg	inductive.meta	reject	reject	the same inconsistency on a negative inductive (Neg.mk : (Neg → Nat) → Neg): a safe kernel must not accept it as declared
+fuzz-hints-regular-u32	decl.hints	reject	accept	a definition with reducibility hint regular 2^32 + 1: the field is a UInt32 (Lean v4.36.0 truncates it and accepts; nitrolean rejects it, as for numParams)

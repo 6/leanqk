@@ -62,5 +62,14 @@ Statements proved by `sorry` in the source get their proof replaced by `Eq.refl`
   defaults to 128 MB and is checked as `size(base) > max / exponent` for
   `Nat.pow`.
 
+## Open cases
+
+`open.tsv` lists the cases nitrolean gets wrong today (found by the
+differential fuzzer of `tests/fuzz/`, with their class and a note). `cargo
+test` expects each of them to still give the wrong verdict, so a fix has to
+take its case off the list. The `fuzz-*` cases are the fuzzer's minimised
+disagreements; where `expected` and `lean` differ, `why` says which side is
+right.
+
 `checker-results.tsv` records the verdicts of other independent checkers on
 these cases.

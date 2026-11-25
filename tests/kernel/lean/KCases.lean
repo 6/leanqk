@@ -204,4 +204,11 @@ def ev_sub (n : Nat) : {x : Nat // x = n + 1} := ⟨n + 1, Eq.refl (n + 1)⟩
 theorem ev_sub_ok : ev_sub 3 = ⟨4, Eq.refl 4⟩ := sorry
 theorem ev_sub_wrong : (ev_sub 3).val = 3 := sorry
 
+/-! Found by differential fuzzing (tests/fuzz) -/
+theorem fz_quot_direct :
+    Quot.lift (fun n : Nat => n + 1) (fun _ _ (h : _ = _) => congrArg (· + 1) h)
+      (Quot.mk (· = ·) 4) = 5 := rfl
+theorem fz_str_deceq : decide ("abc" = "abc") = true := by decide
+def fz_two : Nat := 2
+
 end K

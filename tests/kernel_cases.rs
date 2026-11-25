@@ -32,6 +32,14 @@ fn generated_kernel_cases_get_their_verdicts() {
 fn run_cases(sub: &str) -> (usize, Vec<String>) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/kernel");
     let tsv = std::fs::read_to_string(dir.join("cases.tsv")).unwrap();
+    // Known bugs: cases nitrolean gets wrong today. Each must still fail, so
+    // that a fix also updates the list.
+    let open_tsv = std::fs::read_to_string(dir.join("open.tsv")).unwrap();
+    let open: Vec<&str> = open_tsv
+        .lines()
+        .skip(1)
+        .filter_map(|l| l.split('\t').next())
+        .collect();
     let mut ran = 0;
     let mut wrong = Vec::new();
     for line in tsv.lines().skip(1) {
@@ -49,8 +57,13 @@ fn run_cases(sub: &str) -> (usize, Vec<String>) {
             },
             Err(_) => "reject",
         };
-        if got != expected && expected != "either" {
-            wrong.push(format!("{id}: expected {expected}, got {got}"));
+        let ok = got == expected || expected == "either";
+        match (ok, open.contains(&id)) {
+            (false, false) => wrong.push(format!("{id}: expected {expected}, got {got}")),
+            (true, true) => wrong.push(format!(
+                "{id}: now gets its expected verdict ({expected}): remove it from open.tsv"
+            )),
+            _ => {}
         }
     }
     (ran, wrong)
