@@ -38,8 +38,10 @@ theorem, building the term directly as an `Expr` (integer literals as `Int.ofNat
 
 ## The certificates
 
-`gen.py` (run with `python3 -I`) makes them, from splitmix64 with a given seed, so they are
-synthetic and fully determined by the arguments:
+The tool in `tool/` (a small Rust binary, `matcert`; build it with
+`cargo build --release --manifest-path bench/certificates/tool/Cargo.toml`) makes them with
+`matcert gen`, from splitmix64 with a given seed, so they are synthetic and fully determined
+by the arguments:
 
 - `inverse P N SEED`: a random `N × N` matrix with entries in `[0, P)` and its inverse
   modulo `P` (Gauss–Jordan). The series uses `P = 65521`, the largest prime below 2^16, so
@@ -50,21 +52,29 @@ synthetic and fully determined by the arguments:
   this series is about big integers.
 - `--corrupt` changes the last entry of `B` after checking: the checkers must reject those.
 
-Every certificate is checked by multiplication in `gen.py` before it is written.
+Every certificate is checked by multiplication before it is written.
 `data/certificates.tsv` lists the series with each certificate's SHA-256. The kernel work
 is about `N³` multiply-adds of `Int`s.
 
-`make-exports.sh` builds the package, makes each certificate, checks its SHA-256, states it
-with `mat_cert` and exports the theorem's closure with lean4export (the commit for v4.34.0
-pinned in `bench/kernel-compute/common.sh`), into `bench/kernel-compute/out/certificates/`
-with a `manifest.tsv`. Certificates with `N ≤ 16` are added with Lean's kernel check on;
-the larger ones with `debug.skipKernelTC true`. Every export contains the closure of the
+`matcert exports` builds the package, makes each certificate, checks its SHA-256, states it
+with `mat_cert` and exports the theorem's closure with lean4export (the toolchain and the
+lean4export commit for v4.34.0 are read from `bench/kernel-compute/common.sh`, so they are
+pinned in one place), into `bench/kernel-compute/out/certificates/` with a `manifest.tsv`.
+Certificates with `N ≤ 16` are added with Lean's kernel check on; the larger ones with `debug.skipKernelTC true`. Every export contains the closure of the
 checker and its soundness proof (about 5 MB, `inverse-1`).
+
+`matcert measure` runs `bench/kernel-compute/measure.sh` on the exports (options after
+`--` go to it), and `matcert table` prints its TSV as a table, one row per export and one
+column per checker. Every subcommand has `--help`.
 
 ```sh
 bench/kernel-compute/build-checkers.sh
-bench/certificates/make-exports.sh
-bench/kernel-compute/measure.sh --out out/cert-measurements.tsv bench/kernel-compute/out/certificates/*.ndjson
+cargo build --release --manifest-path bench/certificates/tool/Cargo.toml
+M=bench/certificates/tool/target/release/matcert
+$M exports
+$M measure                       # 60 s, 4 GiB: measure.sh's defaults
+$M measure -- --append --timeout 600 --checkers nitrolean
+$M table bench/kernel-compute/out/cert-measurements.tsv bench/kernel-compute/out/certificates/manifest.tsv
 ```
 
 ## Results

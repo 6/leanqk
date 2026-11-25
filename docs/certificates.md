@@ -165,18 +165,22 @@ by the kernel. The package is `bench/certificates/` (its README has the details)
 - the checker `check : Int → Nat → Nat → Nat → Mat → Mat → Mat → Bool` on
   `List (List Int)`, computing each row of `A * B` as a combination of the rows of `B`;
 - `check_sound`, proved in core Lean (axioms `propext`, `Quot.sound`);
-- `gen.py`, which makes seeded synthetic certificates of any size: inverses modulo
-  65521 (machine-word arithmetic) and adjugates with their determinants (big integers);
-- `make-exports.sh`, which states them with the `mat_cert` command and exports them.
+- the `matcert` tool (Rust, `bench/certificates/tool/`), which makes seeded synthetic
+  certificates of any size (inverses modulo 65521: machine-word arithmetic; adjugates with
+  their determinants: big integers), states them with the `mat_cert` command, exports
+  them, runs the checkers and tabulates the results.
 
-Why this one first. Checking a product costs `n³` multiply-adds and needs no search;
-finding the witness (elimination) costs the same order outside Lean, so the certificate
-is as large as the work it saves only when the witness is hard to find, which is the case
-for the statements built on it: nonsingularity and rank lower bounds (an invertible
-`r × r` submatrix modulo a prime proves rank `≥ r` over ℚ), and the linear-algebra steps
-of LP and SOS certificates, which are matrix identities of the same shape. A determinant
-alone is not certified by this format (`A * adj A = d • 1` holds for `d = 0` too); with
-Mathlib, `Matrix.det` would follow from an LU factorisation checked the same way.
+Why this one first. The checker is a few list functions and the soundness proof is short;
+witnesses come from elimination in any language; the size scales smoothly (`n³` kernel
+multiply-adds). On its own, checking a product costs as much as computing an inverse, so
+the format pays off through the statements built on it, whose witnesses are what is hard
+to find or what the statement needs: nonsingularity of an integer matrix (from an
+adjugate), rank lower bounds (an invertible `r × r` submatrix modulo a prime proves rank
+`≥ r` over ℚ; a small extension of `InvertibleMod`), and the linear-algebra parts of LP and
+sum-of-squares certificates, which are matrix identities of the same shape
+(`yᵀA = c`, `Q = LDLᵀ`). The determinant itself is not certified (`A * adj A = d • 1` also
+holds for `d = 0` and does not pin `d` down); with Mathlib, `Matrix.det` would follow from
+an LU factorisation checked the same way.
 
 ### Results
 

@@ -1,0 +1,21 @@
+[package]
+name = "matcert-tool"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Makes, states and exports the MatCert matrix certificates, and tabulates their measurements"
+license = "Apache-2.0"
+
+[[bin]]
+name = "matcert"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+num-bigint = "0.5"
+num-integer = "0.1"
+num-traits = "0.2"
+sha2 = "0.11.1"
+
+# Not part of the nitrolean package: a standalone tool with its own lock file.
+[workspace]

@@ -2,7 +2,7 @@ import MatCert.Basic
 import Lean
 
 /-!
-`mat_cert name "file"` reads a certificate written by `gen.py` and adds the theorem
+`mat_cert name "file"` reads a certificate written by `matcert gen` (`tool/`) and adds the theorem
 
 * `name : MatCert.InvertibleMod p n A`, proved by
   `invertibleMod_of_check B (of_decide_eq_true (Eq.refl true))`, for `inverse p n`;
