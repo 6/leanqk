@@ -115,11 +115,15 @@ struct EnvNode {
     v: V,
 }
 
-/// An environment cell with its length and `HAS_FVAR_BIT`.
+/// An environment cell with its length and `HAS_FVAR_BIT`, and a jump
+/// to an outer cell: the skew-binary jump pointers of Myers, "An
+/// applicative random-access stack" (1983), which find the variable at
+/// depth `i` in O(log i) steps.
 #[derive(Clone, Copy)]
 struct EnvRec {
     node: EnvNode,
     len: u32,
+    jump: Env,
 }
 
 const HAS_FVAR_BIT: u32 = 1 << 31;
@@ -213,6 +217,7 @@ impl Arena {
                     v: V(NONE),
                 },
                 len: 0,
+                jump: Env::NIL,
             }],
             envtable: HashTable::new(),
             lss: vec![LsNode {
@@ -260,7 +265,7 @@ impl Arena {
             + self.vtable.capacity() * 9
             + self.sps.capacity() * 4
             + self.sptable.capacity() * 9
-            + self.envs.capacity() * 13
+            + self.envs.capacity() * 17
             + self.envtable.capacity() * 9
     }
 
@@ -536,10 +541,14 @@ impl Arena {
         if id >= LIMIT {
             out_of_room();
         }
-        let prev = self.envs[env.0 as usize].len;
-        let fv = prev & HAS_FVAR_BIT != 0 || self.has_fvar(v);
-        let len = ((prev & LEN_BITS) + 1) | if fv { HAS_FVAR_BIT } else { 0 };
-        self.envs.push(EnvRec { node, len });
+        let p = self.envs[env.0 as usize];
+        let fv = p.len & HAS_FVAR_BIT != 0 || self.has_fvar(v);
+        let len = ((p.len & LEN_BITS) + 1) | if fv { HAS_FVAR_BIT } else { 0 };
+        let j = self.envs[p.jump.0 as usize];
+        let (lp, lj) = (p.len & LEN_BITS, j.len & LEN_BITS);
+        let ljj = self.envs[j.jump.0 as usize].len & LEN_BITS;
+        let jump = if lp - lj == lj - ljj { j.jump } else { env };
+        self.envs.push(EnvRec { node, len, jump });
         self.envtable
             .insert_unique(spread(h), (id, h), |&(_, k)| spread(k));
         Env(id)
@@ -557,18 +566,28 @@ impl Arena {
 
     /// The value of bound variable `i` (0 is the innermost).
     #[inline]
-    pub fn lookup(&self, mut env: Env, i: u32) -> Option<V> {
-        for _ in 0..i {
-            if env == Env::NIL {
-                return None;
+    pub fn lookup(&self, env: Env, i: u32) -> Option<V> {
+        let mut r = self.envs[env.0 as usize];
+        let len = r.len & LEN_BITS;
+        if i >= len {
+            return None;
+        }
+        if i < 4 {
+            for _ in 0..i {
+                r = self.envs[r.node.prev.0 as usize];
             }
-            env = self.envs[env.0 as usize].node.prev;
+            return Some(r.node.v);
         }
-        if env == Env::NIL {
-            None
-        } else {
-            Some(self.envs[env.0 as usize].node.v)
+        let target = len - i;
+        while r.len & LEN_BITS != target {
+            let j = self.envs[r.jump.0 as usize];
+            r = if j.len & LEN_BITS >= target {
+                j
+            } else {
+                self.envs[r.node.prev.0 as usize]
+            };
         }
+        Some(r.node.v)
     }
 
     /// The first `n` entries of `env`, innermost first.
