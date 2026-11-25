@@ -1,0 +1,10 @@
+name = "BenchLrat"
+defaultTargets = ["BenchLrat"]
+
+[[require]]
+name = "LRATCatcher"
+git = "https://github.com/leansolving/lrat-catcher.git"
+rev = "cbc980a934cfcfbd942462c7b6db2e88750e4874"
+
+[[lean_lib]]
+name = "BenchLrat"
