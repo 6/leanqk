@@ -195,6 +195,8 @@ pub struct State {
     consts: IdMap<ExprId, CInfo>,
     /// One thunk per closed term.
     closed: IdMap<ExprId, Th>,
+    /// How to build the argument thunks of an application, per term.
+    apps: IdMap<ExprId, Rc<AppPlan>>,
     steps: u64,
     /// Fast-path hits not yet added to `FAST` (kept here so that threads
     /// do not share a counter on every hit).
@@ -236,6 +238,25 @@ const MEMO_RATIO: u32 = 32;
 enum Next {
     V(V),
     Eval(ExprId, Env),
+}
+
+/// The head of an application term and how each argument's thunk is made.
+struct AppPlan {
+    head: ExprId,
+    /// The head's `info`, if it is a constant.
+    info: Option<CInfo>,
+    args: Box<[ArgPlan]>,
+}
+
+enum ArgPlan {
+    /// A bound variable: its thunk.
+    Var(u32),
+    /// A closed term: its shared thunk.
+    Closed(Th),
+    /// A proof (see `is_proof`).
+    Proof(ExprId),
+    /// Any other term, delayed in the environment.
+    Delayed(ExprId),
 }
 
 /// A method's argument thunks `p₁ … pₖ` and the value of `c p₁ … pₖ`.
@@ -280,6 +301,7 @@ pub fn whnf(tc: &mut Tc<'_>, e: ExprId) -> Option<ExprId> {
         // the term is evaluated again with them.
         BAILS[Bail::Erased as usize].fetch_add(1, Relaxed);
         s.closed.clear();
+        s.apps.clear();
         s.keep_proofs = true;
         r = run(tc, &mut s, e);
         s.keep_proofs = false;
@@ -659,19 +681,23 @@ impl<'a, 'e> Machine<'a, 'e> {
                     let t = self.closed(e);
                     return self.force(&t).map(Next::V);
                 }
-                let mut f = e;
-                let mut n = 0;
-                while let ExprNode::App(g, _) = self.tc.st.node(f) {
-                    n += 1;
-                    f = g;
+                let plan = match self.s.apps.get(&e) {
+                    Some(p) => p.clone(),
+                    None => self.app_plan(e),
+                };
+                let mut args = Vec::with_capacity(plan.args.len());
+                for a in plan.args.iter() {
+                    args.push(match a {
+                        ArgPlan::Var(i) => env.get(*i).clone(),
+                        ArgPlan::Closed(t) => t.clone(),
+                        ArgPlan::Proof(a) if !self.s.keep_proofs => self.proof_thunk(*a, env),
+                        ArgPlan::Proof(a) | ArgPlan::Delayed(a) => Thunk::delayed(*a, env.clone()),
+                    });
                 }
-                let mut args = Vec::with_capacity(n);
-                let mut g = e;
-                while let ExprNode::App(h, a) = self.tc.st.node(g) {
-                    args.push(self.thunk(a, env));
-                    g = h;
+                let f = plan.head;
+                if let Some(i) = &plan.info {
+                    return self.constant_with(f, i.clone(), args);
                 }
-                args.reverse();
                 match self.tc.st.node(f) {
                     ExprNode::Const(..) => self.constant_n(f, args),
                     ExprNode::Lam(..) => self.beta_n(f, env.clone(), args),
@@ -682,6 +708,39 @@ impl<'a, 'e> Machine<'a, 'e> {
                 }
             }
         }
+    }
+
+    /// The head of the application `e` and how to make each argument's
+    /// thunk (what `thunk` does, decided once per term).
+    #[inline(never)]
+    fn app_plan(&mut self, e: ExprId) -> Rc<AppPlan> {
+        let mut args = Vec::new();
+        let mut g = e;
+        while let ExprNode::App(h, a) = self.tc.st.node(g) {
+            let p = if !self.tc.st.data(a).has_loose_bvars() {
+                ArgPlan::Closed(self.closed(a))
+            } else if let ExprNode::BVar(i) = self.tc.st.node(a) {
+                ArgPlan::Var(i)
+            } else if self.is_proof(a) {
+                ArgPlan::Proof(a)
+            } else {
+                ArgPlan::Delayed(a)
+            };
+            args.push(p);
+            g = h;
+        }
+        args.reverse();
+        let info = match self.tc.st.node(g) {
+            ExprNode::Const(..) => Some(self.info(g)),
+            _ => None,
+        };
+        let p = Rc::new(AppPlan {
+            info,
+            head: g,
+            args: args.into_boxed_slice(),
+        });
+        self.s.apps.insert(e, p.clone());
+        p
     }
 
     /// A sort or a Pi: in weak head normal form already.
@@ -840,10 +899,16 @@ impl<'a, 'e> Machine<'a, 'e> {
     }
 
     fn constant_n(&mut self, c: ExprId, args: Vec<Th>) -> ER<Next> {
+        let i = self.info(c);
+        self.constant_with(c, i, args)
+    }
+
+    /// `constant_n` with the constant's `info` at hand.
+    fn constant_with(&mut self, c: ExprId, info: CInfo, args: Vec<Th>) -> ER<Next> {
         if let Some(p) = self.s.profile.as_mut() {
             *p.entry(c).or_default() += 1;
         }
-        match self.info(c) {
+        match info {
             CInfo::Unfold(v, k) => self.unfold_n(c, v, k, args),
             CInfo::Op(op, _) => self.saturate_n(c, Head::Op(op), args),
             CInfo::Succ => self.saturate_n(c, Head::Succ, args),
