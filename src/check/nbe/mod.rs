@@ -94,6 +94,8 @@ pub struct Nbe<'e> {
     big_table: HashTable<u32>,
     level_cache: lsub::Lsub<(LevelId, Ls), LevelId>,
     list_cache: lsub::Lsub<(LevelList, Ls), LevelList>,
+    /// Universe parameter lists by their names (see `lsub::ParamClasses`).
+    param_classes: lsub::ParamClasses,
     const_type: IdMap<(NameId, LevelList), V>,
     const_value: IdMap<(NameId, LevelList), V>,
     /// Values left in their `.olean` files, as built in the store.
@@ -245,6 +247,7 @@ impl<'e> Nbe<'e> {
             big_table: HashTable::new(),
             level_cache: Default::default(),
             list_cache: Default::default(),
+            param_classes: Default::default(),
             const_type: IdMap::default(),
             const_value: IdMap::default(),
             lazy_values: IdMap::default(),
@@ -545,7 +548,8 @@ impl<'e> Nbe<'e> {
         {
             return Ls::ID;
         }
-        self.a.mk_ls(d.level_params, ls)
+        let params = self.param_classes.class(&self.st, d.level_params);
+        self.a.mk_ls(params, ls)
     }
 
     // ---- literals ----

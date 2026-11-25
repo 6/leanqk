@@ -4,7 +4,10 @@
 
 use std::hash::Hash;
 
-use super::super::store::IdMap;
+use crate::env::NameList;
+use crate::name::NameId;
+
+use super::super::store::{IdMap, Store};
 use super::Cap;
 
 /// Whether the substitution caches have the direct-mapped table.
@@ -90,5 +93,34 @@ impl<K, V> Cap for Lsub<K, V> {
         for s in &mut self.slots {
             *s = None;
         }
+    }
+}
+
+/// Whether constants whose universe parameters have the same names share
+/// substitutions (`ParamClasses`).
+pub const PARAM_CLASSES: bool = true;
+
+/// One list of universe parameters per sequence of names: `c.{u}` at `v`
+/// and `d.{u}` at `v` are then the same substitution, and what is cached
+/// under it (levels, values) is shared. A substitution only depends on the
+/// names it replaces and what it replaces them by.
+#[derive(Default)]
+pub struct ParamClasses {
+    by_list: IdMap<u64, NameList>,
+    by_names: std::collections::HashMap<Vec<NameId>, NameList>,
+}
+
+impl ParamClasses {
+    pub fn class(&mut self, st: &Store<'_>, l: NameList) -> NameList {
+        if !PARAM_CLASSES {
+            return l;
+        }
+        let k = (l.start as u64) << 32 | l.len as u64;
+        if let Some(&c) = self.by_list.get(&k) {
+            return c;
+        }
+        let c = *self.by_names.entry(st.name_list(l).to_vec()).or_insert(l);
+        self.by_list.insert(k, c);
+        c
     }
 }
