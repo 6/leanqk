@@ -262,10 +262,90 @@ impl Builder {
             recs: &mut self.recs,
             side: &mut self.side,
             names: names.identity_len().unwrap_or(0).min(u32::MAX as u64),
+            max_name: 0,
         };
         super::run::all_exprs(s, e, &mut self.ids, &mut out)
     }
 
+    /// The next expression id.
+    pub(super) fn next_id(&self) -> u64 {
+        self.recs.len() as u64
+    }
+
+    /// Records that [`Runs::take`] read ahead, starting at the next
+    /// expression id (`side` being their side records, which they point
+    /// into from `side_from` on), if their names are among the first
+    /// `names` and the tables have room: whether it added them.
+    pub(super) fn append_run(
+        &mut self,
+        recs: &[u64],
+        side: &[u32],
+        side_from: usize,
+        max_name: u64,
+        names: &IdMap,
+    ) -> bool {
+        let e = self.recs.len() as u64;
+        let fits = e + recs.len() as u64 <= MAX_IDS
+            && self.side.len() + side.len() <= u32::MAX as usize - 4;
+        let names_ok = recs.is_empty() || max_name < names.identity_len().unwrap_or(0);
+        if !fits || !names_ok {
+            return false;
+        }
+        // Side offsets move from the run's table to this one.
+        // (The sum stays in the low 32 bits: see `fits`.)
+        let shift = (self.side.len() as u64).wrapping_sub(side_from as u64);
+        self.recs.extend(recs.iter().map(|&r| {
+            let t = tag(r);
+            if t == T_LAM || t == T_PI {
+                r.wrapping_add(shift)
+            } else {
+                r
+            }
+        }));
+        self.side.extend_from_slice(side);
+        true
+    }
+}
+
+/// Runs of application and binder lines read ahead of the builder (on
+/// another thread), into tables of their own: see
+/// [`Builder::append_run`].
+#[derive(Default)]
+pub(super) struct Runs {
+    pub(super) recs: Vec<u64>,
+    pub(super) side: Vec<u32>,
+    batch: Vec<u64>,
+    side_batch: Vec<u32>,
+    ids: super::run::Ids,
+}
+
+impl Runs {
+    /// The run at the start of `s`, its first id being `e`: how many bytes
+    /// and lines it took, and the largest name id its binders use.
+    pub(super) fn take(&mut self, s: &[u8], e: u64) -> (usize, u64, u64) {
+        if e + s.len() as u64 / 32 >= MAX_IDS {
+            return (0, 0, 0);
+        }
+        if self.batch.is_empty() {
+            self.batch = vec![0; BATCH];
+            self.side_batch = vec![0; 3 * BATCH];
+        }
+        let mut out = Out {
+            batch: (&mut self.batch[..]).try_into().expect("a batch"),
+            side_batch: (&mut self.side_batch[..]).try_into().expect("a batch"),
+            sn: 0,
+            o: self.side.len(),
+            recs: &mut self.recs,
+            side: &mut self.side,
+            names: u32::MAX as u64,
+            max_name: 0,
+        };
+        let (n, m) = super::run::all_exprs(s, e, &mut self.ids, &mut out);
+        (n, m, out.max_name)
+    }
+}
+
+impl Builder {
     /// Push a side record of `fields` with tag `t` and `flags`.
     #[inline(always)]
     fn with_side(&mut self, t: u64, flags: u64, fields: &[u32]) -> bool {
@@ -570,24 +650,67 @@ impl Builder {
     /// the roots of values older than their declarations), so that each
     /// record left is used by its own declaration's value alone: built
     /// once here, not again for every value that uses it.
-    fn promote_shared(&mut self, env: &mut Env, append: bool) -> R<()> {
+    fn promote_shared(&mut self, env: &mut Env, append: bool, threads: usize) -> R<()> {
         self.bounds.push(self.from as u32);
         let bounds = std::mem::take(&mut self.bounds);
-        for w in bounds.windows(2) {
-            let (lo, hi) = (w[0], w[1]);
-            for x in lo..hi {
-                let r = self.recs[x as usize];
-                if r & DONE != 0 || tag(r) == T_ALIAS {
-                    continue;
+        // The records to intern, found on `threads` threads (a group of
+        // declarations each at a time), then interned in order.
+        let decls = bounds.len().saturating_sub(1);
+        const GROUP: usize = 4096;
+        let groups = decls.div_ceil(GROUP);
+        let found: Vec<std::sync::Mutex<Vec<u32>>> = (0..groups)
+            .map(|_| std::sync::Mutex::new(Vec::new()))
+            .collect();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let (recs, side) = (&self.recs, &self.side);
+        let scan = || {
+            let mut out = Vec::new();
+            loop {
+                let g = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if g >= groups {
+                    return;
                 }
-                let (kids, k) = decode(&self.side, r).kids();
-                for &c in &kids[..k] {
-                    if c < lo {
-                        let c = self.real(c);
-                        if self.recs[c as usize] & DONE == 0 {
-                            self.promote_old(env, append, c)?;
+                let hi = ((g + 1) * GROUP).min(decls);
+                for w in bounds[g * GROUP..=hi].windows(2) {
+                    let (lo, hi) = (w[0], w[1]);
+                    for x in lo..hi {
+                        let r = recs[x as usize];
+                        if r & DONE != 0 || tag(r) == T_ALIAS {
+                            continue;
+                        }
+                        let (kids, k) = decode(side, r).kids();
+                        for &c in &kids[..k] {
+                            if c < lo {
+                                let r = recs[c as usize];
+                                let c = if r & DONE == 0 && tag(r) == T_ALIAS {
+                                    (r & ID_MASK) as u32
+                                } else {
+                                    c
+                                };
+                                if recs[c as usize] & DONE == 0 {
+                                    out.push(c);
+                                }
+                            }
                         }
                     }
+                }
+                *found[g].lock().expect("group") = std::mem::take(&mut out);
+            }
+        };
+        let threads = threads.clamp(1, groups.max(1));
+        if threads == 1 {
+            scan();
+        } else {
+            std::thread::scope(|s| {
+                for _ in 0..threads {
+                    s.spawn(scan);
+                }
+            });
+        }
+        for g in found {
+            for c in g.into_inner().expect("group") {
+                if self.recs[c as usize] & DONE == 0 {
+                    self.promote_old(env, append, c)?;
                 }
             }
         }
@@ -600,11 +723,16 @@ impl Builder {
     }
 
     /// The source of the lazy values, once the read is done.
-    pub(super) fn finish(mut self, env: &mut Env, append: bool) -> R<Option<Box<dyn LazyValues>>> {
+    pub(super) fn finish(
+        mut self,
+        env: &mut Env,
+        append: bool,
+        threads: usize,
+    ) -> R<Option<Box<dyn LazyValues>>> {
         if self.roots.is_empty() {
             return Ok(None);
         }
-        self.promote_shared(env, append)?;
+        self.promote_shared(env, append, threads)?;
         // Interned records stay where they are, marked `DONE`; building
         // a value takes their arena ids from there.
         self.recs.shrink_to_fit();
@@ -678,6 +806,8 @@ struct Out<'a> {
     /// The names that map to themselves; binders with other names (in an
     /// export whose names are not so) take the slow way.
     names: u64,
+    /// The largest name a binder used.
+    max_name: u64,
 }
 
 impl super::run::Records for Out<'_> {
@@ -696,6 +826,7 @@ impl super::run::Records for Out<'_> {
         if name >= self.names || ty >= id || body >= id || o > u32::MAX as usize - 4 {
             return false;
         }
+        self.max_name = self.max_name.max(name);
         let side = &mut self.side_batch.as_chunks_mut::<3>().0[self.sn % BATCH];
         *side = [name as u32, ty as u32, body as u32];
         self.sn += 1;
