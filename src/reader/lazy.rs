@@ -193,7 +193,6 @@ pub(super) struct Builder {
     /// Roots added since the last flush start here.
     roots_from: usize,
     stack: Vec<u32>,
-    new_refs: Vec<u32>,
 }
 
 impl Builder {
@@ -339,54 +338,45 @@ impl Builder {
     /// At the end of a declaration: store what is still pending, and
     /// rebind each pending export id in `ids` to its new reference.
     pub(super) fn flush(&mut self, ids: &mut IdMap) -> R<()> {
-        let mut new_refs = std::mem::take(&mut self.new_refs);
-        new_refs.clear();
-        let res = (|| {
-            let tr = |new_refs: &[u32], r: u32| -> u32 {
-                if r & KIND == PEND {
-                    new_refs[(r & !KIND) as usize]
-                } else {
-                    r
+        // Each pending record's new reference replaces its entry in
+        // `pend_ids`; records only refer to earlier ones, which are done.
+        let n = self.pending.len();
+        if self.words.len() + 5 * n >= PEND as usize {
+            return Err(Fail::from(Overflow("too many stored expressions")));
+        }
+        self.words.reserve(5 * n);
+        let refs = &mut self.pend_ids;
+        let words = &mut self.words;
+        let tr = |refs: &[u32], r: u32| -> u32 {
+            if r & KIND == PEND {
+                refs[(r & !KIND) as usize]
+            } else {
+                r
+            }
+        };
+        for (i, &(id, node)) in self.pending.iter().enumerate() {
+            let mut r = refs[i];
+            if r == NONE {
+                r = STORED | words.len() as u32;
+                match node {
+                    Node::App(f, a) => words.extend([T_APP, tr(refs, f), tr(refs, a)]),
+                    node => push_node(words, node.map(|c| tr(refs, c))),
                 }
-            };
-            for (&(id, n), &done) in self.pending.iter().zip(&self.pend_ids) {
-                let r = if done == NONE {
-                    let off = self.words.len();
-                    if off >= PEND as usize {
-                        return Err(Fail::from(Overflow("too many stored expressions")));
-                    }
-                    match n {
-                        Node::App(f, a) => {
-                            let w = [T_APP, tr(&new_refs, f), tr(&new_refs, a)];
-                            self.words.extend(w);
-                        }
-                        n => {
-                            let n = n.map(|c| tr(&new_refs, c));
-                            push_node(&mut self.words, n);
-                        }
-                    }
-                    STORED | off as u32
-                } else {
-                    done
-                };
-                new_refs.push(r);
-                ids.rebind(id, r);
+                refs[i] = r;
             }
-            for &(id, r) in &self.aliases {
-                ids.rebind(id, tr(&new_refs, r));
-            }
-            for k in self.roots_from..self.roots.len() {
-                let r = self.roots[k];
-                self.roots[k] = tr(&new_refs, r);
-            }
-            Ok(())
-        })();
-        self.new_refs = new_refs;
+            ids.rebind(id, r);
+        }
+        for &(id, r) in &self.aliases {
+            ids.rebind(id, tr(refs, r));
+        }
+        for k in self.roots_from..self.roots.len() {
+            self.roots[k] = tr(refs, self.roots[k]);
+        }
         self.pending.clear();
         self.pend_ids.clear();
         self.aliases.clear();
         self.roots_from = self.roots.len();
-        res
+        Ok(())
     }
 
     /// The source of the lazy values, once the read is done.
