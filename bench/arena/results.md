@@ -1,8 +1,8 @@
 # Results: Lean Kernel Arena test set, 2026-11-25
 
-nitrolean at commit `54d36c9` (0.1.0-alpha.1), run with `bench/arena/run.sh`
+nitrolean at commit `54d36c9` (0.1.0-alpha.1), run with `bench/arena/run.sh` (now `cargo xtask arena run`)
 on all 270 tests of the arena at commit `8a7d0dce`. Every export was rebuilt
-by `fetch.sh` and was byte-identical to the export the arena checked (270 of
+by `fetch.sh` (now `cargo xtask arena fetch`) and was byte-identical to the export the arena checked (270 of
 270 SHA-256s). Raw rows: `run-2026-11-25.tsv`.
 
 The machine is not the arena's: aarch64 Linux, 12 usable cores of a

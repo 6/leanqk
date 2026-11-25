@@ -7,12 +7,15 @@ pinned versions and runs nitrolean on it the way the arena calls a checker,
 so that speed and memory are measured on well-known proofs of many kinds, not
 only on our own corpus (`corpus/`).
 
-    bench/arena/fetch.sh            # build the 261 small exports (~3 min, ~300 MB)
-    bench/arena/fetch.sh --large    # the 9 large ones (hours, ~40 GB of disk)
+    cargo xtask arena fetch            # build the 261 small exports (~3 min, ~300 MB)
+    cargo xtask arena fetch --large    # the 9 large ones (hours, ~40 GB of disk)
     cargo build --release
-    bench/arena/run.sh              # nitrolean on every export built
-    bench/arena/run.sh --competitors --checker nitrolean   # and the others installed
-    bench/arena/run.py report bench/arena/results/results.tsv   # Markdown table
+    cargo xtask arena run              # nitrolean on every export built
+    cargo xtask arena run --competitors --checker nitrolean   # and the others installed
+    cargo xtask arena report bench/arena/results/results.tsv  # Markdown table
+
+The commands are in `xtask/src/arena.rs`; `cargo xtask arena help` lists
+them and their options.
 
 Everything below was read from the arena at commit
 [`8a7d0dceea76dfe6fd7bd7f3a6ea216f6347c6aa`](https://github.com/leanprover/lean-kernel-arena/tree/8a7d0dceea76dfe6fd7bd7f3a6ea216f6347c6aa)
@@ -24,13 +27,16 @@ on the site changes with every build, so this copy is not fetched again).
 No round had been closed at that time, so no archived round could be
 pinned instead.
 
+`cargo xtask arena fetch` fetches the arena at the pinned commit and builds
+the exports with its own `lka.py build-test`; `arena pin RESULTS_JSON` writes
+`tests.tsv` and `published.tsv` from a `results.json`; `arena collect` and
+`arena verify` collect and verify exports; `arena run` and `arena report` are
+the runner and its report.
+
 | file | what |
 |---|---|
-| `fetch.sh` | fetches the arena at the pinned commit and builds the exports with its own `lka.py build-test` |
-| `pin.py` | writes `tests.tsv` and `published.tsv` from a `results.json`; collects and verifies exports |
 | `tests.tsv` | the 270 tests: group, expected outcome, timeout, flags, Lean version, export format, lines, bytes and the SHA-256 of the export the arena checked |
 | `published.tsv` | the arena's own results for Lean's checker, gruszka and nano-lean on its runner (verdict, wall and CPU time, peak RSS, instructions in billions) |
-| `run.py`, `run.sh` | the runner and its report |
 | `results.md`, `run-2026-11-25.tsv` | our last run: per test, nitrolean against the expected verdict and the others, and its raw rows |
 
 ## What the arena runs
@@ -71,7 +77,7 @@ The real-world tests (`skip-on-ci: true` in the arena, except
 | `reachability` | [reachability](https://github.com/Arrow7000/reachability) | tag `v0.1.2`, `d822b1c70b4a6ec858b54ee51f12b0cb30628982` | 6 `decide +kernel` proofs and their dependencies | 4.34.1 | 19 MB | 362 k | 220 s |
 
 `perf/gf3-matrix-product` is also marked `skip-on-ci` (it is small, 0.8 MB,
-but slow to elaborate); `fetch.sh --large` builds it with the others.
+but slow to elaborate); `arena fetch --large` builds it with the others.
 The "Lean" column is the Lean version in the export's header, i.e. the
 toolchain of the project that was exported. Sizes, line counts and SHA-256s
 of all 270 exports are in `tests.tsv`.
@@ -106,7 +112,7 @@ older toolchain `lka.py` clones
 [lean4export](https://github.com/leanprover/lean4export) at its `master`
 branch and builds it with that toolchain: this happens for
 `navier-stokes-euler` (4.34.0-rc2) and `reachability` (4.34.1), and is the
-one input the arena does not pin by commit. `fetch.sh` catches any drift:
+one input the arena does not pin by commit. `arena fetch` catches any drift:
 it compares every export with the SHA-256 the arena published.
 
 ### The checker interface
@@ -167,7 +173,7 @@ tests one after another, inside `nix develop` with the arena's
 
 ## Reproducing the test set
 
-`fetch.sh` pins the arena commit and the SHA-256 of the files it uses
+`arena fetch` pins the arena commit and the SHA-256 of the files it uses
 (`lka.py`, `schemas/`, `tests/`, `tutorial/`), installs
 `leanprover/lean4:v4.36.0` (checking its commit,
 `611c117bfaf7b7ae1cfcf246ce6fba31e8f509e9`), and runs the arena's own
@@ -175,7 +181,7 @@ tests one after another, inside `nix develop` with the arena's
 2026-11-24. The projects are fetched by `lka.py` at the commits in their
 test YAML, Mathlib's build cache by `lake exe cache get` (which checks its
 own hashes). Every export built is compared with the SHA-256 the arena
-published for it (`tests.tsv`); `fetch.sh` fails on any difference, and
+published for it (`tests.tsv`); `arena fetch` fails on any difference, and
 writes the SHA-256s of all exports to `OUT/SHA256SUMS`.
 
 Nothing from the arena is copied into this repository. All test sources
@@ -204,17 +210,17 @@ and many contributors; the test descriptions credit the people who found
 the bugs they reproduce.
 
 The small exports are byte-identical to the arena's when built on aarch64
-Linux (261 of 261). `fetch.sh --large` needs about 16 GB of RAM to export
+Linux (261 of 261). `arena fetch --large` needs about 16 GB of RAM to export
 Mathlib and some 40 GB of disk; put `--out` and `--cache` on a large disk.
 `lka.py` runs each test's `pre-build` with `/bin/sh`, which is bash in the
 arena's nix shell; cedar's uses `shopt`, so where `/bin/sh` is dash (Debian,
-Ubuntu) that test needs a bash `/bin/sh` (`fetch.sh` warns).
+Ubuntu) that test needs a bash `/bin/sh` (`arena fetch` warns).
 `reachability` depends on Mathlib but its pre-build runs no
 `lake exe cache get`, so Lake builds what it needs of Mathlib from source.
 
 ## Running
 
-`run.sh` (`run.py run`) runs each checker on each export present, one at a
+`cargo xtask arena run` runs each checker on each export present, one at a
 time, as `sh -c CMD` with `$IN` set, in the checker's directory, and
 derives verdict and correctness from the exit code exactly as the arena
 does. Per run it records wall time, CPU time (user + system of the command
@@ -232,7 +238,7 @@ Comparison checkers (`--competitors`, or `--checker NAME`) are run if found:
 `official` from `$LEANCHECKER` or elan's `leanprover/lean4:v4.35.0`,
 `gruszka` from a built checkout in `$GRUSZKA_DIR`, `nano-lean` from a built
 checkout in `$NANO_LEAN_DIR` (or `nl-fast` on `PATH`). `--checker NAME=CMD`
-adds any other command. `run.py report` prints a Markdown table of a run
+adds any other command. `cargo xtask arena report` prints a Markdown table of a run
 with the arena's published numbers next to it, and marks every verdict
 that differs from the expected one (`MISMATCH`) and every error or timeout.
 
