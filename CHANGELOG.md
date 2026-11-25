@@ -11,8 +11,8 @@
   grows all run. On the corpus, three neighbouring declarations of about
   2.6 GB each reach 5.3 GB on two threads (2.7 GB on one).
 - A closed-term evaluator for proofs by kernel computation, with fast paths
-  for `Nat`, `Array` and `List` operations and the core `DecidableEq`
-  instances, enabled on the definitions of known Lean versions
+  for `Nat`, `Int`, `Array` and `List` operations, the core `DecidableEq`
+  instances and class methods such as `+` at a known instance, enabled on the definitions of known Lean versions
   (`docs/kernel-compute.md`).
 
 ## 0.1.0-alpha.1

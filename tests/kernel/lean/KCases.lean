@@ -217,6 +217,18 @@ def ev_sub (n : Nat) : {x : Nat // x = n + 1} := ⟨n + 1, Eq.refl (n + 1)⟩
 theorem ev_sub_ok : ev_sub 3 = ⟨4, Eq.refl 4⟩ := sorry
 theorem ev_sub_wrong : (ev_sub 3).val = 3 := sorry
 
+-- Class methods at many instances: `+` through instances built from a
+-- number (more of them than the evaluator remembers per method), through
+-- an instance passed as an argument, and through a computed field.
+def ev_addN (n : Nat) : Add Nat := ⟨fun a b => a + b + n⟩
+def ev_plus {α} [Add α] (x y : α) : α := x + y
+def ev_methods : Nat :=
+  (List.range 20).foldl (fun s n => s + @HAdd.hAdd Nat Nat Nat (@instHAdd Nat (ev_addN n)) n 1) 0
+  + (List.range 20).foldl (fun s n => s + @ev_plus Nat (ev_addN (n % 3)) n n) 0
+  + @ev_plus Nat ⟨fun a b => a * b + (List.range 10).foldl (· + ·) 0⟩ 6 7
+theorem ev_methods_ok : ev_methods = 886 := sorry
+theorem ev_methods_wrong : ev_methods = 887 := sorry
+
 /-! Found by differential fuzzing (tests/fuzz) -/
 theorem fz_quot_direct :
     Quot.lift (fun n : Nat => n + 1) (fun _ _ (h : _ = _) => congrArg (· + 1) h)

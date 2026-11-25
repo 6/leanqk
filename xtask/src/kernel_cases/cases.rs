@@ -2608,6 +2608,22 @@ fn eval_cases(v: &mut Cases) {
         "the length, off by one",
         &[],
     );
+    eval(
+        v,
+        "eval-methods",
+        "K.ev_methods_ok",
+        "accept",
+        "+ through 20 instances built from a number, an instance argument and a computed field",
+        &[],
+    );
+    eval(
+        v,
+        "eval-methods-wrong",
+        "K.ev_methods_wrong",
+        "reject",
+        "the same sum, off by one",
+        &[],
+    );
 
     eval_old(
         v,

@@ -77,8 +77,10 @@ pub struct RecInfo {
 /// What a constant (with its levels) does in the machine.
 #[derive(Clone, Debug)]
 enum CInfo {
-    /// A definition or theorem: its value, with the levels substituted.
-    Unfold(ExprId),
+    /// A definition or theorem: its value, with the levels substituted,
+    /// and for a projection function (`fun p₁ … pₖ self => self.i`, as
+    /// `HAdd.hAdd` or `Add.add`) its number of binders `k`, else 0.
+    Unfold(ExprId, u32),
     /// A built-in `Nat` operation; its definition, for arguments that are
     /// not literals.
     Op(NatOp, ExprId),
@@ -115,7 +117,7 @@ static BAILS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
 static NANOS: AtomicU64 = AtomicU64::new(0);
 /// Fast paths taken: `List` operations, `DecidableEq` decisions, `==` on
 /// pairs.
-static FAST: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+static FAST: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
 
 /// Giving up on a stuck term; `NITROLEAN_EVAL_DEBUG=1` says where.
 #[cold]
@@ -137,7 +139,7 @@ pub fn enabled() -> bool {
 pub fn stats() -> String {
     let b = |i: usize| BAILS[i].load(Relaxed);
     format!(
-        "evaluator: {} calls, {} answered, {} steps, {:.3} s; gave up: {} stuck, {} deep, {} limit, {} loop; {} evaluated again keeping proofs; fast: {} list, {} decidable-eq, {} pair ==, {} int",
+        "evaluator: {} calls, {} answered, {} steps, {:.3} s; gave up: {} stuck, {} deep, {} limit, {} loop; {} evaluated again keeping proofs; fast: {} list, {} decidable-eq, {} pair ==, {} int, {} shared method",
         CALLS.load(Relaxed),
         HITS.load(Relaxed),
         STEPS.load(Relaxed),
@@ -150,7 +152,8 @@ pub fn stats() -> String {
         FAST[0].load(Relaxed),
         FAST[1].load(Relaxed),
         FAST[2].load(Relaxed),
-        FAST[3].load(Relaxed)
+        FAST[3].load(Relaxed),
+        FAST[4].load(Relaxed)
     )
 }
 
@@ -181,6 +184,9 @@ pub struct State {
     /// Per definition of `instBEqProd` (with its levels): `fun α β bα bβ
     /// => f`, where the definition is `fun α β bα bβ => BEq.mk T f`.
     beq_fields: IdMap<ExprId, Option<ExprId>>,
+    /// Per projection function: the values of `c p₁ … pₖ` for the last
+    /// few argument thunks it was applied to (see `method`).
+    methods: IdMap<ExprId, Vec<Method>>,
     /// `NITROLEAN_EVAL_PROFILE=1`: how often each constant was reached.
     profile: Option<IdMap<ExprId, u64>>,
 }
@@ -189,6 +195,12 @@ pub struct State {
 /// judged after `MEMO_TRIAL` lookups.
 const MEMO_TRIAL: u32 = 256;
 const MEMO_RATIO: u32 = 32;
+
+/// A method's argument thunks `p₁ … pₖ` and the value of `c p₁ … pₖ`.
+type Method = (Box<[Th]>, V);
+
+/// How many instances each projection function remembers (see `method`).
+const METHOD_CACHE: usize = 8;
 
 /// How deep `origin` looks through delayed thunks.
 const ORIGIN_DEPTH: u32 = 4;
@@ -681,7 +693,8 @@ impl<'a, 'e> Machine<'a, 'e> {
                 if let Some(&op) = ext.int_ops.get(&n) {
                     return CInfo::Int(op, v);
                 }
-                CInfo::Unfold(v)
+                let k = proj_fn_arity(&self.tc.st, v);
+                CInfo::Unfold(v, k)
             }
             DeclKind::Constructor {
                 induct, num_params, ..
@@ -741,7 +754,11 @@ impl<'a, 'e> Machine<'a, 'e> {
             *p.entry(c).or_default() += 1;
         }
         match self.info(c) {
-            CInfo::Unfold(v) => {
+            CInfo::Unfold(v, k) => {
+                let k = k as usize;
+                if k > 0 && args.len() > k {
+                    return self.method(c, v, k, args);
+                }
                 let t = self.closed(v);
                 let f = self.force(&t)?;
                 if args.is_empty() {
@@ -796,6 +813,51 @@ impl<'a, 'e> Machine<'a, 'e> {
             CInfo::Neutral => Ok(Rc::new(Val::Neutral { head: c, args })),
             CInfo::Bail => Err(stuck(444)),
         }
+    }
+
+    /// The projection function `c` (with value `v`, `fun p₁ … pₖ self =>
+    /// self.i`) applied to more than `k` arguments: a class method such as
+    /// `HAdd.hAdd α β γ inst x y`. The value of `c p₁ … pₖ`, the
+    /// instance's field, is kept per argument thunks (the same thunks
+    /// stand for the same terms), and the rest of the arguments are
+    /// applied to it, as `whnf` does after unfolding `c` and projecting.
+    fn method(&mut self, c: ExprId, v: ExprId, k: usize, mut args: Vec<Th>) -> ER<V> {
+        let rest = args.split_off(k);
+        let hit = self.s.methods.get(&c).and_then(|es| {
+            es.iter()
+                .find(|(ps, _)| ps.iter().zip(&args).all(|(p, a)| Rc::ptr_eq(p, a)))
+                .map(|(_, f)| f.clone())
+        });
+        let f = match hit {
+            Some(f) => {
+                FAST[4].fetch_add(1, Relaxed);
+                f
+            }
+            None => {
+                let f = match self.closed_app(c, &args) {
+                    Some(key) => {
+                        let t = self.closed(key);
+                        self.force(&t)?
+                    }
+                    None => {
+                        let t = self.closed(v);
+                        let u = self.force(&t)?;
+                        self.apply(u, args.clone())?
+                    }
+                };
+                let es = self.s.methods.entry(c).or_default();
+                let e = (args.into_boxed_slice(), f.clone());
+                if es.len() < METHOD_CACHE {
+                    es.push(e);
+                } else {
+                    // Replace the oldest.
+                    es.remove(0);
+                    es.push(e);
+                }
+                f
+            }
+        };
+        self.apply(f, rest)
     }
 
     /// The term `c a₁ … aₙ`, if every argument's term is known.
@@ -2200,6 +2262,20 @@ impl<'a, 'e> Machine<'a, 'e> {
 }
 
 /// A `Nat` operation with a `Nat` result.
+/// `k` if `v` is `fun x₁ … xₖ => xₖ.i` (a projection function), else 0.
+fn proj_fn_arity(st: &super::store::Store<'_>, v: ExprId) -> u32 {
+    let mut e = v;
+    let mut k = 0;
+    while let ExprNode::Lam(_, _, _, b) = st.node(e) {
+        k += 1;
+        e = b;
+    }
+    match st.node(e) {
+        ExprNode::Proj(_, _, x) if k > 0 && matches!(st.node(x), ExprNode::BVar(0)) => k,
+        _ => 0,
+    }
+}
+
 fn nat_bin(op: NatOp, x: &Nat, y: &Nat) -> ER<Nat> {
     match nat::op(op, x, y)? {
         nat::OpResult::Nat(n) => Ok(n),

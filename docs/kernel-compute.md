@@ -302,6 +302,29 @@ computed as lists, the `Int` operations halve the evaluator's steps (8.4
 to 4.6 million). With the lazy `List.map`, `zipWith` and `append` the check
 goes from 0.55 s to 0.13 s.
 
+## Class methods
+
+Arithmetic in compiled code reaches its operation through a class method:
+`x + y` is `HAdd.hAdd α α α inst x y`. `HAdd.hAdd` is a projection
+function, `fun α β γ self => self.1`, and the instance is a closed term or
+a variable bound to one, so `whnf` unfolds `HAdd.hAdd`, then the instance
+(`instHAdd`), then `Add.add` and the next instance. That repeats at every
+operation. A definition of that shape, `fun p₁ … pₖ self => self.i`, is
+recognized when its value is looked at (`proj_fn_arity`; it is a property of
+the term, so no version check is needed). Applied to more than `k`
+arguments, the evaluator takes the value of `c p₁ … pₖ` and applies it to
+the rest (`method`). That is the reduct `whnf` reaches after unfolding `c`
+and projecting the field. The value is kept per argument thunks, for the
+last 8 combinations of each method. The same thunk stands for the same term
+in one environment, so a hit is that term's value again. When the
+arguments' terms are known, the value is also shared through the closed
+term `c p₁ … pₖ`. The test `eval-methods` applies `+` through 20 instances
+built from a number (more than the 8 kept), an instance passed as an
+argument and an instance whose field is computed.
+
+On a 40 × 40 and a 60 × 60 integer matrix product mod 65521, the steps go
+from 8.8 to 6.4 million and the evaluator's time from 0.55 to 0.49 s.
+
 ## Built-in operations of several Lean versions
 
 The fingerprint table (`src/check/fingerprint_table.rs`, written by
@@ -319,7 +342,7 @@ out of memory.
 
 ## Tests
 
-`xtask/src/kernel_cases/cases.rs` has 69 `eval*` cases. Each is a claim proved by
+`xtask/src/kernel_cases/cases.rs` has 71 `eval*` cases. Each is a claim proved by
 `Eq.refl`, so only reduction decides it, and nearly every one has a false
 twin. The 23 `eval434-*` cases are exported from Lean v4.34.0, where the
 `DecidableEq` fast paths apply. They cover:
