@@ -1016,3 +1016,68 @@ def _(tc):
     e.add_def("K.p", T, e.const("True.intro"), safety="partial")
     e.add_def("K.q", T, e.const("K.p"))
     return e
+
+
+# ---------------------------------------------------------------------------
+# Evaluation of closed terms (src/check/eval/). Each claim is proved by
+# `Eq.refl`, so only reduction decides it; the `-wrong` twins must fail.
+
+def eval_case(id, thm, expected, why, consts=()):
+    case(id, "eval", expected, why)(lambda tc: with_rfl(tc, thm, consts))
+
+
+QUOT = ["Quot", "Quot.mk", "Quot.lift", "Quot.ind"]
+
+
+eval_case("eval-decide", "K.ev_decide", "accept", "decide on a fold over List.range")
+eval_case("eval-decide-false", "K.ev_decide_false", "reject", "the same decide, false")
+eval_case("eval-k-stuck", "K.ev_k_stuck", "reject",
+          "Eq.rec over an axiom of 0 = 1: K does not apply (0 ≢ 1), so the cast is stuck")
+eval_case("eval-k-ok", "K.ev_k_ok", "accept",
+          "Eq.rec over an axiom of 2 + 2 = 4: K applies (2 + 2 ≡ 4) without reducing the axiom")
+eval_case("eval-struct-eta", "K.ev_struct_eta", "accept",
+          "Prod.rec on an opaque pair reduces by structure eta to its first projection")
+eval_case("eval-struct-eta-wrong", "K.ev_struct_eta_wrong", "reject",
+          "the same, claimed to be the second projection")
+eval_case("eval-quot", "K.ev_quot_ok", "accept", "Quot.lift f h (Quot.mk r (ev_sum 4)) ≡ f 6 = 7", QUOT)
+eval_case("eval-quot-wrong", "K.ev_quot_wrong", "reject", "the same, claimed 6", QUOT)
+eval_case("eval-str-len", "K.ev_str_len", "accept", "String.length of a literal")
+eval_case("eval-str-len-wrong", "K.ev_str_len_wrong", "reject", "the same, claimed 4")
+eval_case("eval-deep", "K.ev_deep_ok", "accept",
+          "a right fold over 20000 elements: evaluation nests 20000 deep")
+eval_case("eval-deep-wrong", "K.ev_deep_wrong", "reject", "the same, off by one")
+eval_case("eval-pap", "K.ev_pap", "accept",
+          "Nat.add 1 is not in weak head normal form: it unfolds (then eta)")
+eval_case("eval-pap-wrong", "K.ev_pap_wrong", "reject", "Nat.add 1 ≢ fun x => Nat.add 2 x")
+eval_case("eval-rec-lit", "K.ev_rec_lit", "accept",
+          "Nat.rec on the literal 1000 (literals become Nat.succ applications)")
+eval_case("eval-rec-lit-wrong", "K.ev_rec_lit_wrong", "reject", "the same, off by one")
+eval_case("eval-big", "K.ev_big", "accept", "literal arithmetic past 2^64 inside decide")
+eval_case("eval-big-wrong", "K.ev_big_wrong", "reject", "the same, false")
+eval_case("eval-cast-thm", "K.ev_cast_thm", "accept",
+          "cast over a theorem applied to a variable: the erased proof is a K-like major premise")
+eval_case("eval-cast-thm-wrong", "K.ev_cast_thm_wrong", "reject", "the same, off by one")
+eval_case("eval-and-rec", "K.ev_and_ok", "accept",
+          "And.rec on a constructed proof: the erased proof is a major premise")
+eval_case("eval-and-rec-wrong", "K.ev_and_wrong", "reject", "the same, off by one")
+eval_case("eval-sub", "K.ev_sub_ok", "accept",
+          "a weak head normal form holding a proof (a Subtype value)")
+eval_case("eval-sub-wrong", "K.ev_sub_wrong", "reject", "its value, claimed 3")
+eval_case("eval-let", "K.ev_let_ok", "accept", "a let-bound value used twice")
+eval_case("eval-let-wrong", "K.ev_let_wrong", "reject", "the same, off by one")
+eval_case("eval-fn", "K.ev_fn_ok", "accept",
+          "a fold that builds a function (closures of closures), then applied")
+eval_case("eval-fn-wrong", "K.ev_fn_wrong", "reject", "the same, off by one")
+eval_case("eval-arr-get", "K.ev_arr_get", "accept",
+          "an array built by push, read by get! and getD (in and out of range)")
+eval_case("eval-arr-get-wrong", "K.ev_arr_get_wrong", "reject", "the same, wrong sum")
+eval_case("eval-arr-set", "K.ev_arr_set", "accept", "set! then the array as a list")
+eval_case("eval-arr-set-wrong", "K.ev_arr_set_wrong", "reject", "the same, the old element")
+eval_case("eval-arr-oob", "K.ev_arr_oob", "accept",
+          "set! and get! out of range leave the array alone and give the default")
+eval_case("eval-arr-oob-wrong", "K.ev_arr_oob_wrong", "reject", "the same, off by one")
+eval_case("eval-arr-eq", "K.ev_arr_eq", "accept",
+          "decidable equality of an array built by push and one made from a list")
+eval_case("eval-arr-eq-wrong", "K.ev_arr_eq_wrong", "reject", "the same, different arrays")
+eval_case("eval-arr-fn", "K.ev_arr_fn", "accept", "an array of functions, elements applied")
+eval_case("eval-arr-fn-wrong", "K.ev_arr_fn_wrong", "reject", "the same, wrong sum")

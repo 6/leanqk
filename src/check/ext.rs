@@ -8,9 +8,10 @@
 //! are structurally the expected ones (see `fingerprint.rs`): literals
 //! need the prelude's `Nat` (or `String`, `Char`, `List`) with their
 //! expected types, and each arithmetic operation needs its prelude
-//! definition, compared with the one in Lean v4.36.0 across everything it
-//! depends on. Otherwise the operation is just its definition, and a
-//! literal of a type that is not the expected one is rejected.
+//! definition, compared with the one of a known Lean version (v4.36.0,
+//! v4.34.0 or v4.30.0) across everything it depends on. Otherwise the operation is
+//! just its definition, and a literal of a type that is not the expected
+//! one is rejected.
 
 use crate::env::{Decl, DeclKind, Env};
 use crate::expr::{ExprId, ExprNode};
@@ -55,6 +56,29 @@ pub const NAT_OPS: [(&str, NatOp); 14] = [
     ("Nat.pow", NatOp::Pow),
 ];
 
+/// `Array` operations the closed-term evaluator (`eval/`) runs on vectors.
+/// They are not kernel rules: each is enabled only if its definition (and
+/// everything it depends on) is a known prelude's, so running it on a
+/// vector gives what unfolding the definition gives.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ArrayOp {
+    /// `Array.size a = a.toList.length`
+    Size,
+    /// `Array.getInternal a i h = a.toList.get ⟨i, h⟩`
+    Get,
+    /// `Array.set xs i v h = ⟨xs.toList.set i v⟩`
+    Set,
+    /// `Array.push a v = ⟨a.toList.concat v⟩`
+    Push,
+}
+
+pub const ARRAY_OPS: [(&str, ArrayOp); 4] = [
+    ("Array.size", ArrayOp::Size),
+    ("Array.getInternal", ArrayOp::Get),
+    ("Array.set", ArrayOp::Set),
+    ("Array.push", ArrayOp::Push),
+];
+
 #[derive(Clone, Copy, Debug)]
 pub struct StrExt {
     pub string: NameId,
@@ -81,6 +105,7 @@ pub struct Ext {
     pub bool_true: Option<NameId>,
     pub bool_false: Option<NameId>,
     pub ops: IdMap<NameId, NatOp>,
+    pub array_ops: IdMap<NameId, ArrayOp>,
     pub strings: Option<StrExt>,
     pub eager_reduce: Option<NameId>,
     pub quot: Option<QuotNames>,
@@ -151,6 +176,19 @@ impl Ext {
                     x.ops.insert(n, op);
                 }
                 Err(why) => x.notes.push(format!("no built-in `{name}`: {why}")),
+            }
+        }
+        for (name, op) in ARRAY_OPS {
+            let Some(n) = env.names.find_dotted(name) else {
+                continue;
+            };
+            match fp.matches(n) {
+                Ok(()) => {
+                    x.array_ops.insert(n, op);
+                }
+                Err(why) => x
+                    .notes
+                    .push(format!("no fast `{name}` in the evaluator: {why}")),
             }
         }
         match shapes.strings(nat) {

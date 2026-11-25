@@ -11,6 +11,8 @@
 //! writes only into its own [`store::Store`] and caches, so independent
 //! declarations could be checked on several threads; for now there is one.
 
+mod eval;
+pub use eval::stats as eval_stats;
 pub mod ext;
 mod fingerprint;
 mod fingerprint_table;
@@ -100,10 +102,25 @@ fn check_env_here(env: &Env) -> Result<Report, Failure> {
     }
     let ext = Ext::new(env);
     let mut tc = Tc::new(Store::new(env), &ext, 0);
+    // `NITROLEAN_DECL_TIMES=FILE`: write each block's first name and check
+    // time (seconds) to FILE, for benchmarks.
+    let mut times = std::env::var_os("NITROLEAN_DECL_TIMES")
+        .and_then(|p| std::fs::File::create(p).ok())
+        .map(std::io::LineWriter::new);
     for b in &env.blocks {
         let decls = env.block_decls(b);
         let first = decls.first().map(|d| d.name);
+        let t0 = std::time::Instant::now();
         let res = catch_unwind(AssertUnwindSafe(|| check_block(&mut tc, b)));
+        if let (Some(w), Some(n)) = (times.as_mut(), first) {
+            use std::io::Write;
+            let _ = writeln!(
+                w,
+                "{}\t{:.6}",
+                env.names.display(n),
+                t0.elapsed().as_secs_f64()
+            );
+        }
         let res = match res {
             Ok(r) => r.map_err(|e| (FailKind::Rejected, e.0)),
             Err(p) => {

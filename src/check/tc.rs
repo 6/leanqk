@@ -80,6 +80,8 @@ pub struct Tc<'e> {
     eq_fail: IdSet<(ExprId, ExprId)>,
     level_eq: IdMap<(LevelId, LevelId), bool>,
     major_induct: IdMap<NameId, NameId>,
+    /// The closed-term evaluator's state (`eval/`); `None` while it runs.
+    pub(super) eval: Option<Box<super::eval::State>>,
 }
 
 fn pair(a: ExprId, b: ExprId) -> (ExprId, ExprId) {
@@ -106,6 +108,7 @@ impl<'e> Tc<'e> {
             eq_fail: IdSet::default(),
             level_eq: IdMap::default(),
             major_induct: IdMap::default(),
+            eval: Some(Box::default()),
         }
     }
 
@@ -129,6 +132,7 @@ impl<'e> Tc<'e> {
         self.eq_fail = IdSet::default();
         self.level_eq = IdMap::default();
         self.major_induct = IdMap::default();
+        self.eval = Some(Box::default());
     }
 
     /// Drop the caches (but not the store or the context), as after the
@@ -142,6 +146,7 @@ impl<'e> Tc<'e> {
         self.unfold_cache.clear();
         self.eq_ok.clear();
         self.eq_fail.clear();
+        self.eval = Some(Box::default());
     }
 
     // ---- environment ----
@@ -901,6 +906,15 @@ impl<'e> Tc<'e> {
         }
     }
 
+    /// For the evaluator (`eval/`).
+    pub(super) fn ctor_when_k_pub(&mut self, induct: NameId, nparams: u32, e: ExprId) -> R<ExprId> {
+        self.ctor_when_k(induct, nparams, e)
+    }
+
+    pub(super) fn major_induct_of(&mut self, rec: NameId, d: &Decl) -> Option<NameId> {
+        self.major_induct(rec, d)
+    }
+
     fn ctor_when_k(&mut self, induct: NameId, nparams: u32, e: ExprId) -> R<ExprId> {
         let t = self.infer(e)?;
         let app_type = self.whnf(t)?;
@@ -1325,6 +1339,14 @@ impl<'e> Tc<'e> {
         }
         if let Some(&r) = self.whnf_cache.get(&e) {
             return Ok(r);
+        }
+        if !self.st.has_fvar(e)
+            && !self.st.has_loose_bvars(e)
+            && super::eval::enabled()
+            && let Some(v) = super::eval::whnf(self, e)
+        {
+            self.whnf_cache.insert(e, v);
+            return Ok(v);
         }
         let mut t = e;
         loop {

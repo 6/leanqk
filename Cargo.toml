@@ -27,5 +27,7 @@ path = "src/bin/nlean.rs"
 clap = { version = "4", features = ["derive"] }
 hashbrown = "0.17"
 memmap2 = "0.9"
+mimalloc = { version = "0.1", default-features = false }
 num-bigint = "0.5"
 sha2 = "0.11.1"
+stacker = "0.1"

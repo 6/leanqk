@@ -310,6 +310,7 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool) -> u8 {
                 for n in &rep.notes {
                     out.push_str(&format!("note: {n}\n"));
                 }
+                out.push_str(&format!("{}\n", check::eval_stats()));
             }
             out.push_str(&format!(
                 "accepted: {} declarations checked\n",
