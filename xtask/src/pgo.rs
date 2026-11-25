@@ -7,9 +7,12 @@
 //! also left in `target/pgo/nitrolean.profdata`, for `--use` on a later build.
 //!
 //! Good training sets are the exports of Lean's `Init` and `Std` (the
-//! arena's `init` and `std` tests); a prefix of Mathlib's export (whole
-//! lines, e.g. `head -n 20000000`) is a valid export too, as each line
-//! refers only to the lines before it.
+//! arena's `init` and `std` tests); a prefix of an export (whole lines,
+//! e.g. `head -n 20000000` of Mathlib's) is a valid export too, as each line
+//! refers only to the lines before it. `--repo` trains on what the
+//! repository holds: the exports of `tests/kernel` and a prefix of `Init`'s
+//! export (`bench/arena/pgo`, unpacked with `xz`), for builds with no other
+//! exports at hand, such as the arena's.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,8 +27,11 @@ const T: &str = "pgo";
 #[derive(clap::Args)]
 pub struct Args {
     /// Exports to train on.
-    #[arg(required_unless_present = "use_profile")]
+    #[arg(required_unless_present_any = ["use_profile", "repo"])]
     exports: Vec<PathBuf>,
+    /// Train on the exports in the repository (as well).
+    #[arg(long)]
+    repo: bool,
     /// Build with this merged profile instead of training (no exports needed).
     #[arg(long = "use", value_name = "PROFDATA")]
     use_profile: Option<PathBuf>,
@@ -64,7 +70,11 @@ fn train(root: &Path, dir: &Path, a: &Args) -> Result<PathBuf> {
     let gen_dir = dir.join("gen");
     run(&mut cargo_build(root, &flags, Some(&gen_dir)))?;
     let bin = gen_dir.join("release/nitrolean");
-    for e in &a.exports {
+    let mut exports = a.exports.clone();
+    if a.repo {
+        exports.extend(repo_exports(root, dir)?);
+    }
+    for e in &exports {
         log(T, &format!("training on {}", e.display()));
         let st = Command::new(&bin)
             .args(["check", "--threads", "1"])
@@ -82,6 +92,27 @@ fn train(root: &Path, dir: &Path, a: &Args) -> Result<PathBuf> {
     cmd.args(["merge", "-o"]).arg(&merged).arg(&raw);
     run(&mut cmd)?;
     Ok(merged)
+}
+
+/// The repository's training exports: `tests/kernel`'s, and the prefix of
+/// `Init`'s export, unpacked into `dir`.
+fn repo_exports(root: &Path, dir: &Path) -> Result<Vec<PathBuf>> {
+    let kernel = root.join("tests/kernel/exports");
+    let mut out: Vec<PathBuf> = fs::read_dir(&kernel)
+        .with_context(|| format!("{}: cannot read", kernel.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "ndjson"))
+        .collect();
+    out.sort();
+    let packed = root.join("bench/arena/pgo/init-prefix.ndjson.xz");
+    let prefix = dir.join("init-prefix.ndjson");
+    let f = fs::File::create(&prefix)
+        .with_context(|| format!("{}: cannot create", prefix.display()))?;
+    let mut cmd = Command::new("xz");
+    cmd.arg("-dc").arg(&packed).stdout(f);
+    run(&mut cmd).context("xz is needed to unpack the Init prefix")?;
+    out.push(prefix);
+    Ok(out)
 }
 
 /// `cargo build --release` of nitrolean, with `flags` added to RUSTFLAGS.

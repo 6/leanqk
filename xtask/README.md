@@ -24,7 +24,7 @@ list every option.
 | `famous-sat ...` | cubes of famous cube-and-conquer SAT proofs (`bench/famous-sat`): `fetch`, `parallel`, `coverage`, `scaling`, `survey`, `cube-cnf`, `lrat-core`, `renumber` |
 | `arena ...` | the Lean Kernel Arena benchmark (`bench/arena`): `fetch`, `run`, `report`, `pin`, `collect`, `verify` |
 | `oracle ...` | the per-declaration oracle against Lean's checker (`bench/oracle`): `build`, `run`, `reduce`, `all` |
-| `pgo EXPORT... [--rustflags FLAGS]`, `pgo --use PROFDATA` | a profile-guided `target/release/nitrolean`: an instrumented build checks each export on one thread, `llvm-profdata` (`rustup component add llvm-tools`) merges the profiles into `target/pgo/nitrolean.profdata`, and the release build uses it; `--use` builds with a profile made before |
+| `pgo EXPORT... [--repo] [--rustflags FLAGS]`, `pgo --use PROFDATA` | a profile-guided `target/release/nitrolean`: an instrumented build checks each export on one thread, `llvm-profdata` (`rustup component add llvm-tools`) merges the profiles into `target/pgo/nitrolean.profdata`, and the release build uses it; `--repo` trains on the exports in the repository (`tests/kernel` and the `Init` prefix in `bench/arena/pgo`); `--use` builds with a profile made before |
 
 The commands drive git, curl, elan, lake and the checkers directly. Lean
 sources stay Lean; the upstream tools some benchmarks use (the Arena's
