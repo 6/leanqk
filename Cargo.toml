@@ -36,3 +36,15 @@ stacker = "0.1"
 # part of the published crate.
 [workspace]
 members = ["xtask"]
+
+# One codegen unit and whole-program (fat) LTO: the checker's hot loops cross
+# modules, and inlining across them is worth the longer build.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+# The tooling, built quickly (see .cargo/config.toml).
+[profile.xtask]
+inherits = "release"
+lto = false
+codegen-units = 16
