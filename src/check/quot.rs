@@ -56,7 +56,8 @@ impl Tc<'_> {
         let t = self.arrow(alpha, prop);
         let t = self.arrow(alpha, t);
         let want = self.mk_pi(&[alpha], t);
-        if !alpha_eq(self, want, d.ty) {
+        // Lean compares the types syntactically, metadata included.
+        if !alpha_eq(self, want, d.ty) || self.st.env.mdata_types.contains(&eq) {
             return err("failed to initialize quot module, 'Eq' has an unexpected type");
         }
         let refl = self.get(cs[0])?;
@@ -74,7 +75,7 @@ impl Tc<'_> {
         let eqc = self.st.cnst(eq, ls);
         let body = self.st.apps(eqc, &[alpha, a, a]);
         let want = self.mk_pi(&[alpha, a], body);
-        if !alpha_eq(self, want, refl.ty) {
+        if !alpha_eq(self, want, refl.ty) || self.st.env.mdata_types.contains(&cs[0]) {
             return err(
                 "failed to initialize quot module, unexpected type for 'Eq' type constructor",
             );

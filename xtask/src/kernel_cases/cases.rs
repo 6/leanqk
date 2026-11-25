@@ -2924,6 +2924,33 @@ fn retouch_type(e: &mut Export, name: &str, depth: usize, field: &str, value: Va
     e.set(name, "type", json!(new));
 }
 
+/// `root` with the subterm at `path` (fields of the expression records:
+/// `body`, `type`, `fn`, `arg`, ...) wrapped in mdata.
+fn mdata_at(e: &mut Export, root: Id, path: &[&str]) -> Id {
+    let mut chain = vec![root];
+    for f in path {
+        let x = e.exprs[chain.last().unwrap()].1[*f].as_u64().unwrap();
+        chain.push(x);
+    }
+    let mut new = mdata(e, *chain.last().unwrap());
+    for (x, f) in chain.iter().rev().skip(1).zip(path.iter().rev()) {
+        let (k, mut p) = e.exprs[x].clone();
+        p[*f] = json!(new);
+        new = e.expr(&k, p);
+    }
+    new
+}
+
+/// An export of the closure of `export` with the subterm at `path` of
+/// `name`'s type wrapped in mdata.
+fn mdata_in_type(tc: &mut Toolchain, export: &[&str], name: &str, path: &[&str]) -> Result<Export> {
+    let mut e = tc.export(export, false)?;
+    let t = e.decl_id(name, "type");
+    let m = mdata_at(&mut e, t, path);
+    e.set(name, "type", json!(m));
+    Ok(e)
+}
+
 fn fuzz_cases(v: &mut Cases) {
     v.text(
         "fuzz-quot-lift-direct",
@@ -2995,6 +3022,121 @@ fn fuzz_cases(v: &mut Cases) {
             e.set("Quot.ind", "type", json!(m));
             Ok(e)
         },
+    );
+    // Lean's kernel compares these parts of an inductive block, and `Eq`
+    // for the quotient, syntactically: there mdata is not what it wraps.
+    v.add(
+        "fuzz-mdata-ctor-param-arg",
+        "inductive.mdata",
+        "reject",
+        "Wrap.mk's result type Wrap α with α under mdata: Lean rejects (invalid occurrence of \
+         datatype, it must be applied to the parameters)",
+        |tc| mdata_in_type(tc, &["K.Wrap.mk"], "K.Wrap.mk", &["body", "body", "arg"]),
+    );
+    v.add(
+        "fuzz-mdata-ctor-result-head",
+        "inductive.mdata",
+        "reject",
+        "Wrap.mk's result type Wrap α with the constant Wrap under mdata: Lean rejects (invalid \
+         occurrence of datatype, it must be applied to the parameters)",
+        |tc| mdata_in_type(tc, &["K.Wrap.mk"], "K.Wrap.mk", &["body", "body", "fn"]),
+    );
+    v.add(
+        "fuzz-mdata-ctor-param-domain",
+        "inductive.mdata",
+        "accept",
+        "the type of Wrap.mk's parameter α under mdata: Lean accepts (only compared up to \
+         definitional equality, and not used in the recursor)",
+        |tc| mdata_in_type(tc, &["K.Wrap.mk"], "K.Wrap.mk", &["type"]),
+    );
+    v.add(
+        "fuzz-mdata-ind-type-root",
+        "inductive.mdata",
+        "reject",
+        "Wrap's type under mdata: Lean rejects (incorrect number of parameters: the parameters \
+         are read off the binders without reduction)",
+        |tc| mdata_in_type(tc, &["K.Wrap.mk"], "K.Wrap", &[]),
+    );
+    v.add(
+        "fuzz-mdata-ind-type-sort",
+        "inductive.mdata",
+        "accept",
+        "the sort of Wrap's type, after its parameter, under mdata: Lean accepts",
+        |tc| mdata_in_type(tc, &["K.Wrap.mk"], "K.Wrap", &["body"]),
+    );
+    v.add(
+        "fuzz-mdata-nested-head",
+        "inductive.mdata",
+        "reject",
+        "PosNested.mk's field List (Nat → PosNested) with List under mdata: Lean sees no nested \
+         occurrence and rejects (non valid occurrence of the datatypes being declared)",
+        |tc| mdata_in_type(tc, &["K.PosNested.mk"], "K.PosNested.mk", &["type", "fn"]),
+    );
+    v.add(
+        "fuzz-mdata-ctor-index",
+        "inductive.mdata",
+        "reject",
+        "the index 0 of V.mk's result type V 0 under mdata, V.rec as exported: Lean derives \
+         V.rec with the mdata and rejects (invalid recursor)",
+        |tc| mdata_in_type(tc, &["K.V.mk", "K.V.rec"], "K.V.mk", &["body", "arg"]),
+    );
+    v.add(
+        "fuzz-mdata-ctor-index-rec",
+        "inductive.mdata",
+        "accept",
+        "the index 0 of V.mk's result type under mdata, and the same in V.rec's minor premise, \
+         in its type and in its rule: Lean accepts",
+        |tc| {
+            let mut e = mdata_in_type(tc, &["K.V.mk", "K.V.rec"], "K.V.mk", &["body", "arg"])?;
+            let path = ["body", "type", "body", "fn", "arg"];
+            let t = e.decl_id("K.V.rec", "type");
+            let m = mdata_at(&mut e, t, &path);
+            e.set("K.V.rec", "type", json!(m));
+            let rhs = e.decl("K.V.rec")["rules"][0]["rhs"].as_u64().unwrap();
+            let m = mdata_at(&mut e, rhs, &path);
+            e.decl("K.V.rec")["rules"][0]["rhs"] = json!(m);
+            Ok(e)
+        },
+    );
+    v.add(
+        "fuzz-mdata-ind-param-domain",
+        "inductive.mdata",
+        "reject",
+        "the type of Wrap's parameter α under mdata, Wrap.rec as exported: Lean derives Wrap.rec \
+         with the mdata and rejects (invalid recursor)",
+        |tc| mdata_in_type(tc, &["K.Wrap.mk", "K.Wrap.rec"], "K.Wrap", &["type"]),
+    );
+    v.add(
+        "fuzz-mdata-nested-rec-rule",
+        "inductive.mdata",
+        "reject",
+        "the body of a rule of PosNested.rec_1, a recursor of the nested List, under mdata: \
+         Lean rejects (invalid recursor)",
+        |tc| {
+            let mut e = tc.export(&["K.PosNested.rec_1"], false)?;
+            let rhs = e.decl("K.PosNested.rec_1")["rules"][0]["rhs"]
+                .as_u64()
+                .unwrap();
+            let m = mdata_at(&mut e, rhs, &["body"]);
+            e.decl("K.PosNested.rec_1")["rules"][0]["rhs"] = json!(m);
+            Ok(e)
+        },
+    );
+    v.add(
+        "fuzz-mdata-eq-type",
+        "quot",
+        "reject",
+        "the Prop at the end of Eq's type under mdata: Lean accepts Eq, but its quotient check \
+         compares Eq's type syntactically and rejects",
+        |tc| mdata_in_type(tc, &QUOT, "Eq", &["body", "body", "body"]),
+    );
+    v.add(
+        "fuzz-mdata-eq-refl-type",
+        "quot",
+        "reject",
+        "the type of Eq.refl's argument a under mdata: Lean's quotient check compares Eq.refl's \
+         type syntactically and rejects",
+        |tc| mdata_in_type(tc, &QUOT, "Eq.refl", &["body", "type"]),
     );
     v.add(
         "fuzz-quot-binder-name",

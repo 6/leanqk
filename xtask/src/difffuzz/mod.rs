@@ -503,17 +503,8 @@ fn known(
             return "ctor-or-rec-flags (open: fuzz-ctor-unsafe-flag, fuzz-rec-unsafe-flag)";
         }
     }
-    if nl == "accept" && lean == "reject" {
-        if lean_msg.contains("No such constructor") {
-            return "type-unsafe-flag (open: fuzz-type-unsafe-flag)";
-        }
-        if text.contains("\"mdata\"")
-            && (lean_msg.contains("Invalid recursor")
-                || lean_msg.contains("invalid return type")
-                || lean_msg.contains("Quotient"))
-        {
-            return "mdata-in-declaration-record (open: fuzz-mdata-*)";
-        }
+    if nl == "accept" && lean == "reject" && lean_msg.contains("No such constructor") {
+        return "type-unsafe-flag (open: fuzz-type-unsafe-flag)";
     }
     ""
 }

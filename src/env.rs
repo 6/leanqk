@@ -5,7 +5,7 @@
 //! constructors) are ranges into one shared pool, so a declaration owns no
 //! heap memory of its own.
 
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 
 use num_bigint::BigUint;
 
@@ -251,6 +251,9 @@ pub struct Env {
     pub(crate) by_name: HashMap<NameId, u32>,
     pub(crate) lazy: Option<Box<dyn LazyValues>>,
     pub(crate) mdata_errors: HashMap<NameId, &'static str>,
+    /// The inductive types and constructors whose exported type contains
+    /// metadata (Lean's quotient check compares `Eq`'s syntactically).
+    pub(crate) mdata_types: HashSet<NameId>,
 }
 
 impl Env {

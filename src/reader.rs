@@ -44,6 +44,7 @@ use crate::strings::Overflow;
 
 mod fast;
 mod lazy;
+mod mdata;
 mod run;
 mod scan;
 
@@ -1290,7 +1291,9 @@ struct State {
     expr_ids: IdMap,
     // Expression ids whose source contains metadata. The interned terms
     // remain transparent for ordinary type checking and reduction.
-    mdata: HashMap<u64, MData>,
+    // With each one's record, metadata nodes included: what Lean's kernel
+    // sees where it compares terms syntactically (see `mdata`).
+    mdata: HashMap<u64, (MData, RawExpr)>,
     shared_exprs: u64,
     // Scratch buffers, reused across records.
     levels_buf: Vec<LevelId>,
@@ -1784,7 +1787,7 @@ impl State {
 
     #[cold]
     fn track_mdata(&mut self, id: u64, node: RawExpr) {
-        let get = |e| self.mdata.get(&e).copied();
+        let get = |e| self.mdata.get(&e).map(|m| m.0);
         let nested = |e| get(e).map(|_| MData::Nested);
         let spine = |e| {
             get(e).map(|m| match m {
@@ -1808,7 +1811,7 @@ impl State {
             _ => None,
         };
         if let Some(m) = m {
-            self.mdata.insert(id, m);
+            self.mdata.insert(id, (m, node));
         }
     }
 
@@ -2130,9 +2133,19 @@ impl State {
         let o = Obj::new(doc, v, "inductive")?;
         let (types, ctors, recs) = (o.arr("types")?, o.arr("ctors")?, o.arr("recs")?);
         let start = self.env.decls.len() as u32;
+        let mdata = !self.mdata.is_empty();
+        let mut type_ids = Vec::new();
+        let mut ctor_ids = Vec::new();
+        let mut nparams = 0;
         for &t in types {
             let o = Obj::new(doc, t, "inductive.types")?;
             let (name, level_params, ty) = self.header(&o)?;
+            if mdata {
+                if type_ids.is_empty() {
+                    nparams = o.u32("numParams")?;
+                }
+                type_ids.push((name, o.nat("type")?));
+            }
             let kind = DeclKind::Inductive {
                 num_params: o.u32("numParams")?,
                 num_indices: o.u32("numIndices")?,
@@ -2160,9 +2173,12 @@ impl State {
                 num_fields: o.u32("numFields")?,
                 is_unsafe: o.bool("isUnsafe")?,
             };
+            if mdata {
+                ctor_ids.push((name, o.nat("type")?));
+            }
             if !self.mdata.is_empty()
                 && matches!(
-                    self.mdata.get(&o.nat("type")?),
+                    self.mdata.get(&o.nat("type")?).map(|m| m.0),
                     Some(MData::Root | MData::Spine)
                 )
             {
@@ -2177,20 +2193,52 @@ impl State {
                 kind,
             })?;
         }
+        // Lean's replay compares the recursors it derives with the exported
+        // ones syntactically, metadata included. Whether the derived ones
+        // have metadata: `Some(true)` if surely, `Some(false)` if surely
+        // not, `None` if unknown.
+        let mut derived_mdata = Some(false);
+        if mdata {
+            let copied = self.check_block_mdata(&type_ids, &ctor_ids, nparams)?;
+            let nested = self.env.decls[start as usize..].iter().any(
+                |d| matches!(d.kind, DeclKind::Inductive { num_nested, .. } if num_nested > 0),
+            );
+            let clean = !type_ids
+                .iter()
+                .chain(&ctor_ids)
+                .any(|(_, t)| self.mdata.contains_key(t));
+            // The recursors of nested types are also derived from the
+            // constructors of the types they nest, which are clean if no
+            // inductive type has metadata.
+            derived_mdata = if clean && (!nested || self.env.mdata_types.is_empty()) {
+                Some(false)
+            } else if copied && !nested {
+                Some(true)
+            } else {
+                None
+            };
+        }
         for &r in recs {
             let o = Obj::new(doc, r, "inductive.recs")?;
             let (name, level_params, ty) = self.header(&o)?;
             let all = self.name_list(&o, "all")?;
+            let ty_id = o.nat("type")?;
             let mut metadata =
-                !self.mdata.is_empty() && self.mdata.get(&o.nat("type")?) == Some(&MData::Root);
+                !self.mdata.is_empty() && self.mdata.get(&ty_id).map(|m| m.0) == Some(MData::Root);
+            // Metadata in the type or a rule, and in the type and every rule.
+            let mut any_mdata = !self.mdata.is_empty() && self.mdata.contains_key(&ty_id);
+            let mut all_mdata = any_mdata;
             let mut rules = std::mem::take(&mut self.rules_buf);
             rules.clear();
             let res = (|| {
                 for &rv in o.arr("rules")? {
                     let ro = Obj::new(doc, rv, "inductive.recs.rules")?;
                     let rhs = ro.nat("rhs")?;
-                    metadata |=
-                        !self.mdata.is_empty() && self.mdata.get(&rhs) == Some(&MData::Root);
+                    metadata |= !self.mdata.is_empty()
+                        && self.mdata.get(&rhs).map(|m| m.0) == Some(MData::Root);
+                    let m = !self.mdata.is_empty() && self.mdata.contains_key(&rhs);
+                    any_mdata |= m;
+                    all_mdata &= m;
                     rules.push(RecRule {
                         ctor: self.name(ro.nat("ctor")?)?,
                         nfields: ro.u32("nfields")?,
@@ -2204,6 +2252,23 @@ impl State {
             })();
             self.rules_buf = rules;
             let is_unsafe = o.bool("isUnsafe")?;
+            // The derived recursor's minor premises are in its type and in
+            // the binders of every rule.
+            let differs = match derived_mdata {
+                Some(true) => !all_mdata,
+                Some(false) => any_mdata,
+                None => false,
+            };
+            if differs && !is_unsafe {
+                self.env.mdata_errors.insert(
+                    name,
+                    if any_mdata && derived_mdata == Some(false) {
+                        "metadata in a recursor type or rule, where the recursor derived from the inductive types has none"
+                    } else {
+                        "metadata missing from the recursor type or a rule, where the recursor derived from the constructors has some"
+                    },
+                );
+            }
             if metadata && !is_unsafe {
                 self.env
                     .mdata_errors

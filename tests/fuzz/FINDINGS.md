@@ -6,6 +6,8 @@ Campaigns against Lean v4.36.0's `leanchecker --from-export`:
   kernel evaluator (`eval`), with the first version of the harness;
 - 10,000 mutants (9,678 generated) with `cargo xtask difffuzz`, `--base 7`,
   every category;
+- 1,100,000 and 700,000 mutants with `--base 2611` and `--base 2612`, every
+  category (see "Metadata in inductive blocks" below);
 - 20 minutes × 4 workers of each cargo-fuzz target (`fuzz/`).
 
 | category | first campaign | second campaign |
@@ -41,6 +43,29 @@ malformed declaration records that nitrolean is more lenient about.
 |---|---|
 | `fuzz-mdata-ctor-type`, `fuzz-mdata-rec-rule`, `fuzz-mdata-quot-type` | `mdata` inside a constructor type, a recursor rule or a quotient declaration's type. nitrolean sees through it. Lean compares these records structurally and rejects ("invalid return type", "Invalid recursor", "Quotient constant mismatch", also "invalid occurrence of datatype"). 196 mutants. |
 | `fuzz-type-unsafe-flag`, `fuzz-type-unsafe-flag-neg` | an inductive block whose type record says `isUnsafe` while its constructors and recursor say safe. Lean rejects ("No such constructor"). nitrolean accepts the block as unsafe, so a non-positive type passes without the positivity check. Safe declarations that use it are still rejected ("uses unsafe declaration"); a forged proof of `False` through such a type was tried and rejected. 16 mutants. |
+
+## Metadata in inductive blocks
+
+The campaigns with `--base 2611` and `--base 2612` found 1,033 more
+disagreements, all nitrolean accepting what Lean rejects, all from the
+`equiv` mutation that wraps a subterm in `mdata`, besides the 7,508 of the
+`mdata` class above. Lean's kernel reads an inductive block's parameters off
+the first type's binders without reducing it, requires the occurrences of a
+type of the block in a constructor type to be applied to the parameters as
+bound variables, recognises nested occurrences by their head, compares the
+recursors it derives with the exported ones, and compares `Eq`'s and
+`Eq.refl`'s types before the quotient declarations, all syntactically, so
+with metadata nodes kept. The reader (`src/reader/mdata.rs`) now redoes
+these checks on the terms as exported where they contain metadata; the cases
+are `fuzz-mdata-ctor-param-arg`, `fuzz-mdata-ctor-result-head`,
+`fuzz-mdata-ind-type-root`, `fuzz-mdata-ind-param-domain`,
+`fuzz-mdata-nested-head`, `fuzz-mdata-ctor-index`,
+`fuzz-mdata-nested-rec-rule`, `fuzz-mdata-eq-type` and
+`fuzz-mdata-eq-refl-type`, with the accepted twins
+`fuzz-mdata-ctor-param-domain`, `fuzz-mdata-ind-type-sort` and
+`fuzz-mdata-ctor-index-rec`. Where the metadata of the derived recursor
+cannot be told without building it (metadata both in the constructors and in
+the exported recursor), nitrolean still sees through it and accepts.
 
 ## nitrolean rejects, Lean accepts
 

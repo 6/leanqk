@@ -262,6 +262,18 @@ fuzz-str-deceq	eval.string	accept	reject	decide ("abc" = "abc") = true by decide
 fuzz-mdata-ctor-type	inductive.mdata	reject	reject	Bool.true's type is mdata around Bool: Lean rejects (invalid return type)
 fuzz-mdata-rec-rule	inductive.mdata	reject	reject	a rule of Bool.rec has its right-hand side under mdata: Lean rejects (invalid recursor)
 fuzz-mdata-quot-type	quot	reject	reject	the type of Quot.ind under mdata: Lean's quotient check rejects it (constant mismatch)
+fuzz-mdata-ctor-param-arg	inductive.mdata	reject	reject	Wrap.mk's result type Wrap α with α under mdata: Lean rejects (invalid occurrence of datatype, it must be applied to the parameters)
+fuzz-mdata-ctor-result-head	inductive.mdata	reject	reject	Wrap.mk's result type Wrap α with the constant Wrap under mdata: Lean rejects (invalid occurrence of datatype, it must be applied to the parameters)
+fuzz-mdata-ctor-param-domain	inductive.mdata	accept	accept	the type of Wrap.mk's parameter α under mdata: Lean accepts (only compared up to definitional equality, and not used in the recursor)
+fuzz-mdata-ind-type-root	inductive.mdata	reject	reject	Wrap's type under mdata: Lean rejects (incorrect number of parameters: the parameters are read off the binders without reduction)
+fuzz-mdata-ind-type-sort	inductive.mdata	accept	accept	the sort of Wrap's type, after its parameter, under mdata: Lean accepts
+fuzz-mdata-nested-head	inductive.mdata	reject	reject	PosNested.mk's field List (Nat → PosNested) with List under mdata: Lean sees no nested occurrence and rejects (non valid occurrence of the datatypes being declared)
+fuzz-mdata-ctor-index	inductive.mdata	reject	reject	the index 0 of V.mk's result type V 0 under mdata, V.rec as exported: Lean derives V.rec with the mdata and rejects (invalid recursor)
+fuzz-mdata-ctor-index-rec	inductive.mdata	accept	accept	the index 0 of V.mk's result type under mdata, and the same in V.rec's minor premise, in its type and in its rule: Lean accepts
+fuzz-mdata-ind-param-domain	inductive.mdata	reject	reject	the type of Wrap's parameter α under mdata, Wrap.rec as exported: Lean derives Wrap.rec with the mdata and rejects (invalid recursor)
+fuzz-mdata-nested-rec-rule	inductive.mdata	reject	reject	the body of a rule of PosNested.rec_1, a recursor of the nested List, under mdata: Lean rejects (invalid recursor)
+fuzz-mdata-eq-type	quot	reject	reject	the Prop at the end of Eq's type under mdata: Lean accepts Eq, but its quotient check compares Eq's type syntactically and rejects
+fuzz-mdata-eq-refl-type	quot	reject	reject	the type of Eq.refl's argument a under mdata: Lean's quotient check compares Eq.refl's type syntactically and rejects
 fuzz-quot-binder-name	quot	accept	accept	the binder of the relation in Quot's type renamed: Lean accepts (binder names do not matter)
 fuzz-quot-binder-info	quot	accept	accept	the first binder of Quot.mk's type made explicit: Lean accepts (binder info does not matter to the kernel)
 fuzz-quot-type-alone	quot	accept	accept	the quot declaration of Quot without those of Quot.mk, Quot.lift and Quot.ind, and without their names: Lean adds the quotient package at Quot
