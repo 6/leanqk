@@ -196,6 +196,9 @@ pub struct Arena {
     /// (direct-mapped, in front of trimming and `vtable`): (term,
     /// environment, substitution, thunk).
     thunks: Vec<[u32; 4]>,
+    /// Neutrals by head and spine contents, so that applying a neutral to
+    /// arguments finds the result with one probe.
+    nutable: HashTable<(u32, u32)>,
 }
 
 /// Slots of `Arena::heads`.
@@ -234,6 +237,7 @@ impl Arena {
             lstable: HashTable::new(),
             heads: vec![(NONE, NONE, V(NONE)); HEADS],
             thunks: vec![[NONE; 4]; THUNKS],
+            nutable: HashTable::new(),
         }
     }
 
@@ -247,6 +251,7 @@ impl Arena {
         if self.vtable.capacity() > 1 << 17
             || self.sptable.capacity() > 1 << 17
             || self.envtable.capacity() > 1 << 17
+            || self.nutable.capacity() > 1 << 17
         {
             *self = Arena::new();
             return;
@@ -262,6 +267,7 @@ impl Arena {
         self.lstable.clear();
         self.heads.fill((NONE, NONE, V(NONE)));
         self.thunks.fill([NONE; 4]);
+        self.nutable.clear();
     }
 
     pub fn is_empty(&self) -> bool {
@@ -276,6 +282,7 @@ impl Arena {
             + self.sptable.capacity() * 9
             + self.envs.capacity() * 17
             + self.thunks.capacity() * 16
+            + self.nutable.capacity() * 9
             + self.envtable.capacity() * 9
     }
 
@@ -458,6 +465,61 @@ impl Arena {
         let r = self.intern_sp(&buf);
         self.sp_buf = buf;
         r
+    }
+
+    /// The neutral `head` (a `Const` or `FVar`) with the arguments `xs`
+    /// after its spine.
+    pub fn neutral(&mut self, head: Val, xs: &[V]) -> V {
+        let (tag, a, b, base) = match head {
+            Val::Const(n, l, sp) => (0u64, n.0, l.0, sp),
+            Val::FVar(k, sp) => (1u64, k, 0, sp),
+            _ => unreachable!(),
+        };
+        if xs.is_empty() {
+            return self.mk(head);
+        }
+        let k = base.0 as usize + 1;
+        let n = self.sp_len(base) as usize;
+        let mut h = hash2(tag | (a as u64) << 32, b as u64);
+        for &w in &self.sps[k..k + 2 * n] {
+            h = (h.rotate_left(5) ^ w as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+        }
+        for x in xs {
+            h = (h.rotate_left(5) ^ x.0 as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+            h = (h.rotate_left(5) ^ NONE as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+        }
+        let h = h32(h);
+        let Self {
+            vals, sps, nutable, ..
+        } = self;
+        let found = nutable.find(spread(h), |&(id, k2)| {
+            k2 == h && {
+                let (same, sp) = match (vals[id as usize].val, head) {
+                    (Val::Const(n2, l2, sp), Val::Const(n1, l1, _)) => (n1 == n2 && l1 == l2, sp),
+                    (Val::FVar(k2, sp), Val::FVar(k1, _)) => (k1 == k2, sp),
+                    _ => (false, Sp::NIL),
+                };
+                let i = sp.0 as usize;
+                same && (sps[i] & LEN_BITS) as usize == n + xs.len()
+                    && sps[i + 1..i + 1 + 2 * n] == sps[k..k + 2 * n]
+                    && xs
+                        .iter()
+                        .enumerate()
+                        .all(|(j, x)| sps[i + 1 + 2 * (n + j)] == x.0)
+            }
+        });
+        if let Some(&(id, _)) = found {
+            return V(id);
+        }
+        let sp = self.snoc_args(base, xs);
+        let v = self.mk(match head {
+            Val::Const(n, l, _) => Val::Const(n, l, sp),
+            Val::FVar(k, _) => Val::FVar(k, sp),
+            _ => unreachable!(),
+        });
+        self.nutable
+            .insert_unique(spread(h), (v.0, h), |&(_, k)| spread(k));
+        v
     }
 
     /// `sp` followed by the arguments `xs`.

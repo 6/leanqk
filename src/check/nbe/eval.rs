@@ -182,14 +182,7 @@ impl Nbe<'_> {
                 let env2 = self.a.cons(env, a);
                 self.eval(body, env2, ls)
             }
-            Val::Const(n, l, sp) => {
-                let sp = self.a.snoc(sp, Elim::Arg(a));
-                self.a.mk(Val::Const(n, l, sp))
-            }
-            Val::FVar(k, sp) => {
-                let sp = self.a.snoc(sp, Elim::Arg(a));
-                self.a.mk(Val::FVar(k, sp))
-            }
+            h @ (Val::Const(..) | Val::FVar(..)) => self.a.neutral(h, &[a]),
             _ => {
                 let sp = self.a.snoc(Sp::NIL, Elim::Arg(a));
                 self.bottom(sp)
@@ -225,13 +218,8 @@ impl Nbe<'_> {
                     }
                     f = self.eval(body, env, ls);
                 }
-                Val::Const(n, l, sp) => {
-                    let sp = self.a.snoc_args(sp, &self.vargs[i..end]);
-                    return self.a.mk(Val::Const(n, l, sp));
-                }
-                Val::FVar(k, sp) => {
-                    let sp = self.a.snoc_args(sp, &self.vargs[i..end]);
-                    return self.a.mk(Val::FVar(k, sp));
+                h @ (Val::Const(..) | Val::FVar(..)) => {
+                    return self.a.neutral(h, &self.vargs[i..end]);
                 }
                 _ => {
                     let sp = self.a.snoc_args(Sp::NIL, &self.vargs[i..end]);
