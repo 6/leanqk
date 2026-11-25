@@ -248,14 +248,19 @@ fn tag_of(h: u64) -> u64 {
 impl IdTable {
     /// A table with room for about `n` ids before it must grow.
     pub fn with_capacity(n: usize) -> Self {
-        // Any number of lines works (a probe maps the hash onto them by a
-        // multiplication), so the table is no bigger than it must be.
-        let lines = (n.div_ceil(LINE) * 4 / 3 + 1).min(u32::MAX as usize);
+        let lines = Self::lines_for(n);
         IdTable {
             slots: (0..lines * LINE).map(|_| AtomicU64::new(0)).collect(),
             lines,
             len: AtomicUsize::new(0),
         }
+    }
+
+    /// The lines of a table for `n` ids. Any number of lines works (a
+    /// probe maps the hash onto them by a multiplication), so the table is
+    /// no bigger than it must be.
+    fn lines_for(n: usize) -> usize {
+        (n.div_ceil(LINE) * 4 / 3 + 1).min(u32::MAX as usize)
     }
 
     #[inline]
@@ -511,16 +516,14 @@ impl<T: Node> Big<T> {
 
     /// Index every node anew, on `threads` threads. If two nodes are
     /// equal, the first such pair found (the later id, the earlier one).
-    /// On one thread, `scratch` is used as working space (its contents
-    /// are overwritten).
-    pub fn index(&mut self, threads: usize, scratch: &mut Vec<u32>) -> Result<(), (u32, u32)>
+    pub fn index(&mut self, threads: usize) -> Result<(), (u32, u32)>
     where
         T: Sync,
     {
         let n = self.nodes.len();
         let threads = threads.clamp(1, n.div_ceil(1 << 16).max(1));
         if threads == 1 {
-            return self.index_here(scratch);
+            return self.index_here();
         }
         let table = IdTable::with_capacity(n);
         let nodes = &self.nodes;
@@ -578,9 +581,9 @@ impl<T: Node> Big<T> {
     }
 
     /// [`Big::index`] on this thread.
-    fn index_here(&mut self, scratch: &mut Vec<u32>) -> Result<(), (u32, u32)> {
+    fn index_here(&mut self) -> Result<(), (u32, u32)> {
         let n = self.nodes.len();
-        let mut table = IdTable::with_capacity(n);
+        let lines = IdTable::lines_for(n);
         let nodes = &self.nodes;
         // A table line is picked by the low half of the hash (scaled), so
         // in the order of that half, the ids fill the table from start to
@@ -594,27 +597,31 @@ impl<T: Node> Big<T> {
         // The rest, sorted on in two passes.
         const DIGIT: u32 = 11;
         const _: () = assert!(BITS + 2 * DIGIT == 32);
+        // The buckets are kept in groups, each freed once its buckets are
+        // in the table, and the table's slots are only written (zeroed)
+        // as the buckets reach them: the two are not all in memory at
+        // once.
+        const GROUPS: usize = 8;
+        const PER: usize = BUCKETS / GROUPS;
         let cap = n / BUCKETS + n / BUCKETS / 8 + 64;
-        let mut fill = vec![0usize; BUCKETS];
-        // The buckets' entries: hash (low and high halves) and id.
-        if scratch.len() < 3 * BUCKETS * cap {
-            // A fresh zeroed buffer comes from the system zeroed, where
-            // growing one would write it.
-            *scratch = Vec::new();
-            *scratch = vec![0; 3 * BUCKETS * cap];
-        }
-        let ents = &mut scratch.as_chunks_mut::<3>().0[..BUCKETS * cap];
+        let mut fill = [0usize; BUCKETS];
+        // The buckets' entries: hash (low and high halves) and id, in
+        // little-endian bytes. Each group is a map of its own, so that it
+        // goes back to the system when dropped (the allocator may keep a
+        // freed block a while).
+        let mut groups: [Group; GROUPS] = std::array::from_fn(|_| Group::new(PER * cap));
         // Entries of a bucket that is full (and, below, those that would
         // go past the end of the table), inserted last.
         let mut spill = Vec::new();
         let mut id = 0u32;
+        let ents = groups.each_mut().map(|g| g.ents());
         for chunk in &nodes.chunks {
             for node in chunk {
                 let h = node.hash();
                 let b = (h as u32 >> (32 - BITS)) as usize;
                 let k = fill[b];
                 if k < cap {
-                    ents[b * cap + k] = [h as u32, (h >> 32) as u32, id];
+                    ents[b / PER][(b % PER) * cap + k] = entry(h, id);
                     fill[b] = k + 1;
                 } else {
                     spill.push((h, id));
@@ -627,17 +634,30 @@ impl<T: Node> Big<T> {
         // cleared.
         let mut tmp: Vec<[u32; 3]> = vec![[0; 3]; cap];
         let mut sorted: Vec<[u32; 3]> = vec![[0; 3]; cap];
-        let slots = &mut table.slots;
-        let lines = table.lines as u64;
+        let total = lines * LINE;
+        let mut slots: Vec<AtomicU64> = Vec::with_capacity(total);
+        let lines = lines as u64;
         // The slot after the last one filled.
         let mut next = 0usize;
         let mut added = 0usize;
         for (b, &k) in fill.iter().enumerate() {
-            let bucket = &ents[b * cap..b * cap + k];
+            if b % PER == 0 && b > 0 {
+                groups[b / PER - 1] = Group::new(0);
+            }
+            let group = groups[b / PER].ents();
+            let bucket = &group[(b % PER) * cap..(b % PER) * cap + k];
+            // The slots this bucket can reach: from its last line on, `k`
+            // at most.
+            let end = ((((b as u64 + 1) << (32 - BITS)) * lines) >> 32) as usize + 1;
+            let reach = (next.max(end * LINE) + k).min(total);
+            if slots.len() < reach {
+                slots.resize_with(reach, || AtomicU64::new(0));
+            }
             let mut count = [[0u32; 1 << DIGIT]; 2];
             for e in bucket {
-                count[0][digit(e[0], 0)] += 1;
-                count[1][digit(e[0], 1)] += 1;
+                let l = low(e);
+                count[0][digit(l, 0)] += 1;
+                count[1][digit(l, 1)] += 1;
             }
             for c in &mut count {
                 let mut sum = 0;
@@ -647,8 +667,9 @@ impl<T: Node> Big<T> {
             }
             let tmp = &mut tmp[..k];
             for e in bucket {
+                let e = [low(e), u32_at(e, 4), u32_at(e, 8)];
                 let c = &mut count[0][digit(e[0], 0)];
-                tmp[*c as usize] = *e;
+                tmp[*c as usize] = e;
                 *c += 1;
             }
             let sorted = &mut sorted[..k];
@@ -684,6 +705,13 @@ impl<T: Node> Big<T> {
             }
             added += k - (spill.len() - spilled);
         }
+        drop(groups);
+        slots.resize_with(total, || AtomicU64::new(0));
+        let mut table = IdTable {
+            slots: slots.into_boxed_slice(),
+            lines: lines as usize,
+            len: AtomicUsize::new(0),
+        };
         table.add_len(added);
         for (h, id) in spill {
             let same = |o| nodes.get(o).same(nodes.get(id));
@@ -726,6 +754,50 @@ fn equal_before<T: Node>(nodes: &Chunked<T>, sorted: &[[u32; 3]], i: usize) -> O
     None
 }
 
+/// A group of buckets of [`Big::index`]: entries of 12 bytes.
+struct Group(Option<memmap2::MmapMut>);
+
+impl Group {
+    fn new(entries: usize) -> Group {
+        if entries == 0 {
+            return Group(None);
+        }
+        let m = memmap2::MmapMut::map_anon(12 * entries)
+            .unwrap_or_else(|e| panic!("cannot map {} bytes: {e}", 12 * entries));
+        // Fewer page faults (where the system has huge pages).
+        #[cfg(target_os = "linux")]
+        let _ = m.advise(memmap2::Advice::HugePage);
+        Group(Some(m))
+    }
+
+    fn ents(&mut self) -> &mut [[u8; 12]] {
+        match &mut self.0 {
+            Some(m) => m.as_chunks_mut::<12>().0,
+            None => &mut [],
+        }
+    }
+}
+
+/// An entry of a [`Group`]: the hash's low and high halves, and the id.
+#[inline(always)]
+fn entry(h: u64, id: u32) -> [u8; 12] {
+    let mut e = [0; 12];
+    e[..8].copy_from_slice(&h.to_le_bytes());
+    e[8..].copy_from_slice(&id.to_le_bytes());
+    e
+}
+
+#[inline(always)]
+fn u32_at(e: &[u8; 12], i: usize) -> u32 {
+    u32::from_le_bytes(e[i..i + 4].try_into().expect("4 bytes"))
+}
+
+/// The low half of an entry's hash.
+#[inline(always)]
+fn low(e: &[u8; 12]) -> u32 {
+    u32_at(e, 0)
+}
+
 /// Shards of the loader's locked tables (strings, level lists, big
 /// literals).
 pub const SHARDS: usize = 64;
@@ -755,7 +827,7 @@ mod tests {
     fn index_finds_all_and_duplicates() {
         for threads in [1, 3] {
             let mut b = names(300_000);
-            b.index(threads, &mut Vec::new()).expect("no duplicates");
+            b.index(threads).expect("no duplicates");
             for i in (0..300_000).step_by(7) {
                 assert_eq!(b.find(&NameNode::Num(NameId(0), i)), Some(i as u32));
             }
@@ -764,7 +836,7 @@ mod tests {
             let mut b = names(300_000);
             b.push_unindexed(NameNode::Num(NameId(0), 12_345))
                 .expect("room");
-            assert_eq!(b.index(threads, &mut vec![7; 10]), Err((300_000, 12_345)));
+            assert_eq!(b.index(threads), Err((300_000, 12_345)));
         }
     }
 }

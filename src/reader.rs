@@ -620,10 +620,8 @@ fn finish(
     let id_map_bytes =
         st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
     // The id maps are done with: free them before the lazy values are
-    // put together. The dense table of expression ids is working space
-    // for the index.
-    let mut scratch = std::mem::replace(&mut st.expr_ids, IdMap::new(0)).into_buffer();
-    for m in [&mut st.name_ids, &mut st.level_ids] {
+    // put together.
+    for m in [&mut st.name_ids, &mut st.level_ids, &mut st.expr_ids] {
         *m = IdMap::new(0);
     }
     if let Some(b) = st.lazy.take() {
@@ -635,14 +633,9 @@ fn finish(
     let mut dup = None;
     if let Some(threads) = st.index_threads {
         let t = std::time::Instant::now();
-        dup = match st.env.names.index(threads, &mut scratch) {
+        dup = match st.env.names.index(threads) {
             Err((a, b)) => Some((a.0, b.0)),
-            Ok(()) => st
-                .env
-                .exprs
-                .index(threads, &mut scratch)
-                .err()
-                .map(|(a, b)| (a.0, b.0)),
+            Ok(()) => st.env.exprs.index(threads).err().map(|(a, b)| (a.0, b.0)),
         };
         INDEX_NS.store(
             t.elapsed().as_nanos() as u64,
