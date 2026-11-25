@@ -28,6 +28,7 @@ use num_bigint::BigUint;
 
 use crate::env::{Decl, DeclKind};
 use crate::expr::{BinderInfo, ExprId, ExprNode};
+use crate::hash::hash2;
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
@@ -60,6 +61,13 @@ const NAMES_KEEP: usize = 1 << 18;
 
 /// Values an arena may hold before it is dropped between declarations.
 const KEEP_VALUES: usize = 1 << 16;
+
+/// Whether closures and thunks hold holes at the entries their terms do
+/// not read (`prune`).
+const PRUNE: bool = true;
+
+/// Slots of `Nbe::prunes`.
+const PRUNES: usize = 1 << 12;
 
 /// Closed terms remembered as checked (`checked_closed`) before they are
 /// forgotten.
@@ -124,6 +132,9 @@ pub struct Nbe<'e> {
     names: IdMap<V, ExprId>,
     /// Definitional equality of terms named so.
     name_eq: IdMap<(ExprId, ExprId), bool>,
+    /// `prune` by environment and holes (direct-mapped): (environment,
+    /// holes, pruned environment).
+    prunes: Vec<[u32; 3]>,
     /// Terms added to `st` for names: they do not count towards its size
     /// for keeping it between declarations.
     name_exprs: usize,
@@ -253,6 +264,7 @@ impl<'e> Nbe<'e> {
             ev_used: false,
             names: IdMap::default(),
             name_eq: IdMap::default(),
+            prunes: vec![[val::NONE; 3]; PRUNES],
             name_exprs: 0,
             checked_closed: IdMap::default(),
             lparams_key: None,
@@ -374,6 +386,7 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.canon_fvar);
         shrink(&mut self.level_checked);
         self.a.clear();
+        self.prunes.fill([val::NONE; 3]);
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;
@@ -615,6 +628,58 @@ impl<'e> Nbe<'e> {
             return env;
         }
         self.trim_long(env, n)
+    }
+
+    /// `env`, trimmed for a term with data `d`, with a hole at each entry
+    /// the term does not read, so that values agreeing on what they read
+    /// are one value.
+    #[inline]
+    pub fn prune(&mut self, env: val::Env, d: crate::expr::ExprData) -> val::Env {
+        if !PRUNE {
+            return env;
+        }
+        let n = self.a.env_len(env).min(32);
+        let holes = d.unused_low() & ((1u64 << n) - 1) as u32;
+        if holes == 0 {
+            return env;
+        }
+        self.prune_holes(env, holes)
+    }
+
+    /// `prune` with holes at the entries `holes` sets.
+    #[inline(never)]
+    fn prune_holes(&mut self, env: val::Env, holes: u32) -> val::Env {
+        let i = (hash2(env.0 as u64, holes as u64) >> 52) as usize & (PRUNES - 1);
+        let s = self.prunes[i];
+        if s[0] == env.0 && s[1] == holes {
+            return val::Env(s[2]);
+        }
+        let hole = self.hole();
+        let k = 32 - holes.leading_zeros();
+        let base = self.vargs.len();
+        let mut cur = env;
+        let mut same = true;
+        for j in 0..k {
+            let v = self.a.env_head(cur);
+            same &= holes >> j & 1 == 0 || v == hole;
+            self.vargs.push(v);
+            cur = self.a.env_tail(cur);
+        }
+        let mut r = env;
+        if !same {
+            r = cur;
+            for j in (0..k as usize).rev() {
+                let v = if holes >> j & 1 != 0 {
+                    hole
+                } else {
+                    self.vargs[base + j]
+                };
+                r = self.a.cons(r, v);
+            }
+        }
+        self.vargs.truncate(base);
+        self.prunes[i] = [env.0, holes, r.0];
+        r
     }
 
     /// `trim` of an environment longer than `n`.

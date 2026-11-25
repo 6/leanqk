@@ -216,6 +216,13 @@ impl ExprData {
             && (i >= Self::USED_LOW || self.0 & 1 << (Self::USED_SHIFT + i) != 0)
     }
 
+    /// Bit `i` is set if `#i`, below the range and below `USED_LOW`, does
+    /// not occur loose.
+    pub fn unused_low(self) -> u32 {
+        let n = self.loose_bvar_range().min(Self::USED_LOW);
+        !(self.0 >> Self::USED_SHIFT) & ((1 << n) - 1)
+    }
+
     pub(crate) fn union(self, other: ExprData) -> ExprData {
         let r = self.loose_bvar_range().max(other.loose_bvar_range());
         ExprData((self.0 | other.0) & !Self::MAX_RANGE | r)
