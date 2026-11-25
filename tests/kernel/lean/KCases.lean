@@ -179,6 +179,17 @@ def ev_arr_fns : Array (Nat → Nat) := #[(· + 1), (· * 2)] |>.push (· + 10)
 theorem ev_arr_fn : ev_arr_fns[2]! 5 + ev_arr_fns[1]! 4 = 23 := sorry
 theorem ev_arr_fn_wrong : ev_arr_fns[2]! 5 + ev_arr_fns[1]! 4 = 24 := sorry
 
+-- `List` operations with fast paths.
+theorem ev_lists :
+    ((List.range 50).any (· == 49), (List.range 50).all (· < 49),
+      ((List.range 50).filter (· % 7 == 0)).getLast?,
+      (List.range 50).foldl (· + ·) 0, (List.range 5).reverse,
+      (List.range 9).elem 8, ((List.range 30).map (· % 4)).eraseDups) =
+    (true, false, some 49, 1225, [4, 3, 2, 1, 0], true, [0, 1, 2, 3]) := sorry
+theorem ev_lists_wrong : (List.range 50).foldl (· + ·) 0 = 1224 := sorry
+theorem ev_filter_lazy : ((List.range 10).filter (fun i => i == 0 || 10 / i > 2)).head? = some 0 := sorry
+theorem ev_filter_lazy_wrong : ((List.range 10).filter (fun i => i == 0 || 10 / i > 2)).head? = some 1 := sorry
+
 -- Erased proofs that are needed after all: a cast over a theorem applied to
 -- a variable (a `K`-like major premise), `And.rec` on a constructed proof,
 -- and an answer holding a proof.

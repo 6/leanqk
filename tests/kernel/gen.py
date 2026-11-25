@@ -3,7 +3,10 @@
 
 Each case starts from a valid export written by Lean's `leanexport` (Lean is
 pinned in ./lean-toolchain) and applies one targeted mutation, or builds a
-small export from scratch.  Cases are defined in cases.py.
+small export from scratch.  Cases are defined in cases.py.  A few are
+exported from Lean v4.34.0 instead (lean/KCases434.lean, with the
+lean4export commit pinned below, fetched and built on first use); all are
+checked with the pinned toolchain's leanchecker.
 
   mise exec -- python -I gen.py              # write out/cases/*.ndjson
   mise exec -- python -I gen.py --lean       # also run `leanchecker --from-export`
@@ -31,6 +34,10 @@ COMMITTED = os.path.join(HERE, "exports")
 TSV = os.path.join(HERE, "cases.tsv")
 SMALL = 16 * 1024  # exports up to this size are committed
 LEAN_TIMEOUT = 600
+# Lean v4.34.0 and the lean4export commit for it ("bump toolchain to v4.34.0").
+OLD_TOOLCHAIN = "leanprover/lean4:v4.34.0"
+OLD_EXPORTER = ("https://github.com/leanprover/lean4export",
+                "076e8e57707e813375e8f9da8bf989799ace9680")
 
 
 def lean_bin():
@@ -40,28 +47,56 @@ def lean_bin():
 
 
 class Toolchain:
-    def __init__(self):
-        self.bin = lean_bin()
+    def __init__(self, bin=None, build=BUILD, module="KCases", exporter=None):
+        self.bin = bin or lean_bin()
+        self.dir, self.module = build, module
+        self.exporter = exporter or os.path.join(self.bin, "leanexport")
         self.env = dict(os.environ)
         self.env["LEAN_PATH"] = os.pathsep.join(
-            [os.path.join(self.bin, "..", "lib", "lean"), BUILD])
+            [os.path.join(self.bin, "..", "lib", "lean"), build])
         self.cache = {}
+        self.old_tc = None
 
     def build(self):
-        os.makedirs(BUILD, exist_ok=True)
-        src = os.path.join(HERE, "lean", "KCases.lean")
-        olean = os.path.join(BUILD, "KCases.olean")
+        os.makedirs(self.dir, exist_ok=True)
+        src = os.path.join(HERE, "lean", self.module + ".lean")
+        olean = os.path.join(self.dir, self.module + ".olean")
         if not os.path.exists(olean) or os.path.getmtime(olean) < os.path.getmtime(src):
             subprocess.run([os.path.join(self.bin, "lean"), "-o", olean, src],
                            check=True, env=self.env, stdout=subprocess.DEVNULL)
 
+    def old(self):
+        """The Lean v4.34.0 toolchain, for the cases of lean/KCases434.lean."""
+        if self.old_tc is None:
+            subprocess.run(["elan", "toolchain", "install", OLD_TOOLCHAIN], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            lean = subprocess.run(["elan", "run", OLD_TOOLCHAIN, "lean", "--print-prefix"],
+                                  check=True, capture_output=True, text=True).stdout.strip()
+            url, commit = OLD_EXPORTER
+            src = os.path.join(OUT, "lean4export-" + commit[:12])
+            exe = os.path.join(src, ".lake", "build", "bin", "lean4export")
+            if not os.path.exists(exe):
+                shutil.rmtree(src, ignore_errors=True)
+                os.makedirs(src)
+                git = ["git", "-C", src]
+                subprocess.run(git + ["init", "-q"], check=True)
+                subprocess.run(git + ["fetch", "-q", "--depth", "1", url, commit], check=True)
+                subprocess.run(git + ["-c", "advice.detachedHead=false", "checkout", "-q",
+                                      "FETCH_HEAD"], check=True)
+                subprocess.run(["elan", "run", OLD_TOOLCHAIN, "lake", "build"], cwd=src,
+                               check=True, stdout=subprocess.DEVNULL)
+            self.old_tc = Toolchain(os.path.join(lean, "bin"), BUILD + "-v4.34.0",
+                                    "KCases434", exe)
+            self.old_tc.build()
+        return self.old_tc
+
     def export(self, consts, unsafe=False):
         key = (tuple(consts), unsafe)
         if key not in self.cache:
-            cmd = [os.path.join(self.bin, "leanexport")]
+            cmd = [self.exporter]
             if unsafe:
                 cmd.append("--export-unsafe")
-            cmd += ["KCases", "--"] + list(consts)
+            cmd += [self.module, "--"] + list(consts)
             self.cache[key] = subprocess.run(cmd, check=True, env=self.env,
                                              capture_output=True, text=True).stdout
         return Export(self.cache[key])

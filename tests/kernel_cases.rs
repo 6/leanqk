@@ -55,3 +55,29 @@ fn run_cases(sub: &str) -> (usize, Vec<String>) {
     }
     (ran, wrong)
 }
+
+/// The failure reported does not depend on the number of checker threads:
+/// it is the first failing block in export order.
+#[test]
+fn failures_do_not_depend_on_threads() {
+    use nitrolean::check::check_env_jobs;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/kernel/exports");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        let Ok((env, _)) = read_file(&path) else {
+            continue;
+        };
+        let one = check_env_jobs(&env, 1).map_err(|f| (f.kind, f.decl, f.msg));
+        for jobs in [2, 8] {
+            let many = check_env_jobs(&env, jobs).map_err(|f| (f.kind, f.decl, f.msg));
+            match (&one, &many) {
+                (Ok(_), Ok(_)) => {}
+                (Err(a), Err(b)) => assert_eq!(a, b, "{}: {jobs} threads", path.display()),
+                _ => panic!("{}: verdict differs with {jobs} threads", path.display()),
+            }
+        }
+        seen += 1;
+    }
+    assert!(seen >= 50, "only {seen} cases read");
+}

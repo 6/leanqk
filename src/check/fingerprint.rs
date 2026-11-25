@@ -321,8 +321,9 @@ impl<'e> Checker<'e> {
     }
 
     /// Ok if `n` and everything it depends on match the table, all for the
-    /// same Lean version.
-    pub fn matches(&self, n: NameId) -> Result<(), String> {
+    /// same Lean version: the versions they all match, as a mask over
+    /// `VERSIONS`.
+    pub fn matches(&self, n: NameId) -> Result<u32, String> {
         let mut stack = vec![n];
         let mut seen = IdMap::<NameId, ()>::default();
         let mut deps = Vec::new();
@@ -354,7 +355,7 @@ impl<'e> Checker<'e> {
             self.deps(d, &mut deps);
             stack.extend_from_slice(&deps);
         }
-        Ok(())
+        Ok(common)
     }
 
     /// The versions whose table has `m` as it is declared here.
@@ -391,6 +392,15 @@ impl<'e> Checker<'e> {
             (true, m) => Ok(m),
         }
     }
+}
+
+/// The mask over `VERSIONS` of the versions named in `vs`.
+pub fn version_mask(vs: &[&str]) -> u32 {
+    VERSIONS
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| vs.contains(v))
+        .fold(0, |m, (i, _)| m | 1 << i)
 }
 
 fn versions(mask: u32) -> String {

@@ -30,7 +30,7 @@ use crate::expr::{ExprId, ExprNode};
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
-use super::ext::{ArrayOp, NatOp};
+use super::ext::{ArrayOp, DecEqOp, ListOp, NatOp};
 use super::store::IdMap;
 use super::tc::Tc;
 
@@ -90,6 +90,14 @@ enum CInfo {
     /// An `Array` operation run on vectors; its definition, for arrays
     /// that are not values yet.
     Arr(ArrayOp, ExprId),
+    /// A `List` operation run as a loop; its definition, for lists that
+    /// are not values.
+    List(ListOp, ExprId),
+    /// A `DecidableEq` instance decided on values; its definition, for
+    /// values it does not compare.
+    DecEq(DecEqOp, ExprId),
+    /// `instBEqProd`; its definition.
+    BEqProd(ExprId),
     /// An inductive type, axiom, opaque constant, `Quot` or `Quot.mk`:
     /// it does not reduce.
     Neutral,
@@ -103,6 +111,9 @@ static HITS: AtomicU64 = AtomicU64::new(0);
 static STEPS: AtomicU64 = AtomicU64::new(0);
 static BAILS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
 static NANOS: AtomicU64 = AtomicU64::new(0);
+/// Fast paths taken: `List` operations, `DecidableEq` decisions, `==` on
+/// pairs.
+static FAST: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
 
 /// Giving up on a stuck term; `NITROLEAN_EVAL_DEBUG=1` says where.
 #[cold]
@@ -124,7 +135,7 @@ pub fn enabled() -> bool {
 pub fn stats() -> String {
     let b = |i: usize| BAILS[i].load(Relaxed);
     format!(
-        "evaluator: {} calls, {} answered, {} steps, {:.3} s; gave up: {} stuck, {} deep, {} limit, {} loop; {} evaluated again keeping proofs",
+        "evaluator: {} calls, {} answered, {} steps, {:.3} s; gave up: {} stuck, {} deep, {} limit, {} loop; {} evaluated again keeping proofs; fast: {} list, {} decidable-eq, {} pair ==",
         CALLS.load(Relaxed),
         HITS.load(Relaxed),
         STEPS.load(Relaxed),
@@ -133,7 +144,10 @@ pub fn stats() -> String {
         b(1),
         b(2),
         b(3),
-        b(4)
+        b(4),
+        FAST[0].load(Relaxed),
+        FAST[1].load(Relaxed),
+        FAST[2].load(Relaxed)
     )
 }
 
@@ -155,8 +169,15 @@ pub struct State {
     proof_heads: IdMap<ExprId, bool>,
     /// `of_decide_eq_true` and `of_decide_eq_false`, once looked up.
     decide_lemmas: [Option<Option<ExprId>>; 2],
-    /// Whether proofs keep their environment (see `thunk`).
+    /// Whether proofs keep their environment (see `thunk`). The
+    /// `DecidableEq` operations are off then: they erase proofs.
     keep_proofs: bool,
+    /// Per `DecidableEq` operation (with its levels): the proposition
+    /// `x = y` of its result type, over its arguments as `#(n-1) … #0`.
+    dec_props: IdMap<ExprId, Option<ExprId>>,
+    /// Per definition of `instBEqProd` (with its levels): `fun α β bα bβ
+    /// => f`, where the definition is `fun α β bα bβ => BEq.mk T f`.
+    beq_fields: IdMap<ExprId, Option<ExprId>>,
     /// `NITROLEAN_EVAL_PROFILE=1`: how often each constant was reached.
     profile: Option<IdMap<ExprId, u64>>,
 }
@@ -232,7 +253,14 @@ impl<'a, 'e> Machine<'a, 'e> {
         // A partial application of a built-in `Nat` operation is not in
         // weak head normal form (`whnf` would unfold it).
         if let Val::Pap {
-            kind: Head::Op(..) | Head::Succ | Head::Arr(..),
+            kind:
+                Head::Op(..)
+                | Head::Succ
+                | Head::Arr(..)
+                | Head::List(..)
+                | Head::DecEq(..)
+                | Head::BEqProd(..)
+                | Head::BEqProdFn,
             ..
         } = &*v
         {
@@ -633,6 +661,15 @@ impl<'a, 'e> Machine<'a, 'e> {
                 if let Some(&op) = ext.array_ops.get(&n) {
                     return CInfo::Arr(op, v);
                 }
+                if let Some(&op) = ext.list_ops.get(&n) {
+                    return CInfo::List(op, v);
+                }
+                if let Some(&op) = ext.dec_eq_ops.get(&n) {
+                    return CInfo::DecEq(op, v);
+                }
+                if Some(n) == ext.beq_prod {
+                    return CInfo::BEqProd(v);
+                }
                 CInfo::Unfold(v)
             }
             DeclKind::Constructor {
@@ -731,6 +768,9 @@ impl<'a, 'e> Machine<'a, 'e> {
             CInfo::QuotLift => self.saturate(c, Head::QuotLift, args),
             CInfo::QuotInd => self.saturate(c, Head::QuotInd, args),
             CInfo::Arr(op, v) => self.saturate(c, Head::Arr(op, v), args),
+            CInfo::List(op, v) => self.saturate(c, Head::List(op, v), args),
+            CInfo::DecEq(op, v) => self.saturate(c, Head::DecEq(op, v), args),
+            CInfo::BEqProd(v) => self.saturate(c, Head::BEqProd(v), args),
             CInfo::Ctor(info) if args.is_empty() => {
                 // One shared value per constructor constant.
                 if let Some(v) = self.s.nullary.get(&c) {
@@ -849,6 +889,10 @@ impl<'a, 'e> Machine<'a, 'e> {
             }
             Head::Rec(r) => self.iota(&r, args),
             Head::Arr(op, def) => self.array_op(c, op, def, args),
+            Head::List(op, def) => self.list_op(c, op, def, args),
+            Head::DecEq(op, def) => self.dec_eq_op(c, op, def, args),
+            Head::BEqProd(def) => self.beq_prod(def, args),
+            Head::BEqProdFn => self.beq_prod_fn(c, args),
             Head::QuotLift | Head::QuotInd => {
                 let (mk_pos, arg_pos) = if matches!(kind, Head::QuotLift) {
                     (5, 3)
@@ -1223,6 +1267,627 @@ impl<'a, 'e> Machine<'a, 'e> {
         }))
     }
 
+    /// `instBEqProd α β bα bβ`: the definition's `BEq.mk T f`, with the
+    /// field `f` held as `BEqProdFn` applied to `α β bα bβ`, whose head is
+    /// the term `fun α β bα bβ => f` (so it stands for `f`, by beta).
+    fn beq_prod(&mut self, def: ExprId, mut args: Vec<Th>) -> ER<V> {
+        let rest = args.split_off(4);
+        let head = match self.s.beq_fields.get(&def) {
+            Some(&h) => h,
+            None => {
+                let h = self.beq_field(def);
+                self.s.beq_fields.insert(def, h);
+                h
+            }
+        };
+        let v = self.unfold_def(def, args.clone())?;
+        let v = match (&*v, head) {
+            (Val::Ctor { c, info, args: a }, Some(head)) if a.len() == 2 => {
+                let f = Rc::new(Val::Pap {
+                    head,
+                    kind: Head::BEqProdFn,
+                    args,
+                });
+                Rc::new(Val::Ctor {
+                    c: *c,
+                    info: info.clone(),
+                    args: vec![a[0].clone(), Thunk::done(f)],
+                })
+            }
+            _ => v,
+        };
+        self.apply_rest(v, rest)
+    }
+
+    /// `fun α β bα bβ => f` for the definition `fun α β bα bβ => BEq.mk T f`.
+    fn beq_field(&mut self, def: ExprId) -> Option<ExprId> {
+        let beq = self.tc.ext.fast?.beq?;
+        let mut binders = Vec::new();
+        let mut e = def;
+        for _ in 0..4 {
+            let ExprNode::Lam(bi, n, t, b) = self.tc.st.node(e) else {
+                return None;
+            };
+            binders.push((bi, n, t));
+            e = b;
+        }
+        let ExprNode::App(mk_t, f) = self.tc.st.node(e) else {
+            return None;
+        };
+        let ExprNode::App(mk, _) = self.tc.st.node(mk_t) else {
+            return None;
+        };
+        let ExprNode::Const(m, _) = self.tc.st.node(mk) else {
+            return None;
+        };
+        match self.tc.find(m).map(|d| d.kind) {
+            Some(DeclKind::Constructor { induct, .. }) if induct == beq => {}
+            _ => return None,
+        }
+        let mut r = f;
+        for &(bi, n, t) in binders.iter().rev() {
+            r = self.tc.st.lam(bi, n, t, r);
+        }
+        Some(r)
+    }
+
+    /// `(a₁, b₁) == (a₂, b₂)` by `instBEqProd α β bα bβ`: `a₁ == a₂ && b₁ ==
+    /// b₂`, forcing what the definition forces, in its order. `head` is
+    /// the term the field stands for, used where the arguments are not
+    /// pairs or the comparisons not booleans.
+    fn beq_prod_fn(&mut self, head: ExprId, mut args: Vec<Th>) -> ER<V> {
+        let rest = args.split_off(6);
+        let r = match self.beq_prod_fast(&args)? {
+            Some(b) => {
+                FAST[2].fetch_add(1, Relaxed);
+                self.mk_bool(b)?
+            }
+            None => {
+                let t = self.closed(head);
+                let f = self.force(&t)?;
+                self.apply(f, args)?
+            }
+        };
+        self.apply_rest(r, rest)
+    }
+
+    fn beq_prod_fast(&mut self, args: &[Th]) -> ER<Option<bool>> {
+        let Some(f) = self.tc.ext.fast else {
+            return Ok(None);
+        };
+        let (Some(prod), Some(beq)) = (f.prod, f.beq) else {
+            return Ok(None);
+        };
+        let x = self.force(&args[4])?;
+        let Some(xs) = struct_fields(&x, prod) else {
+            return Ok(None);
+        };
+        let y = self.force(&args[5])?;
+        let Some(ys) = struct_fields(&y, prod) else {
+            return Ok(None);
+        };
+        for i in 0..2 {
+            // `BEq.beq bα a₁ a₂`: the instance's field, applied.
+            let inst = self.force(&args[2 + i])?;
+            let field = match &*inst {
+                Val::Ctor { info, args: a, .. } if info.induct == beq && a.len() == 2 => {
+                    a[1].clone()
+                }
+                _ => return Ok(None),
+            };
+            let g = self.force(&field)?;
+            let b = self.apply(g, vec![xs[i].clone(), ys[i].clone()])?;
+            match self.bool_of(&b) {
+                Some(true) => {}
+                Some(false) => return Ok(Some(false)),
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(true))
+    }
+
+    /// The definition `def` of an operation applied to `args`: what the
+    /// operation is when the fast path does not apply.
+    fn unfold_def(&mut self, def: ExprId, args: Vec<Th>) -> ER<V> {
+        let t = self.closed(def);
+        let f = self.force(&t)?;
+        self.apply(f, args)
+    }
+
+    /// The list value `v` as `Some((head, tail))` for a cons, `None` for
+    /// nil; `Err(())` if it is neither (not a constructor of `List`).
+    fn list_cell(&self, v: &V) -> Result<Option<(Th, Th)>, ()> {
+        let Some(f) = self.tc.ext.fast.as_ref() else {
+            return Err(());
+        };
+        match &**v {
+            Val::Ctor { info, args, .. } if info.induct == f.list => match args.len() {
+                3 => Ok(Some((args[1].clone(), args[2].clone()))),
+                1 => Ok(None),
+                _ => Err(()),
+            },
+            _ => Err(()),
+        }
+    }
+
+    /// `Bool.true` or `Bool.false` as a `bool`.
+    fn bool_of(&self, v: &V) -> Option<bool> {
+        let Val::Ctor { c, args, .. } = &**v else {
+            return None;
+        };
+        if !args.is_empty() {
+            return None;
+        }
+        let ExprNode::Const(n, _) = self.tc.st.node(*c) else {
+            return None;
+        };
+        let ext = self.tc.ext;
+        if Some(n) == ext.bool_true {
+            Some(true)
+        } else if Some(n) == ext.bool_false {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    /// A `List` operation applied to (at least) its arguments, as a loop
+    /// over the list. Each step forces what the definition's step forces,
+    /// in the same order. If the list or a test is not a value of the
+    /// expected kind, the operation is its definition (from the original
+    /// arguments: what was forced stays evaluated).
+    fn list_op(&mut self, c: ExprId, op: ListOp, def: ExprId, mut args: Vec<Th>) -> ER<V> {
+        let n = Head::List(op, def).arity();
+        let rest = args.split_off(n);
+        let r = match self.list_fast(c, op, &args)? {
+            Some(v) => {
+                FAST[0].fetch_add(1, Relaxed);
+                v
+            }
+            None => self.unfold_def(def, args)?,
+        };
+        self.apply_rest(r, rest)
+    }
+
+    fn list_fast(&mut self, c: ExprId, op: ListOp, args: &[Th]) -> ER<Option<V>> {
+        match op {
+            ListOp::Any | ListOp::All => {
+                // `any [] p = false`, `any (x :: l) p = p x || any l p`;
+                // `all` with `&&` and `true`.
+                let stop = op == ListOp::Any;
+                let mut l = args[1].clone();
+                loop {
+                    let lv = self.force(&l)?;
+                    let Ok(cell) = self.list_cell(&lv) else {
+                        return Ok(None);
+                    };
+                    let Some((x, t)) = cell else {
+                        return self.mk_bool(!stop).map(Some);
+                    };
+                    let p = self.force(&args[2])?;
+                    let b = self.apply(p, vec![x])?;
+                    match self.bool_of(&b) {
+                        Some(b) if b == stop => return self.mk_bool(b).map(Some),
+                        Some(_) => l = t,
+                        None => return Ok(None),
+                    }
+                }
+            }
+            ListOp::Filter => {
+                // `filter p [] = []`, `filter p (x :: l) = match p x with
+                // | true => x :: filter p l | false => filter p l`: up to
+                // the first element kept, whose tail is `filter p l`, lazy.
+                let mut l = args[2].clone();
+                loop {
+                    let lv = self.force(&l)?;
+                    let Ok(cell) = self.list_cell(&lv) else {
+                        return Ok(None);
+                    };
+                    let Some((x, t)) = cell else {
+                        return Ok(Some(lv));
+                    };
+                    let p = self.force(&args[1])?;
+                    let b = self.apply(p, vec![x.clone()])?;
+                    match self.bool_of(&b) {
+                        Some(true) => {
+                            let tail = self.op_app_thunk(c, &[args[0].clone(), args[1].clone(), t]);
+                            return self.list_cons(c, &args[0], x, tail).map(Some);
+                        }
+                        Some(false) => l = t,
+                        None => return Ok(None),
+                    }
+                }
+            }
+            ListOp::ReverseAux => {
+                // `reverseAux [] r = r`, `reverseAux (x :: l) r =
+                // reverseAux l (x :: r)`.
+                let mut l = args[1].clone();
+                let mut r = args[2].clone();
+                loop {
+                    let lv = self.force(&l)?;
+                    let Ok(cell) = self.list_cell(&lv) else {
+                        return Ok(None);
+                    };
+                    let Some((x, t)) = cell else {
+                        return self.force(&r).map(Some);
+                    };
+                    r = Thunk::done(self.list_cons(c, &args[0], x, r)?);
+                    l = t;
+                }
+            }
+            ListOp::Foldl => {
+                // `foldl f a [] = a`, `foldl f a (x :: l) = foldl f (f a x) l`,
+                // with `f a x` a thunk, as in the definition.
+                let f = args[2].clone();
+                let mut a = args[3].clone();
+                let mut l = args[4].clone();
+                let body = self.apply2_body();
+                loop {
+                    let lv = self.force(&l)?;
+                    let Ok(cell) = self.list_cell(&lv) else {
+                        return Ok(None);
+                    };
+                    let Some((x, t)) = cell else {
+                        return self.force(&a).map(Some);
+                    };
+                    a = Thunk::delayed(body, Env::EMPTY.push_all(vec![f.clone(), a, x]));
+                    l = t;
+                }
+            }
+            ListOp::Elem => {
+                // `elem a [] = false`, `elem a (x :: l) = match a == x with
+                // | true => true | false => elem a l`.
+                let mut l = args[3].clone();
+                loop {
+                    let lv = self.force(&l)?;
+                    let Ok(cell) = self.list_cell(&lv) else {
+                        return Ok(None);
+                    };
+                    let Some((x, t)) = cell else {
+                        return self.mk_bool(false).map(Some);
+                    };
+                    match self.beq_with(&args[1], &args[2], &x)? {
+                        Some(true) => return self.mk_bool(true).map(Some),
+                        Some(false) => l = t,
+                        None => return Ok(None),
+                    }
+                }
+            }
+            ListOp::EraseDupsLoop => {
+                // `loop r [] bs = bs.reverse`, `loop r (a :: l) bs = match
+                // bs.any (r a) with | true => loop r l bs | false => loop
+                // r l (a :: bs)`.
+                let mut l = args[2].clone();
+                let mut kept: Vec<Th> = Vec::new();
+                let acc = args[3].clone();
+                // `bs` is the kept elements, last first, on top of `acc`;
+                // `any` runs over `bs`.
+                loop {
+                    let lv = self.force(&l)?;
+                    let Ok(cell) = self.list_cell(&lv) else {
+                        return Ok(None);
+                    };
+                    let Some((a, t)) = cell else {
+                        break;
+                    };
+                    let mut found = false;
+                    for y in kept.iter().rev() {
+                        let r = self.force(&args[1])?;
+                        let b = self.apply(r, vec![a.clone(), y.clone()])?;
+                        match self.bool_of(&b) {
+                            Some(true) => {
+                                found = true;
+                                break;
+                            }
+                            Some(false) => {}
+                            None => return Ok(None),
+                        }
+                    }
+                    if !found {
+                        let mut m = acc.clone();
+                        loop {
+                            let mv = self.force(&m)?;
+                            let Ok(cell) = self.list_cell(&mv) else {
+                                return Ok(None);
+                            };
+                            let Some((y, t)) = cell else {
+                                break;
+                            };
+                            let r = self.force(&args[1])?;
+                            let b = self.apply(r, vec![a.clone(), y])?;
+                            match self.bool_of(&b) {
+                                Some(true) => {
+                                    found = true;
+                                    break;
+                                }
+                                Some(false) => m = t,
+                                None => return Ok(None),
+                            }
+                        }
+                    }
+                    if !found {
+                        kept.push(a);
+                    }
+                    l = t;
+                }
+                // `(kept reversed ++ acc).reverse`: `acc` reversed, then
+                // `kept` in order.
+                let mut accs = Vec::new();
+                let mut m = acc;
+                loop {
+                    let mv = self.force(&m)?;
+                    let Ok(cell) = self.list_cell(&mv) else {
+                        return Ok(None);
+                    };
+                    let Some((y, t)) = cell else {
+                        break;
+                    };
+                    accs.push(y);
+                    m = t;
+                }
+                let mut r = Thunk::done(self.list_nil(c, &args[0])?);
+                for x in kept.into_iter().rev().chain(accs) {
+                    r = Thunk::done(self.list_cons(c, &args[0], x, r)?);
+                }
+                self.force(&r).map(Some)
+            }
+            ListOp::GetLast => {
+                // `getLast [x] h = x`, `getLast (x :: y :: l) h = getLast (y :: l) _`.
+                let mut l = args[1].clone();
+                let lv = self.force(&l)?;
+                let Ok(Some((mut x, _))) = self.list_cell(&lv) else {
+                    return Ok(None);
+                };
+                loop {
+                    let lv = self.force(&l)?;
+                    let Ok(Some((_, t))) = self.list_cell(&lv) else {
+                        return Ok(None);
+                    };
+                    let tv = self.force(&t)?;
+                    match self.list_cell(&tv) {
+                        Ok(None) => return self.force(&x).map(Some),
+                        Ok(Some((y, _))) => {
+                            x = y;
+                            l = t;
+                        }
+                        Err(()) => return Ok(None),
+                    }
+                }
+            }
+        }
+    }
+
+    /// The term `#2 #1 #0` (a function applied to two arguments).
+    fn apply2_body(&mut self) -> ExprId {
+        let st = &mut self.tc.st;
+        let (b0, b1, b2) = (st.bvar(0), st.bvar(1), st.bvar(2));
+        st.apps(b2, &[b1, b0])
+    }
+
+    /// A thunk for the operation `c` applied to `args`: the term
+    /// `c a₁ … aₙ`, delayed.
+    fn op_app_thunk(&mut self, c: ExprId, args: &[Th]) -> Th {
+        let n = args.len() as u32;
+        let st = &mut self.tc.st;
+        let mut e = c;
+        for i in (0..n).rev() {
+            let b = st.bvar(i);
+            e = st.app(e, b);
+        }
+        Thunk::delayed(e, Env::EMPTY.push_all(args.to_vec()))
+    }
+
+    /// `bα.beq a b`, evaluated: `Some` if it is a `Bool`.
+    fn beq_with(&mut self, inst: &Th, a: &Th, b: &Th) -> ER<Option<bool>> {
+        let Some(beq) = self.tc.ext.fast.and_then(|f| f.beq) else {
+            return Ok(None);
+        };
+        let i = self.force(inst)?;
+        let field = match &*i {
+            Val::Ctor { info, args, .. } if info.induct == beq && args.len() == 2 => {
+                args[1].clone()
+            }
+            _ => return Ok(None),
+        };
+        let g = self.force(&field)?;
+        let v = self.apply(g, vec![a.clone(), b.clone()])?;
+        Ok(self.bool_of(&v))
+    }
+
+    /// `List.nil α`, at the universe level of the list operation `c`.
+    fn list_nil(&mut self, c: ExprId, ty: &Th) -> ER<V> {
+        let ExprNode::Const(_, ls) = self.tc.st.node(c) else {
+            return Err(stuck(0));
+        };
+        let nil = self.tc.ext.fast.as_ref().ok_or(Bail::Stuck)?.list_nil;
+        let k = self.tc.st.cnst(nil, ls);
+        let info = self.ctor_info(k)?;
+        Ok(Rc::new(Val::Ctor {
+            c: k,
+            info,
+            args: vec![ty.clone()],
+        }))
+    }
+
+    /// `List.cons α x l`, at the universe level of the list operation `c`.
+    fn list_cons(&mut self, c: ExprId, ty: &Th, x: Th, l: Th) -> ER<V> {
+        let ExprNode::Const(_, ls) = self.tc.st.node(c) else {
+            return Err(stuck(0));
+        };
+        let cons = self.tc.ext.fast.as_ref().ok_or(Bail::Stuck)?.list_cons;
+        let k = self.tc.st.cnst(cons, ls);
+        let info = self.ctor_info(k)?;
+        Ok(Rc::new(Val::Ctor {
+            c: k,
+            info,
+            args: vec![ty.clone(), x, l],
+        }))
+    }
+
+    /// A `DecidableEq` instance applied to (at least) its arguments. Unless
+    /// proofs are kept, it compares the values as the definition does
+    /// (forcing the same things in the same order) and answers
+    /// `isTrue (x = y) h` or `isFalse (x = y) h`, with `h` an erased proof:
+    /// a run that needs it gives up and is done again keeping proofs, and
+    /// then the instance is its definition.
+    fn dec_eq_op(&mut self, c: ExprId, op: DecEqOp, def: ExprId, mut args: Vec<Th>) -> ER<V> {
+        let n = Head::DecEq(op, def).arity();
+        let rest = args.split_off(n);
+        let r = if self.s.keep_proofs {
+            None
+        } else {
+            self.dec_eq_fast(op, &args)?
+        };
+        let r = match r {
+            Some(b) => match self.decision(c, b, &args) {
+                Some(v) => {
+                    FAST[1].fetch_add(1, Relaxed);
+                    v
+                }
+                None => self.unfold_def(def, args)?,
+            },
+            None => self.unfold_def(def, args)?,
+        };
+        self.apply_rest(r, rest)
+    }
+
+    fn dec_eq_fast(&mut self, op: DecEqOp, args: &[Th]) -> ER<Option<bool>> {
+        let Some(f) = self.tc.ext.fast else {
+            return Ok(None);
+        };
+        match op {
+            DecEqOp::Nat => {
+                // `match h : n.beq m with …`: both literals.
+                let x = self.force(&args[0])?;
+                let y = self.force(&args[1])?;
+                Ok(match (self.nat_of(&x), self.nat_of(&y)) {
+                    (Some(x), Some(y)) => Some(x == y),
+                    _ => None,
+                })
+            }
+            DecEqOp::Bool => {
+                // `match a, b with …`.
+                let x = self.force(&args[0])?;
+                let Some(x) = self.bool_of(&x) else {
+                    return Ok(None);
+                };
+                let y = self.force(&args[1])?;
+                Ok(self.bool_of(&y).map(|y| x == y))
+            }
+            DecEqOp::Prod | DecEqOp::Subtype => {
+                // `match x, y with | (a, b), (a', b') => match decEq a a' …`
+                // (then `decEq b b'` if equal), or `| ⟨a, _⟩, ⟨b, _⟩ => if
+                // h : a = b then … else …`.
+                let (ind, i) = if op == DecEqOp::Prod {
+                    (f.prod, 4)
+                } else {
+                    (f.subtype, 3)
+                };
+                let Some(ind) = ind else {
+                    return Ok(None);
+                };
+                let x = self.force(&args[i])?;
+                let Some(xs) = struct_fields(&x, ind) else {
+                    return Ok(None);
+                };
+                let y = self.force(&args[i + 1])?;
+                let Some(ys) = struct_fields(&y, ind) else {
+                    return Ok(None);
+                };
+                let d = self.decide_with(&args[2], &xs[0], &ys[0])?;
+                if op == DecEqOp::Subtype || d != Some(true) {
+                    return Ok(d);
+                }
+                self.decide_with(&args[3], &xs[1], &ys[1])
+            }
+        }
+    }
+
+    /// The instance `inst` applied to `a` and `b`, evaluated: `Some` if it
+    /// is `isTrue` or `isFalse`.
+    fn decide_with(&mut self, inst: &Th, a: &Th, b: &Th) -> ER<Option<bool>> {
+        let i = self.force(inst)?;
+        let d = self.apply(i, vec![a.clone(), b.clone()])?;
+        Ok(self.decision_of(&d))
+    }
+
+    fn decision_of(&self, v: &V) -> Option<bool> {
+        let f = self.tc.ext.fast.as_ref()?;
+        let Val::Ctor { c, args, .. } = &**v else {
+            return None;
+        };
+        let ExprNode::Const(n, _) = self.tc.st.node(*c) else {
+            return None;
+        };
+        if args.len() != 2 {
+            None
+        } else if Some(n) == f.is_true {
+            Some(true)
+        } else if Some(n) == f.is_false {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    /// `isTrue p h` (or `isFalse p h`) for the `DecidableEq` operation `c`
+    /// applied to `args`, where `p` is the proposition of its type and `h`
+    /// an erased proof.
+    fn decision(&mut self, c: ExprId, b: bool, args: &[Th]) -> Option<V> {
+        let p = match self.s.dec_props.get(&c) {
+            Some(&p) => p,
+            None => {
+                let p = self.dec_prop(c, args.len());
+                self.s.dec_props.insert(c, p);
+                p
+            }
+        }?;
+        let f = self.tc.ext.fast?;
+        let k = if b { f.is_true? } else { f.is_false? };
+        let k = self.tc.st.cnst(k, LevelList::EMPTY);
+        let info = self.ctor_info(k).ok()?;
+        let p = Thunk::delayed(p, Env::EMPTY.push_all(args.to_vec()));
+        let h = Thunk::erased(c, &Env::EMPTY);
+        Some(Rc::new(Val::Ctor {
+            c: k,
+            info,
+            args: vec![p, h],
+        }))
+    }
+
+    /// The proposition `p` of the type `Decidable p` of `c x₁ … xₙ`, with
+    /// `xᵢ` as `#(n-i)`: from `c`'s type, by `whnf` through its binders.
+    fn dec_prop(&mut self, c: ExprId, n: usize) -> Option<ExprId> {
+        let dec = self.tc.ext.fast?.decidable?;
+        let mut t = self.tc.infer(c).ok()?;
+        let mut fvars = Vec::with_capacity(n);
+        for _ in 0..n {
+            t = self.tc.whnf(t).ok()?;
+            let ExprNode::Pi(bi, name, dom, body) = self.tc.st.node(t) else {
+                return None;
+            };
+            let x = self.tc.push_local(name, dom, None, bi);
+            t = self.tc.st.instantiate(body, &[x]);
+            fvars.push(x);
+        }
+        let t = self.tc.whnf(t).ok()?;
+        let ExprNode::App(d, p) = self.tc.st.node(t) else {
+            return None;
+        };
+        if !matches!(self.tc.st.node(d), ExprNode::Const(m, ls) if m == dec && ls == LevelList::EMPTY)
+        {
+            return None;
+        }
+        let mut e = self.tc.mk_lambda(&fvars, p);
+        for _ in 0..n {
+            let ExprNode::Lam(_, _, _, b) = self.tc.st.node(e) else {
+                return None;
+            };
+            e = b;
+        }
+        Some(e)
+    }
+
     fn ctor_info(&mut self, c: ExprId) -> ER<Rc<CtorInfo>> {
         match self.info(c) {
             CInfo::Ctor(i) => Ok(i),
@@ -1259,6 +1924,17 @@ impl<'a, 'e> Machine<'a, 'e> {
     }
 }
 
+/// The fields of `v`, a constructor of the structure `ind` (whose
+/// constructor has two parameters and two fields).
+fn struct_fields(v: &V, ind: NameId) -> Option<[Th; 2]> {
+    match &**v {
+        Val::Ctor { info, args, .. } if info.induct == ind && args.len() == 4 => {
+            Some([args[2].clone(), args[3].clone()])
+        }
+        _ => None,
+    }
+}
+
 /// A head that waits for its arguments.
 #[derive(Clone, Debug)]
 pub enum Head {
@@ -1269,6 +1945,12 @@ pub enum Head {
     QuotInd,
     /// With the operation's definition.
     Arr(ArrayOp, ExprId),
+    List(ListOp, ExprId),
+    DecEq(DecEqOp, ExprId),
+    BEqProd(ExprId),
+    /// The `==` of `instBEqProd α β bα bβ`; the head is the closed term
+    /// `fun α β bα bβ => beq-field` (see `beq_prod`).
+    BEqProdFn,
 }
 
 impl Head {
@@ -1283,6 +1965,14 @@ impl Head {
             Head::Arr(ArrayOp::Push, _) => 3,
             Head::Arr(ArrayOp::Get, _) => 4,
             Head::Arr(ArrayOp::Set, _) => 5,
+            Head::List(ListOp::Foldl, _) => 5,
+            Head::List(ListOp::Elem | ListOp::EraseDupsLoop, _) => 4,
+            Head::List(_, _) => 3,
+            Head::DecEq(DecEqOp::Nat | DecEqOp::Bool, _) => 2,
+            Head::DecEq(DecEqOp::Prod, _) => 6,
+            Head::DecEq(DecEqOp::Subtype, _) => 5,
+            Head::BEqProd(_) => 4,
+            Head::BEqProdFn => 6,
         }
     }
 }

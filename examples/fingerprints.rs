@@ -3,8 +3,8 @@
 //! of every declaration it depends on.
 //!
 //! Each EXPORT is the closure of the operations in that version's `Init`
-//! (`leanexport Init -- Nat.add Nat.sub ...`, every name of `NAT_OPS` and
-//! `ARRAY_OPS`):
+//! (`lean4export Init -- Nat.add Nat.sub ...`, every name of `NAT_OPS`,
+//! `ARRAY_OPS`, `LIST_OPS`, `DEC_EQ_OPS` and `BEQ_PROD`):
 //!
 //! ```text
 //! cargo run --release --example fingerprints -- v4.36.0=init-4.36.ndjson \
@@ -13,7 +13,7 @@
 
 use std::collections::BTreeMap;
 
-use nitrolean::check::ext::{ARRAY_OPS, NAT_OPS};
+use nitrolean::check::ext::{ARRAY_OPS, BEQ_PROD, DEC_EQ_OPS, LIST_OPS, NAT_OPS};
 use nitrolean::check::{Fingerprints, fingerprint_key, hex_digest};
 use nitrolean::reader::read_file;
 
@@ -35,7 +35,10 @@ fn main() {
         let names = NAT_OPS
             .iter()
             .map(|x| x.0)
-            .chain(ARRAY_OPS.iter().map(|x| x.0));
+            .chain(ARRAY_OPS.iter().map(|x| x.0))
+            .chain(LIST_OPS.iter().map(|x| x.0))
+            .chain(DEC_EQ_OPS.iter().map(|x| x.0))
+            .chain([BEQ_PROD]);
         for name in names {
             let n = env
                 .names
@@ -55,7 +58,7 @@ fn main() {
             }
         }
     }
-    println!("//! Fingerprints of the prelude declarations with built-in arithmetic and");
+    println!("//! Fingerprints of the prelude declarations with built-in operations and");
     println!("//! of everything they depend on, per Lean version. Written by");
     println!("//! `cargo run --release --example fingerprints -- VERSION=EXPORT...`");
     println!("//! (see `examples/fingerprints.rs`).");

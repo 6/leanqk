@@ -8,8 +8,8 @@
 //! Declarations are checked in export order; each sees only the
 //! declarations before it (and, for an unsafe or partial mutual group, the
 //! rest of its group). Checking one declaration reads the environment and
-//! writes only into its own [`store::Store`] and caches, so independent
-//! declarations could be checked on several threads; for now there is one.
+//! writes only into its own [`store::Store`] and caches, so declarations
+//! are checked on several threads (`check_env_jobs`).
 
 mod eval;
 pub use eval::stats as eval_stats;
@@ -25,6 +25,8 @@ pub mod tc;
 pub mod univ;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use crate::env::{Block, BlockKind, Decl, DeclKind, Env, Safety};
 use crate::name::NameId;
@@ -60,29 +62,43 @@ pub struct Report {
     pub notes: Vec<String>,
 }
 
-/// Stack for the checker thread: the checker recurses on terms.
+/// Stack for each checker thread: the checker recurses on terms.
 const STACK_BYTES: usize = 1 << 30;
 
-/// Check every declaration of `env`, stopping at the first failure.
+/// Check every declaration of `env`, on as many threads as
+/// [`default_jobs`] says, stopping at the first failure.
 pub fn check_env(env: &Env) -> Result<Report, Failure> {
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .name("nitrolean-check".into())
-            .stack_size(STACK_BYTES)
-            .spawn_scoped(s, || check_env_here(env))
-            .expect("spawn checker thread")
-            .join()
-            .unwrap_or_else(|_| {
-                Err(Failure {
-                    kind: FailKind::Resource,
-                    decl: String::new(),
-                    msg: "checker thread failed".into(),
-                })
-            })
-    })
+    check_env_jobs(env, default_jobs())
 }
 
-fn check_env_here(env: &Env) -> Result<Report, Failure> {
+/// While the process holds more than this, a thread starts a new block
+/// only if no other is checking one (`NITROLEAN_MEM_BUDGET_MIB`; default
+/// 1 GiB). Some blocks take gigabytes (huge literals, long computations);
+/// this keeps several of them from running at once.
+fn mem_budget() -> u64 {
+    std::env::var("NITROLEAN_MEM_BUDGET_MIB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(1024)
+        << 20
+}
+
+/// `NITROLEAN_JOBS` if set, else the number of cores.
+pub fn default_jobs() -> usize {
+    std::env::var("NITROLEAN_JOBS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+}
+
+/// Check every declaration of `env` on `jobs` threads. Blocks are
+/// independent (each is checked against the declarations before it, in a
+/// fresh store), so threads take them in export order from a shared
+/// counter. The result does not depend on `jobs`: on failures, the one
+/// reported is the first in export order, and every block before it has
+/// been checked.
+pub fn check_env_jobs(env: &Env, jobs: usize) -> Result<Report, Failure> {
     let fail = |msg: &str| Failure {
         kind: FailKind::Resource,
         decl: String::new(),
@@ -101,21 +117,111 @@ fn check_env_here(env: &Env) -> Result<Report, Failure> {
         }
     }
     let ext = Ext::new(env);
-    let mut tc = Tc::new(Store::new(env), &ext, 0);
     // `NITROLEAN_DECL_TIMES=FILE`: write each block's first name and check
     // time (seconds) to FILE, for benchmarks.
-    let mut times = std::env::var_os("NITROLEAN_DECL_TIMES")
+    let times = std::env::var_os("NITROLEAN_DECL_TIMES")
         .and_then(|p| std::fs::File::create(p).ok())
-        .map(std::io::LineWriter::new);
-    for b in &env.blocks {
+        .map(|f| Mutex::new(std::io::LineWriter::new(f)));
+    let shared = Shared {
+        env,
+        ext: &ext,
+        next: AtomicUsize::new(0),
+        first_fail: AtomicUsize::new(usize::MAX),
+        failures: Mutex::new(Vec::new()),
+        times,
+        busy: AtomicUsize::new(0),
+        budget: mem_budget(),
+    };
+    let jobs = jobs.clamp(1, env.blocks.len().max(1));
+    std::thread::scope(|s| {
+        let workers: Vec<_> = (0..jobs)
+            .map(|i| {
+                let shared = &shared;
+                std::thread::Builder::new()
+                    .name(format!("nitrolean-check-{i}"))
+                    .stack_size(STACK_BYTES)
+                    .spawn_scoped(s, move || worker(shared, jobs))
+                    .expect("spawn checker thread")
+            })
+            .collect();
+        for w in workers {
+            if w.join().is_err() {
+                shared
+                    .failures
+                    .lock()
+                    .unwrap()
+                    .push((usize::MAX, fail("checker thread failed")));
+            }
+        }
+    });
+    let failures = shared.failures.into_inner().unwrap();
+    if let Some((_, f)) = failures.into_iter().min_by_key(|x| x.0) {
+        return Err(f);
+    }
+    Ok(Report {
+        declarations: env.decls.len(),
+        notes: ext.notes.clone(),
+    })
+}
+
+/// What the checker threads share.
+struct Shared<'e> {
+    env: &'e Env,
+    ext: &'e Ext,
+    /// The next block to check.
+    next: AtomicUsize,
+    /// The first block that failed, so far.
+    first_fail: AtomicUsize,
+    failures: Mutex<Vec<(usize, Failure)>>,
+    times: Option<Mutex<std::io::LineWriter<std::fs::File>>>,
+    /// Threads checking a block.
+    busy: AtomicUsize,
+    budget: u64,
+}
+
+impl Shared<'_> {
+    /// Wait until this thread may start a block: the process is under the
+    /// memory budget, or no other thread is busy. Then count it busy.
+    fn enter(&self, jobs: usize) {
+        let over = || crate::stats::rss_bytes().is_some_and(|b| b > self.budget);
+        if jobs > 1 && over() {
+            let mut waited = 0u64;
+            loop {
+                // Alone: go on whatever the memory.
+                if self.busy.compare_exchange(0, 1, SeqCst, SeqCst).is_ok() {
+                    return;
+                }
+                waited = (waited + 1).min(64);
+                std::thread::sleep(std::time::Duration::from_micros(50 * waited));
+                if !over() {
+                    break;
+                }
+            }
+        }
+        self.busy.fetch_add(1, SeqCst);
+    }
+}
+
+fn worker(sh: &Shared<'_>, jobs: usize) {
+    let env = sh.env;
+    let mut tc = Tc::new(Store::new(env), sh.ext, 0);
+    loop {
+        let i = sh.next.fetch_add(1, SeqCst);
+        // Blocks after a failure need not be checked.
+        if i >= env.blocks.len() || i > sh.first_fail.load(SeqCst) {
+            return;
+        }
+        let b = &env.blocks[i];
+        sh.enter(jobs);
         let decls = env.block_decls(b);
         let first = decls.first().map(|d| d.name);
         let t0 = std::time::Instant::now();
         let res = catch_unwind(AssertUnwindSafe(|| check_block(&mut tc, b)));
-        if let (Some(w), Some(n)) = (times.as_mut(), first) {
+        sh.busy.fetch_sub(1, SeqCst);
+        if let (Some(w), Some(n)) = (sh.times.as_ref(), first) {
             use std::io::Write;
             let _ = writeln!(
-                w,
+                w.lock().unwrap(),
                 "{}\t{:.6}",
                 env.names.display(n),
                 t0.elapsed().as_secs_f64()
@@ -130,7 +236,7 @@ fn check_env_here(env: &Env) -> Result<Report, Failure> {
                     .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
                     .unwrap_or_else(|| "internal error".into());
                 // Rebuild: the checker's state may be inconsistent.
-                tc = Tc::new(Store::new(env), &ext, 0);
+                tc = Tc::new(Store::new(env), sh.ext, 0);
                 Err((FailKind::Resource, msg))
             }
         };
@@ -139,13 +245,13 @@ fn check_env_here(env: &Env) -> Result<Report, Failure> {
                 Some(n) => env.names.display(n).to_string(),
                 None => String::new(),
             };
-            return Err(Failure { kind, decl, msg });
+            sh.first_fail.fetch_min(i, SeqCst);
+            sh.failures
+                .lock()
+                .unwrap()
+                .push((i, Failure { kind, decl, msg }));
         }
     }
-    Ok(Report {
-        declarations: env.decls.len(),
-        notes: ext.notes.clone(),
-    })
 }
 
 /// Whether Lean's checker skips `d`: like `Environment.replay`, which

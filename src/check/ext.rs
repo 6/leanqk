@@ -79,6 +79,90 @@ pub const ARRAY_OPS: [(&str, ArrayOp); 4] = [
     ("Array.push", ArrayOp::Push),
 ];
 
+/// `List` operations the evaluator runs as loops over list values, without
+/// the structural recursion (`List.brecOn`, `List.rec`) their definitions
+/// compile to. Enabled like `ARRAY_OPS`, on definitions that are a known
+/// prelude's; every known version computes the same function.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ListOp {
+    /// `List.any l p`: `p` on the elements until one is `true`
+    Any,
+    /// `List.all l p`: `p` on the elements until one is `false`
+    All,
+    /// `List.filter p l`: up to the first element kept; the rest stays lazy
+    Filter,
+    /// `List.reverseAux l r`: `l` reversed onto `r`
+    ReverseAux,
+    /// `List.foldl f a l`: `f (… (f a x₀) …) xₙ₋₁`, built lazily, then forced
+    Foldl,
+    /// `List.getLast l h`: the last element
+    GetLast,
+    /// `List.elem a l` (with a `BEq` instance): `a == x` on the elements
+    /// until one is `true`
+    Elem,
+    /// `List.eraseDupsBy.loop r l acc`: the elements `x` of `l` with no
+    /// `r x y` among those kept before, pushed onto `acc`, then reversed
+    EraseDupsLoop,
+}
+
+pub const LIST_OPS: [(&str, ListOp); 8] = [
+    ("List.any", ListOp::Any),
+    ("List.all", ListOp::All),
+    ("List.filter", ListOp::Filter),
+    ("List.reverseAux", ListOp::ReverseAux),
+    ("List.foldl", ListOp::Foldl),
+    ("List.getLast", ListOp::GetLast),
+    ("List.elem", ListOp::Elem),
+    ("List.eraseDupsBy.loop", ListOp::EraseDupsLoop),
+];
+
+/// `DecidableEq` instances of the core library that the evaluator decides
+/// on values: it runs the comparison and builds `isTrue`/`isFalse` without
+/// the matches and the proof terms of the definition (the proof is left
+/// erased, see `docs/kernel-compute.md`). They are enabled only for the
+/// versions in `DEC_EQ_VERSIONS`, in which `Decidable` is the inductive type
+/// with `isTrue` and `isFalse` (from v4.36.0 it is a structure with a
+/// `Bool` field, and these instances are already cheap).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DecEqOp {
+    /// `Nat.decEq n m`, on literals
+    Nat,
+    /// `Bool.decEq a b`
+    Bool,
+    /// `instDecidableEqProd dα dβ x y`: the first components, then the second
+    Prod,
+    /// `Subtype.instDecidableEq dα x y`: the values
+    Subtype,
+}
+
+pub const DEC_EQ_OPS: [(&str, DecEqOp); 4] = [
+    ("Nat.decEq", DecEqOp::Nat),
+    ("Bool.decEq", DecEqOp::Bool),
+    ("instDecidableEqProd", DecEqOp::Prod),
+    ("Subtype.instDecidableEq", DecEqOp::Subtype),
+];
+
+/// `instBEqProd`, whose `==` the evaluator runs on pairs: `(a₁, b₁) ==
+/// (a₂, b₂)` is `a₁ == a₂ && b₁ == b₂`. Enabled like `LIST_OPS`.
+pub const BEQ_PROD: &str = "instBEqProd";
+
+pub const DEC_EQ_VERSIONS: [&str; 2] = ["v4.34.0", "v4.30.0"];
+
+/// The inductive types and constructors the `List` and `DecidableEq`
+/// operations look at. They are in the cones the fingerprints cover.
+#[derive(Clone, Copy, Debug)]
+pub struct FastNames {
+    pub list: NameId,
+    pub list_nil: NameId,
+    pub list_cons: NameId,
+    pub prod: Option<NameId>,
+    pub subtype: Option<NameId>,
+    pub decidable: Option<NameId>,
+    pub beq: Option<NameId>,
+    pub is_true: Option<NameId>,
+    pub is_false: Option<NameId>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct StrExt {
     pub string: NameId,
@@ -106,6 +190,10 @@ pub struct Ext {
     pub bool_false: Option<NameId>,
     pub ops: IdMap<NameId, NatOp>,
     pub array_ops: IdMap<NameId, ArrayOp>,
+    pub list_ops: IdMap<NameId, ListOp>,
+    pub dec_eq_ops: IdMap<NameId, DecEqOp>,
+    pub fast: Option<FastNames>,
+    pub beq_prod: Option<NameId>,
     pub strings: Option<StrExt>,
     pub eager_reduce: Option<NameId>,
     pub quot: Option<QuotNames>,
@@ -172,7 +260,7 @@ impl Ext {
                 continue;
             }
             match fp.matches(n) {
-                Ok(()) => {
+                Ok(_) => {
                     x.ops.insert(n, op);
                 }
                 Err(why) => x.notes.push(format!("no built-in `{name}`: {why}")),
@@ -183,12 +271,67 @@ impl Ext {
                 continue;
             };
             match fp.matches(n) {
-                Ok(()) => {
+                Ok(_) => {
                     x.array_ops.insert(n, op);
                 }
                 Err(why) => x
                     .notes
                     .push(format!("no fast `{name}` in the evaluator: {why}")),
+            }
+        }
+        let f = |s| env.names.find_dotted(s);
+        if let (Some(list), Some(list_nil), Some(list_cons)) =
+            (f("List"), f("List.nil"), f("List.cons"))
+        {
+            x.fast = Some(FastNames {
+                list,
+                list_nil,
+                list_cons,
+                prod: f("Prod"),
+                subtype: f("Subtype"),
+                decidable: f("Decidable"),
+                beq: f("BEq"),
+                is_true: f("Decidable.isTrue"),
+                is_false: f("Decidable.isFalse"),
+            });
+            for (name, op) in LIST_OPS {
+                let Some(n) = f(name) else {
+                    continue;
+                };
+                match fp.matches(n) {
+                    Ok(_) => {
+                        x.list_ops.insert(n, op);
+                    }
+                    Err(why) => x
+                        .notes
+                        .push(format!("no fast `{name}` in the evaluator: {why}")),
+                }
+            }
+            if let Some(n) = f(BEQ_PROD) {
+                match fp.matches(n) {
+                    Ok(_) => x.beq_prod = Some(n),
+                    Err(why) => x
+                        .notes
+                        .push(format!("no fast `{BEQ_PROD}` in the evaluator: {why}")),
+                }
+            }
+            let want = fingerprint::version_mask(&DEC_EQ_VERSIONS);
+            for (name, op) in DEC_EQ_OPS {
+                let Some(n) = f(name) else {
+                    continue;
+                };
+                match fp.matches(n) {
+                    Ok(m) if m & want != 0 && bool_ok.is_some() => {
+                        x.dec_eq_ops.insert(n, op);
+                    }
+                    Ok(_) => x.notes.push(format!(
+                        "no fast `{name}` in the evaluator: only for {}",
+                        DEC_EQ_VERSIONS.join(", ")
+                    )),
+                    Err(why) => x
+                        .notes
+                        .push(format!("no fast `{name}` in the evaluator: {why}")),
+                }
             }
         }
         match shapes.strings(nat) {

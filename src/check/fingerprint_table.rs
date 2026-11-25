@@ -1,4 +1,4 @@
-//! Fingerprints of the prelude declarations with built-in arithmetic and
+//! Fingerprints of the prelude declarations with built-in operations and
 //! of everything they depend on, per Lean version. Written by
 //! `cargo run --release --example fingerprints -- VERSION=EXPORT...`
 //! (see `examples/fingerprints.rs`).
@@ -339,6 +339,16 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x6,
     ),
     (
+        "sDecidable.sisFalse",
+        "b2fcdaf18452102c5b04b3738b079089da3ee349f22b70f046bd06030ff81764",
+        0x1,
+    ),
+    (
+        "sDecidable.sisTrue",
+        "0624b6e6885c4f013cbd53630e088431372b42caa39c566ef261822a4516e216",
+        0x1,
+    ),
+    (
         "sDecidable.sisTrue",
         "24a7cec4ef8070e297222963c76001a35ce8766de8a7074ac1526e56120314f7",
         0x6,
@@ -381,12 +391,12 @@ pub static TABLE: &[(&str, &str, u32)] = &[
     (
         "sEq.sndrec",
         "c5b693acc591e05df5e42992d21d0adf26e9175ea1c54c511a87de12c7607efc",
-        0x6,
+        0x7,
     ),
     (
         "sEq.srec",
         "850ab54fbfb734864483ba623058f023c7dcbb396ee3f8f51bfbbc7917855d5f",
-        0x6,
+        0x7,
     ),
     (
         "sEq.srefl",
@@ -679,6 +689,31 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x7,
     ),
     (
+        "sList.sall",
+        "e1e34adc332412bf99488526b7e1a238ff2af2bb0e64a2c91a0bb70a15932c31",
+        0x7,
+    ),
+    (
+        "sList.sall.s_f",
+        "8ea4c66490442047cc90ba15fccd392d8a5de0049c7a63033ea05af6a1452a58",
+        0x7,
+    ),
+    (
+        "sList.sany",
+        "9f0c54fe3afef16f3c6cf3f95f6d9fba798fba428ffe397b3e6ec0f05d8cf4b3",
+        0x7,
+    ),
+    (
+        "sList.sany.s_f",
+        "335afd677655b2e2c74cb122db3badf6b84c5395f24801a583fd45609c6f36f4",
+        0x7,
+    ),
+    (
+        "sList.sany.smatch_1",
+        "b96a69faf1b78d2db9b3b2f96ad9c9894509cdb028033518ab2283f7b7d64331",
+        0x7,
+    ),
+    (
         "sList.sappend",
         "55b19c599d44fe0b1405c9a8c081a4554047ad5e138c0338228a606690d7421e",
         0x7,
@@ -734,6 +769,41 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x7,
     ),
     (
+        "sList.selem",
+        "4b52ef2ba3c2c7194a4cfdaef7dbaa2d27e842fae78779a22f31461bdaa099b0",
+        0x7,
+    ),
+    (
+        "sList.selem.s_f",
+        "f1dcf3041c0c8a575656a0632b62de57934ab6d7831bdf6dd11061e7231c7507",
+        0x7,
+    ),
+    (
+        "sList.seraseDupsBy.sloop",
+        "569d30300a9c0a2d37beddfa17b95fd4e9633e9307a6ef2396b2ca8e67b9669d",
+        0x7,
+    ),
+    (
+        "sList.seraseDupsBy.sloop.s_f",
+        "78663cd9e96d7a2fb9579ffc45b174a0e05f5a38f23f78703517061e59795876",
+        0x7,
+    ),
+    (
+        "sList.sfilter",
+        "762eaac899b212175a90cc1041f9ae51c6de8cba385f4a82d0e83e8467ced5e3",
+        0x7,
+    ),
+    (
+        "sList.sfilter.s_f",
+        "877d7b238236e9d02fcefcc42ab7af9f96d98cdd86f219c864e76a53c9057534",
+        0x7,
+    ),
+    (
+        "sList.sfilter.smatch_1",
+        "14c87d4d725548b94a336eb4f87cb6329249fcfb9859b7fd72dc231dc6acacca",
+        0x7,
+    ),
+    (
         "sList.sflatMap",
         "dff63da386d81f625d829eedb5cba6396280eb8847942c87127c2f70b088522c",
         0x7,
@@ -754,6 +824,21 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x7,
     ),
     (
+        "sList.sfoldl",
+        "5eac21d96b6ce5f403ad3dab6bac7ba125ba9b51d0a9aa971ac5fe5262ed858f",
+        0x7,
+    ),
+    (
+        "sList.sfoldl.s_f",
+        "c9a2b44e71f9dc0447d141357b948e2a658dc4674fe82a9b7dc4b6392a02ea49",
+        0x7,
+    ),
+    (
+        "sList.sfoldl.smatch_1",
+        "5245ad2511a0fce8acc9287e1130d6aa9a9623002f049e5719a84816209fd85d",
+        0x7,
+    ),
+    (
         "sList.sget",
         "a2d21a2659755ef87d101b119f29953b61e71230bec9dc1a03d619468011d09b",
         0x7,
@@ -766,6 +851,26 @@ pub static TABLE: &[(&str, &str, u32)] = &[
     (
         "sList.sget.smatch_1",
         "6d86eabe43ba1ff69e0ab639ca78d91349ff0372167cb5a6b6aadc176189cb0e",
+        0x7,
+    ),
+    (
+        "sList.sgetLast",
+        "cd31191324472b56b22ce840802c8acc4fb4103b72100c4a11c7cb193c9227b3",
+        0x7,
+    ),
+    (
+        "sList.sgetLast.s_f",
+        "3c0fdfc281a2b6f8729fce341d7a7568881cf02f36376510d874f259c48aacce",
+        0x7,
+    ),
+    (
+        "sList.sgetLast.smatch_1",
+        "2328a47a0de9a68fe4f15e8321cd6fc84d2cfa230aaec1be8e9b102a68eb03f6",
+        0x7,
+    ),
+    (
+        "sList.sgetLast?.smatch_1",
+        "1434842dea062d4f2d7ac730cdc78b28bb91dfebe2fba9e31693891259ded151",
         0x7,
     ),
     (
@@ -794,8 +899,38 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x7,
     ),
     (
+        "sList.snoConfusion",
+        "57e28c5912bc147707b6373b2285ca0d005d53d33065ce5263fe9f2991de5f5e",
+        0x7,
+    ),
+    (
+        "sList.snoConfusionType",
+        "b9c620071d3b3f464cea6bdba0ba8975f7c1cdafd181680e95ebb30276ef04e6",
+        0x7,
+    ),
+    (
         "sList.srec",
         "1ec9206613a81d50f23648d48deade78ddf556e8ba7627933669c651dd11c9f4",
+        0x7,
+    ),
+    (
+        "sList.sreverse",
+        "403bdae1c24b8569eed0660dcd43c544b379af82d0f16eafc5f7f900533191cf",
+        0x7,
+    ),
+    (
+        "sList.sreverseAux",
+        "f74876df9a0fe10e43364fe79d3784a312ad339b3a0816903d1af291c0585752",
+        0x7,
+    ),
+    (
+        "sList.sreverseAux.s_f",
+        "131310563533255665a2684b398c4e3457516b935a81a8eb78a2ee53425fe401",
+        0x7,
+    ),
+    (
+        "sList.sreverseAux.smatch_1",
+        "d16d2fe3ee4c1f5cec608dce9853508826f462a8b826b592bcc0b7fdfb7e413b",
         0x7,
     ),
     (
@@ -1254,6 +1389,11 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x7,
     ),
     (
+        "sNe",
+        "2dc48f5644031307d69286df1594d49e907c0064c11aa3aeb402728b3404cde0",
+        0x7,
+    ),
+    (
         "sNot",
         "406002523dda16d02c73d0c24880a2d9cd61d8a480415b48efd5c1060ab9611c",
         0x7,
@@ -1344,6 +1484,26 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x7,
     ),
     (
+        "sProd",
+        "701b233afe23f39309e17b68cae1552e17f62b46b80ff8071bc4e6d0b689bffb",
+        0x7,
+    ),
+    (
+        "sProd.scasesOn",
+        "ccd2e61d2e1f571e2ba45c948e7fc13240046951e27261dab2ee21e918fe2f41",
+        0x7,
+    ),
+    (
+        "sProd.smk",
+        "6a221b19c5aca1df27ff9747ac3420310f59c036d49febb5917cc3c4cca5e860",
+        0x7,
+    ),
+    (
+        "sProd.srec",
+        "39a3954d8709a6deeb5539293fde53111ab6f6308b945f661789c96ee459a4b2",
+        0x7,
+    ),
+    (
         "sString",
         "0ed64df43f5c768c1e299bd57112d3062855d00f2c0c6c7fd1a389989016474b",
         0x7,
@@ -1391,6 +1551,46 @@ pub static TABLE: &[(&str, &str, u32)] = &[
     (
         "sSubstring.sRaw.smk",
         "da01bc1fd5d4e1627015cdc0bee7938f3df6ed26f70c0353aa63c004a4ea6e0c",
+        0x7,
+    ),
+    (
+        "sSubtype",
+        "a0a272bd8722cf2ae02df648ea3e7a4dfe0652b23d594f8e1713c941fc0f8070",
+        0x7,
+    ),
+    (
+        "sSubtype.scasesOn",
+        "097ddf32dff4b1a70693348e5019d1ff178b9320ccb5367fb32454e743fa773e",
+        0x7,
+    ),
+    (
+        "sSubtype.sinstDecidableEq",
+        "2a54d1eda9c423ab37c470245ec544fa84ea07d8bcc7a764815793a4ec92dfcc",
+        0x7,
+    ),
+    (
+        "sSubtype.sinstDecidableEq.s_proof_1",
+        "8f20f92839845c69f6c800469d6388f41b83ed05d3ef7ab1dd45dc9b56c9fd14",
+        0x7,
+    ),
+    (
+        "sSubtype.sinstDecidableEq.s_proof_3",
+        "b9faffaca2849f4c38bb569f1b21059abb48a66fe5cdac0ce8fc160f5caa29f3",
+        0x7,
+    ),
+    (
+        "sSubtype.sinstDecidableEq.smatch_1",
+        "567b8b3588bf090dcb9761423b2250e22ece87b1223fcddd7ab1c2e4c592cde0",
+        0x7,
+    ),
+    (
+        "sSubtype.smk",
+        "42fcd4b3542d65332ed5b13c8559825ae0af6a93f5221ade54c480cc9cc55efc",
+        0x7,
+    ),
+    (
+        "sSubtype.srec",
+        "53576656c4c553c4ce8c2805cc376652d376a86ab47367d681e536625a0c651b",
         0x7,
     ),
     (
@@ -1504,6 +1704,11 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x7,
     ),
     (
+        "sabsurd",
+        "e0c5832f360ef7cd02a20b3f9bacb0799f76e6426cc11f398092ba6cb3bfb24b",
+        0x7,
+    ),
+    (
         "sautoParam",
         "bbcde9bee39bbf5ff6c116d7baabf428ac5f486752d0408fec4c7c252afc40bd",
         0x7,
@@ -1519,6 +1724,11 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x4,
     ),
     (
+        "sdecEq",
+        "5f5107e3d3ebd15f6c8e915544748c71ef0f472a90be4dfd701085b92d5556ee",
+        0x6,
+    ),
+    (
         "sdite",
         "9353f6bc2637dfe895d408010a6ca2210dbde73f3efd36f886a447e3f14d0b85",
         0x1,
@@ -1527,6 +1737,16 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         "sdite",
         "96264300e21ca97a3145c72bd7035a03450cb27eb4b652afd764a6cbde35eba7",
         0x6,
+    ),
+    (
+        "seq_of_heq",
+        "2fa98477c8dcb0429b0c4861fae4aa6df17c2dab25b633f4793a52b9eecd441e",
+        0x7,
+    ),
+    (
+        "sheq_of_eq",
+        "d386b6d0d0ff66d042c722f4765b15727211f27b95c2bd57f2cf7c03bd5edf26",
+        0x7,
     ),
     (
         "sinstAddNat",
@@ -1542,6 +1762,11 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         "sinstBEqOfDecidableEq",
         "6bc5444995d0806b72bac1d2a5d74b1504e5b945c579038a6cab0810f7eb6384",
         0x1,
+    ),
+    (
+        "sinstBEqProd",
+        "8a9b44fd771f33272cbe789ac9fbd1cc7398405fce3c07be35d82764204874c5",
+        0x7,
     ),
     (
         "sinstDecidableEqBool",
@@ -1561,6 +1786,46 @@ pub static TABLE: &[(&str, &str, u32)] = &[
     (
         "sinstDecidableEqNat",
         "e1c3b46ae4150e30487e6be835350ddb2e9f3b84e1d5410134a3a398fedda5ab",
+        0x7,
+    ),
+    (
+        "sinstDecidableEqProd",
+        "ea8a93ecd804c807144b14b49f0530b1b98666c0b7be5c8e4bacc8f6b816cb04",
+        0x6,
+    ),
+    (
+        "sinstDecidableEqProd",
+        "fdf4e5e3980d57a7e16fc03e472e2b5560158acd76b3a2b63b5e22f8f66c2214",
+        0x1,
+    ),
+    (
+        "sinstDecidableEqProd.s_proof_1",
+        "8613dc4499e68471f729210095935935d2f51c8eb472eb1823dcbed73b6d6231",
+        0x1,
+    ),
+    (
+        "sinstDecidableEqProd.s_proof_1",
+        "c7cf89a89560ab315327cbdcaaf85ca7991686e31d49b28c2c57d271e16c3008",
+        0x6,
+    ),
+    (
+        "sinstDecidableEqProd.s_proof_2",
+        "c1bc3a1b4d3bc9040f4b100529078ee8a198e32ee174cbce5d0c609c49365d56",
+        0x6,
+    ),
+    (
+        "sinstDecidableEqProd.s_proof_3",
+        "852b0c01e4698996d3b5e5bb9ecbc983f8d99c932d1ce035ef75edea6c8a0a10",
+        0x6,
+    ),
+    (
+        "sinstDecidableEqProd.smatch_1",
+        "3ab874eaad1acce0ffaac5e65be1117fab7c99d769eb7957ffe4c2d2521a47cd",
+        0x6,
+    ),
+    (
+        "sinstDecidableEqProd.smatch_3",
+        "0c424da8445a6c316ced93fa854a806d04ccbfa644144498693df152ce3d012b",
         0x7,
     ),
     (
@@ -1661,6 +1926,6 @@ pub static TABLE: &[(&str, &str, u32)] = &[
     (
         "srfl",
         "31b3adf6a398d38ebff5c1a437934917d8b02a531e249ac522b1cbf7ddadd7b1",
-        0x6,
+        0x7,
     ),
 ];

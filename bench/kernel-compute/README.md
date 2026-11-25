@@ -167,3 +167,43 @@ Without its own declarations (`-deps`), `steinberg-main` takes every checker 3 s
 the time is in the result's own computations. For `mathlib-decide` it is the other way round:
 the export without the 150 declarations takes the same time, so the time goes into the Mathlib
 definitions their statements need, not into the `decide` terms.
+
+### With the `List` and `DecidableEq` fast paths
+
+nitrolean at a later commit (the evaluator's `List`, `==` on pairs and
+`DecidableEq` fast paths, `docs/kernel-compute.md`), against the build of the
+tables above. Both ran on a second machine, one run each, with the same limits
+(60 s, 4 GiB). The `old` column is the build used for the tables above, rerun
+on this machine.
+
+| export | old | new |
+| --- | --- | --- |
+| lrat05 | 3.3 s, 118 | 1.5 s, 114 |
+| lrat06 | 13.9 s, 389 | 5.1 s, 382 |
+| lrat07 | 40.3 s, 1 118 | 13.0 s, 1 110 |
+| php6 | 3.2 s, 140 | 1.7 s, 133 |
+| php7 | 41.7 s, 1 253 | 14.3 s, 1 222 |
+| steinberg-main | 20.6 s, 216 | 9.6 s, 118 |
+
+The new build accepts every export the old one did, and it checks
+mathlib-decide in 35.7 s (680 MiB). It still runs out of 4 GiB on the next
+sizes, now sooner: lrat08 at 34 s, lrat09 at 58 s, lrat10 at 51 s, and php8
+at 68 s with a 600 s limit. So the largest proofs checked within 60 s and
+4 GiB are the same ones, lrat07 and php7. The limit is now memory, not time.
+On lrat07 the evaluator takes 236 million steps, against 798 million before.
+
+### On several threads
+
+From the commit that checks declarations on several threads (`check -j N`,
+default all cores), on a 12-core machine, one run each. Wall time, peak
+resident MiB:
+
+| export | 1 thread | 12 threads |
+| --- | --- | --- |
+| mathlib-decide | 42.2 s, 742 | 5.6 s, 1 029 |
+| steinberg-main | 12.1 s, 157 | 1.6 s, 468 |
+| lrat07 | 14.9 s, 1 530 | 14.2 s, 1 547 |
+| php7 | 15.8 s, 1 473 | 15.4 s, 1 500 |
+
+mathlib-decide with 2, 4 and 8 threads takes 21.6 s, 11.7 s and 6.8 s. An
+LRAT export is one large theorem, so threads do not help it.
