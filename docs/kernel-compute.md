@@ -104,7 +104,12 @@ and `Tc::whnf_core` take themselves, on the terms the values stand for:
   one of its rules is replaced by the rule's right-hand side, applied as in
   `inductive_reduce_rec`. A `Nat` literal major premise becomes `Nat.zero` or
   `Nat.succ (n-1)`, and a string literal `String.ofList […]`, as in
-  `nat_lit_to_constructor` and `string_lit_to_constructor`;
+  `nat_lit_to_constructor` and `string_lit_to_constructor`. A right-hand
+  side `fun params motives minors fields => m fields ihs` (every rule Lean
+  generates) is not applied as a closure: the minor premise `m` is applied
+  to the fields, the thunks of the `ihs` and the rest, which is the body it
+  would reach (`rule_info`). On `nonsingular-128` that is 49.6 to 45.3
+  million steps;
 - **K-like recursors**: before evaluating the major premise, the machine
   calls the checker's own `ctor_when_k`. It infers the premise's type and
   checks with the checker's definitional equality that it is the type of the

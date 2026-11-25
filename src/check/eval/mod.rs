@@ -201,6 +201,8 @@ pub struct State {
     closed: IdMap<ExprId, Th>,
     /// How to build the argument thunks of an application, per term.
     apps: IdMap<ExprId, Rc<AppPlan>>,
+    /// `rule_info` per recursor rule.
+    rules: IdMap<ExprId, Option<Rc<RuleInfo>>>,
     steps: u64,
     /// Fast-path hits not yet added to `FAST` (kept here so that threads
     /// do not share a counter on every hit).
@@ -243,6 +245,10 @@ enum Next {
     V(V),
     Eval(ExprId, Env),
 }
+
+/// A recursor rule's minor premise (its index) and inductive hypotheses
+/// (see `rule_info`).
+type RuleInfo = (usize, Box<[ExprId]>);
 
 /// The head of an application term and how each argument's thunk is made.
 struct AppPlan {
@@ -1430,13 +1436,77 @@ impl<'a, 'e> Machine<'a, 'e> {
         if nfields > margs.len() {
             return Err(stuck(744));
         }
+        let fields = &margs[margs.len() - nfields..];
+        if let Some(ri) = self.rule_info(rhs, r.pmm, nfields) {
+            // The minor premise applied to the fields, the inductive
+            // hypotheses and the rest: the rule's body, without its step.
+            let f = self.force(&args[ri.0])?;
+            let mut call = Vec::with_capacity(nfields + ri.1.len() + args.len() - r.major_idx - 1);
+            call.extend_from_slice(fields);
+            if !ri.1.is_empty() {
+                let mut ts = Vec::with_capacity(r.pmm + nfields);
+                ts.extend_from_slice(&args[..r.pmm]);
+                ts.extend_from_slice(fields);
+                let env = Env::EMPTY.push_all(ts);
+                for &ih in ri.1.iter() {
+                    call.push(self.thunk(ih, &env));
+                }
+            }
+            call.extend_from_slice(&args[r.major_idx + 1..]);
+            return self.apply_n(f, call);
+        }
         let mut a = Vec::with_capacity(r.pmm + nfields + args.len() - r.major_idx - 1);
         a.extend_from_slice(&args[..r.pmm]);
-        a.extend_from_slice(&margs[margs.len() - nfields..]);
+        a.extend_from_slice(fields);
         a.extend_from_slice(&args[r.major_idx + 1..]);
         let t = self.closed(rhs);
         let f = self.force(&t)?;
         self.apply_n(f, a)
+    }
+
+    /// For a recursor rule `fun x₁ … xₙ y₁ … y_f => m y₁ … y_f ih₁ … ihᵣ`
+    /// (`n` the parameters, motives and minor premises, `m` one of the
+    /// minor premises): the index of `m` and the terms `ihᵢ` (in the
+    /// environment of the `n + f` binders).
+    fn rule_info(&mut self, rhs: ExprId, n: usize, nf: usize) -> Option<Rc<RuleInfo>> {
+        if let Some(r) = self.s.rules.get(&rhs) {
+            return r.clone();
+        }
+        let r = self.compute_rule_info(rhs, n, nf).map(Rc::new);
+        self.s.rules.insert(rhs, r.clone());
+        r
+    }
+
+    #[inline(never)]
+    fn compute_rule_info(
+        &mut self,
+        rhs: ExprId,
+        n: usize,
+        nf: usize,
+    ) -> Option<(usize, Box<[ExprId]>)> {
+        let st = &self.tc.st;
+        let mut e = rhs;
+        for _ in 0..n + nf {
+            let ExprNode::Lam(_, _, _, b) = st.node(e) else {
+                return None;
+            };
+            e = b;
+        }
+        let mut a = Vec::new();
+        let h = st.spine(e, &mut a);
+        let ExprNode::BVar(j) = st.node(h) else {
+            return None;
+        };
+        let m = (n + nf).checked_sub(1 + j as usize)?;
+        if m >= n || a.len() < nf {
+            return None;
+        }
+        for (f, &x) in a[..nf].iter().enumerate() {
+            if !matches!(st.node(x), ExprNode::BVar(i) if i as usize == nf - 1 - f) {
+                return None;
+            }
+        }
+        Some((m, a[nf..].to_vec().into_boxed_slice()))
     }
 
     /// A `casesOn` applied to (at least) its arguments, with its major
