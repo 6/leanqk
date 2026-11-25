@@ -263,47 +263,40 @@ impl Builder {
                 let n = self.node(top);
                 let (kids, k) = n.kids();
                 let mut ready = true;
-                for &c in &kids[..k] {
-                    if self.known(c).is_none() {
-                        stack.push(c);
-                        ready = false;
+                let mut ids = [0u32; 3];
+                for (&c, id) in kids[..k].iter().zip(&mut ids) {
+                    match self.known(c) {
+                        Some(i) => *id = i,
+                        None => {
+                            stack.push(c);
+                            ready = false;
+                        }
                     }
                 }
                 if !ready {
                     continue;
                 }
-                let e = |c: u32| ExprId(self.known(c).expect("interned"));
+                // The kids' arena ids, in the order of `kids`.
+                let e = |i: usize| ExprId(ids[i]);
                 let node = match n {
-                    Node::App(f, a) => ExprNode::App(e(f), e(a)),
-                    Node::Bind {
-                        pi,
-                        bi,
-                        name,
-                        ty,
-                        body,
-                    } => {
+                    Node::App(..) => ExprNode::App(e(0), e(1)),
+                    Node::Bind { pi, bi, name, .. } => {
                         if pi {
-                            ExprNode::Pi(bi, name, e(ty), e(body))
+                            ExprNode::Pi(bi, name, e(0), e(1))
                         } else {
-                            ExprNode::Lam(bi, name, e(ty), e(body))
+                            ExprNode::Lam(bi, name, e(0), e(1))
                         }
                     }
-                    Node::Let {
-                        name,
-                        ty,
-                        value,
-                        body,
-                        nondep,
-                    } => {
+                    Node::Let { name, nondep, .. } => {
                         let b = LetBinder {
                             name,
-                            ty: e(ty),
-                            value: e(value),
+                            ty: e(0),
+                            value: e(1),
                             nondep,
                         };
-                        ExprNode::Let(env.exprs.intern_let(b)?, e(body))
+                        ExprNode::Let(env.exprs.intern_let(b)?, e(2))
                     }
-                    Node::Proj(s, i, x) => ExprNode::Proj(s, i, e(x)),
+                    Node::Proj(s, i, _) => ExprNode::Proj(s, i, e(0)),
                 };
                 let id = if append {
                     env.exprs.append(node, &env.levels)?
