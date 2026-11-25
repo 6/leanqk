@@ -77,6 +77,9 @@ Other sets:
   variable numbering costs (Keller uses variables up to 39 424, the empty hexagon up to 75 109).
 * `keller7-bundle48`: 48 Keller cubes with proofs of 23 to 68 KB, one theorem each, in one export;
   `keller7-bundle48-renumbered` is the same with renumbered variables. These are for `parallel`.
+* `full`: `keller7-full` and cubes 4480, 8244 and 3002, each stated against the whole formula;
+  `keller7-bundle48-full`: the 48 cubes of `keller7-bundle48`, each stated against the whole
+  formula, in one export (585 MB).
 * `base`: the theorem for LRAT-Catcher's 4-clause example, the part every export shares (about
   40 MB of library closure).
 
@@ -151,10 +154,10 @@ the proof:
   each step pays for the whole array; that is a matter for the evaluator (`src/check/eval/`),
   not measured further here. The empty-hexagon cube 14390 runs out of 30 GB either way: its core
   has 12 423 distinct variables, so even renamed its array is large.
-* The whole formula is worse still: `keller7-full`, a 2.2 KB proof stated against all 200 545
-  clauses of the formula, runs out of 4 GiB after 235 s. That is why every export states the cube
+* The whole formula was worse still: `keller7-full`, a 2.2 KB proof stated against all 200 545
+  clauses of the formula, ran out of 4 GiB after 235 s. That is why every export states the cube
   against the clauses its proof uses. A checked cube-and-conquer proof needs the theorem about
-  the whole formula, so this part of the work is still ahead.
+  the whole formula; see "Cubes against the whole formula" below for where that stands now.
 
 Both are costs of evaluating this checker in the kernel, not of the proofs, so they are the
 first thing to fix for checking these results at all.
@@ -181,6 +184,33 @@ a time. The cubes are independent, so checking them side by side divides the tim
 the number of cores (see below): at the 7 to 9.6 times measured on 12 cores, Keller's 75 days
 become 8 to 11 days on this machine, the
 others stay centuries until the memory use above is fixed.
+
+### Cubes against the whole formula
+
+The same machine, nitrolean at this commit, `nitrolean check --stats` with no memory limit, one
+run each (wall seconds, peak resident MiB, evaluator steps):
+
+| export | jobs | wall s | peak MiB | steps |
+| --- | ---: | ---: | ---: | ---: |
+| keller7-full (cube 4403) | 1 | 19.8 | 3 047 | 182.4 M |
+| keller7-full-cube4480 | 1 | 19.8 | 3 048 | 182.6 M |
+| keller7-full-cube8244 | 1 | 20.1 | 3 049 | 184.6 M |
+| keller7-full-cube3002 | 1 | 20.8 | 3 065 | 188.5 M |
+| keller7-bundle48-full | 1 | 931.8 | 3 367 | 8 924 M |
+| keller7-bundle48-full | 12 | 635.9 | 9 299 | 8 924 M |
+| keller7-bundle48 (cores) | 1 | 27.6 | 258 | 235.6 M |
+| keller7-bundle48 (cores) | 12 | 17.9 | 518 | 235.6 M |
+
+Each cube now costs about 20 s and 3 GB whatever its proof, and nearly all of it is LRAT-Catcher
+reading the formula: `convertK` builds every clause with `mkClauseK` (duplicates removed, no
+complementary pair) and `DefaultFormula.ofArray` scans them all, some 900 evaluator steps per
+clause, before the first proof step: the cubes, with proofs of 2.2 to 67 KB, differ by 1 s. Before the evaluator freed its arrays with each declaration (see
+`docs/kernel-compute.md`), each theorem of the full bundle kept about 0.9 GB: 46 GB and 1092 s
+on one thread, and out of memory on 12. At 12 jobs the peak, 9.3 GB, is about three theorems'
+worth: with nitrolean's default memory budget (1 GiB) the threads do not all check at once, hence
+1.5 times rather than 12. Each theorem
+states its own copy of the formula (the cube's units are appended at its end), so nothing of the
+formula's evaluation is shared between theorems.
 
 ### Checking cubes in parallel
 
