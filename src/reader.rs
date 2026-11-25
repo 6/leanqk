@@ -1226,6 +1226,14 @@ struct Lines {
     bytes: u64,
 }
 
+/// The length of the line at the start of `s`, its newline included.
+fn line_len(s: &[u8]) -> usize {
+    match s.iter().position(|&b| b == b'\n') {
+        Some(p) => p + 1,
+        None => s.len(),
+    }
+}
+
 /// The single-constant declaration records.
 #[derive(Clone, Copy)]
 enum Single {
@@ -1425,27 +1433,34 @@ impl State {
             class: f.class,
             msg: f.msg,
         };
-        let mut pos = 0;
         l.bytes += data.len() as u64;
+        let mut pos = 0;
+        let mut k = l.lines;
+        let mut res = Ok(());
         while pos < data.len() {
-            l.lines += 1;
-            let rest = &data[pos..];
-            if l.seen_first
-                && let Some((n, res)) = scan::line(rest, &mut l.us, self)
-            {
-                res.map_err(|f| fail(l.lines, f))?;
-                pos += n;
-                continue;
+            k += 1;
+            if l.seen_first {
+                match scan::line(&data[pos..], &mut l.us, self) {
+                    Some((n, Ok(()))) => {
+                        pos += n;
+                        continue;
+                    }
+                    Some((_, Err(f))) => {
+                        res = Err(fail(k, f));
+                        break;
+                    }
+                    None => {}
+                }
             }
-            let n = match rest.iter().position(|&b| b == b'\n') {
-                Some(p) => p + 1,
-                None => rest.len(),
-            };
-            self.other_line(l, &rest[..n])
-                .map_err(|f| fail(l.lines, f))?;
+            let n = line_len(&data[pos..]);
+            if let Err(f) = self.other_line(l, &data[pos..pos + n]) {
+                res = Err(fail(k, f));
+                break;
+            }
             pos += n;
         }
-        Ok(())
+        l.lines = k;
+        res
     }
 
     /// A line the scanner left: parsed once, with the general parser.
