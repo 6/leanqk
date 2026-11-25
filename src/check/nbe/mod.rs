@@ -141,6 +141,8 @@ pub struct Nbe<'e> {
     /// `prune` by environment and holes (direct-mapped): (environment,
     /// holes, pruned environment).
     prunes: Vec<[u32; 3]>,
+    /// `trim_holes` (direct-mapped): (environment, holes, length, result).
+    trim_holes_memo: Vec<[u32; 4]>,
     /// `surely_not_proof` by constant and number of arguments.
     not_proof: IdMap<(NameId, u32), bool>,
     /// Terms added to `st` for names: they do not count towards its size
@@ -274,6 +276,7 @@ impl<'e> Nbe<'e> {
             names: IdMap::default(),
             name_eq: IdMap::default(),
             prunes: vec![[val::NONE; 3]; PRUNES],
+            trim_holes_memo: vec![[val::NONE; 4]; PRUNES],
             not_proof: IdMap::default(),
             name_exprs: 0,
             checked_closed: IdMap::default(),
@@ -400,6 +403,7 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.level_checked);
         self.a.clear();
         self.prunes.fill([val::NONE; 3]);
+        self.trim_holes_memo.fill([val::NONE; 4]);
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;
@@ -662,6 +666,58 @@ impl<'e> Nbe<'e> {
             return env;
         }
         self.prune_holes(env, holes)
+    }
+
+    /// `prune(trim(env, n))` for a term with data `d` and range `n`, with
+    /// one rebuild where both cut.
+    #[inline]
+    pub fn trim_prune(&mut self, env: val::Env, d: crate::expr::ExprData) -> val::Env {
+        let n = d.loose_bvar_range();
+        if n == 0 {
+            return val::Env::NIL;
+        }
+        if self.a.env_len(env) <= n {
+            return self.prune(env, d);
+        }
+        let holes = if PRUNE {
+            d.unused_low() & ((1u64 << n.min(32)) - 1) as u32
+        } else {
+            0
+        };
+        if holes == 0 {
+            return self.trim_long(env, n);
+        }
+        self.trim_holes(env, n, holes)
+    }
+
+    /// The first `n` entries of `env` with holes at those `holes` sets.
+    #[inline(never)]
+    fn trim_holes(&mut self, env: val::Env, n: u32, holes: u32) -> val::Env {
+        let i =
+            (hash2(env.0 as u64 | (n as u64) << 32, holes as u64) >> 52) as usize & (PRUNES - 1);
+        let s = self.trim_holes_memo[i];
+        if s[0] == env.0 && s[1] == holes && s[2] == n {
+            return val::Env(s[3]);
+        }
+        let hole = self.hole();
+        let base = self.vargs.len();
+        let mut cur = env;
+        for _ in 0..n {
+            self.vargs.push(self.a.env_head(cur));
+            cur = self.a.env_tail(cur);
+        }
+        let mut r = val::Env::NIL;
+        for j in (0..n as usize).rev() {
+            let v = if j < 32 && holes >> j & 1 != 0 {
+                hole
+            } else {
+                self.vargs[base + j]
+            };
+            r = self.a.cons(r, v);
+        }
+        self.vargs.truncate(base);
+        self.trim_holes_memo[i] = [env.0, holes, n, r.0];
+        r
     }
 
     /// `prune` with holes at the entries `holes` sets.
