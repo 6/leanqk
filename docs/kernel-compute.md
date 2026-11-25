@@ -227,6 +227,11 @@ pending thunk keeps it. Reading a version first undoes and redoes the
 changes between it and the one holding the vector. A checker that uses
 its arrays linearly, such as LRAT-Catcher's assignment array, therefore
 pays one step per `set` instead of a copy of the whole array.
+On the Keller cubes of `bench/famous-sat` (variables numbered up to
+39 424, 12 cores, against main at 2d58285): cube 3002 goes from 3.6 s and
+3.4 GB to 1.2 s and 0.29 GB, cube 1178 from 21 s and 19.7 GB to 9.2 s and
+0.34 GB, and cube 17832, which ran out of 30 GB, takes 19.6 s and 0.51 GB.
+Memory no longer depends on how the variables are numbered.
 
 ## Lists and decidable equality
 
