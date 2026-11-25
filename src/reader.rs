@@ -512,7 +512,7 @@ impl scan::Sink for ToBatch<'_> {
 
 /// Applies scanned records at once.
 impl scan::Sink for State {
-    #[inline(always)]
+    #[inline(never)]
     fn app(&mut self, id: u64, f: u64, a: u64) -> R<()> {
         if let Some(b) = self.lazy.as_deref_mut()
             && let (Some(f), Some(a)) = (self.expr_ids.get(f), self.expr_ids.get(a))
@@ -524,7 +524,7 @@ impl scan::Sink for State {
         self.apply_expr(src, id, RawExpr::App(f, a))
     }
 
-    #[inline(always)]
+    #[inline(never)]
     fn binder(
         &mut self,
         id: u64,
