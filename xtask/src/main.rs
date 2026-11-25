@@ -4,6 +4,7 @@ mod arena;
 mod ci;
 mod corpus;
 mod difffuzz;
+mod famous_sat;
 mod kc;
 mod kernel_cases;
 mod limited;
@@ -55,6 +56,9 @@ enum Cmd {
     /// The benchmark on all of Mathlib: its export, and timings at several thread counts.
     #[command(subcommand)]
     Mathlib(mathlib::Cmd),
+    /// Cubes of famous cube-and-conquer SAT proofs (bench/famous-sat).
+    #[command(subcommand)]
+    FamousSat(famous_sat::Cmd),
     /// The Lean Kernel Arena benchmark (bench/arena).
     #[command(subcommand)]
     Arena(arena::Cmd),
@@ -85,6 +89,7 @@ fn main() {
         Cmd::Kc(c) => kc::main(c),
         Cmd::Matcert(c) => matcert::main(c),
         Cmd::Mathlib(c) => mathlib::main(c),
+        Cmd::FamousSat(c) => famous_sat::main(c),
         Cmd::Arena(c) => arena::main(c),
         Cmd::Oracle(c) => oracle::main(c),
         Cmd::Difffuzz(a) => difffuzz::main(a),

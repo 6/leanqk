@@ -21,6 +21,7 @@ list every option.
 | `kc ...` | the kernel-computation benchmarks (`bench/kernel-compute`): `fetch-zenodo`, `fetch-lrat`, `fetch-mathlib-decide`, `build-checkers`, `measure`, `summarize`, `run-limited`, `lrat-trim`, `select-decide` |
 | `matcert ...` | the matrix certificates (`bench/certificates`): `gen`, `exports`, `measure`, `table` |
 | `mathlib ...` | the benchmark on all of Mathlib: `fetch` (its v4.36.0 export, checked by SHA-256), `run` (a checker's wall time, CPU time and peak memory at several thread counts) |
+| `famous-sat ...` | cubes of famous cube-and-conquer SAT proofs (`bench/famous-sat`): `fetch`, `parallel`, `coverage`, `scaling`, `survey`, `cube-cnf`, `lrat-core`, `renumber` |
 | `arena ...` | the Lean Kernel Arena benchmark (`bench/arena`): `fetch`, `run`, `report`, `pin`, `collect`, `verify` |
 | `oracle ...` | the per-declaration oracle against Lean's checker (`bench/oracle`): `build`, `run`, `reduce`, `all` |
 
