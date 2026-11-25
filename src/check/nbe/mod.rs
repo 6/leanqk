@@ -35,7 +35,7 @@ use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
 use super::ext::Ext;
-use super::store::{IdMap, IdSet, Store};
+use super::store::{IdMap, Store};
 use super::tc::{KErr, R, Tc};
 use val::{Arena, Ls, V};
 
@@ -68,6 +68,10 @@ const KEEP_VALUES: usize = 1 << 16;
 /// not read (`prune`).
 const PRUNE: bool = true;
 
+/// Slots of `Nbe::syn_t` (direct-mapped: (left term, environment and
+/// substitution, right ones, depth, outcome)).
+const SYN_T: usize = 1 << 12;
+
 /// Slots of `Nbe::prunes`.
 const PRUNES: usize = 1 << 12;
 
@@ -77,8 +81,6 @@ const CHECKED_KEEP: usize = 1 << 20;
 
 /// Terms read from `.olean` files the store may hold between declarations.
 const READ_KEEP: usize = 1 << 20;
-
-type SynKey = (ExprId, val::Env, val::Ls, ExprId, val::Env, val::Ls, u32);
 
 pub struct Nbe<'e> {
     pub st: Store<'e>,
@@ -100,17 +102,13 @@ pub struct Nbe<'e> {
     const_value: IdMap<(NameId, LevelList), V>,
     /// Values left in their `.olean` files, as built in the store.
     lazy_values: IdMap<ExprId, ExprId>,
-    eq_ok: IdSet<(V, V)>,
-    eq_fail: IdSet<(V, V)>,
-    /// Pairs found not definitionally equal.
-    neq: IdSet<(V, V)>,
+    /// What is known of pairs of values (`conv::EQ` and the other bits).
+    pairs: IdMap<(V, V), u8>,
     /// Terms with universe parameters marked checked in this declaration.
     level_checked: Vec<V>,
     fresh: bool,
-    syn_ok: IdSet<(V, V)>,
-    syn_fail: IdSet<(V, V)>,
     /// Structural comparisons of terms in environments, by `syn_eq_t`.
-    syn_t: IdMap<SynKey, bool>,
+    syn_t: Vec<[u32; 8]>,
     level_eq: IdMap<(LevelId, LevelId), bool>,
     major_induct: IdMap<NameId, NameId>,
     /// `prop_positions` of constants.
@@ -251,14 +249,10 @@ impl<'e> Nbe<'e> {
             const_type: IdMap::default(),
             const_value: IdMap::default(),
             lazy_values: IdMap::default(),
-            eq_ok: IdSet::default(),
-            eq_fail: IdSet::default(),
-            neq: IdSet::default(),
+            pairs: IdMap::default(),
             level_checked: Vec::new(),
             fresh: true,
-            syn_ok: IdSet::default(),
-            syn_fail: IdSet::default(),
-            syn_t: IdMap::default(),
+            syn_t: vec![[val::NONE; 8]; SYN_T],
             level_eq: IdMap::default(),
             major_induct: IdMap::default(),
             prop_pos: IdMap::default(),
@@ -421,12 +415,8 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.list_cache);
         shrink(&mut self.const_type);
         shrink(&mut self.const_value);
-        shrink(&mut self.eq_ok);
-        shrink(&mut self.eq_fail);
-        shrink(&mut self.neq);
-        shrink(&mut self.syn_ok);
-        shrink(&mut self.syn_fail);
-        shrink(&mut self.syn_t);
+        shrink(&mut self.pairs);
+        self.syn_t.fill([val::NONE; 8]);
         shrink(&mut self.level_eq);
         shrink(&mut self.major_induct);
         self.fresh = true;

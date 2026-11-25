@@ -22,6 +22,15 @@ fn pair(a: V, b: V) -> (V, V) {
     if a <= b { (a, b) } else { (b, a) }
 }
 
+/// Bits of `Nbe::pairs`: found definitionally equal, found not equal,
+/// found not equal by the arguments of one head (`lazy_delta_step`), found
+/// alike and found not alike by `syn_eq`.
+const EQ: u8 = 1;
+const NEQ: u8 = 2;
+const EQ_FAIL: u8 = 4;
+const SYN_OK: u8 = 8;
+const SYN_FAIL: u8 = 16;
+
 fn compare_hints(h_l: Hints, h_r: Hints) -> i32 {
     match (h_l, h_r) {
         (Hints::Regular(a), Hints::Regular(b)) => {
@@ -138,12 +147,22 @@ impl Nbe<'_> {
                 .all(|(&x, &y)| self.is_def_eq_level(x, y))
     }
 
+    /// What is known of `t` and `s` (bits `EQ` and the others).
+    #[inline]
+    fn pf(&self, t: V, s: V) -> u8 {
+        self.pairs.get(&pair(t, s)).copied().unwrap_or(0)
+    }
+
+    fn pset(&mut self, t: V, s: V, bit: u8) {
+        *self.pairs.entry(pair(t, s)).or_insert(0) |= bit;
+    }
+
     fn is_lit(v: &Val) -> bool {
         matches!(v, Val::Nat(..) | Val::NatBig(_) | Val::Str(_))
     }
 
     fn quick_is_def_eq(&mut self, t: V, s: V) -> R<Option<bool>> {
-        if t == s || self.eq_ok.contains(&pair(t, s)) {
+        if t == s || self.pf(t, s) & EQ != 0 {
             return Ok(Some(true));
         }
         if self.syn_eq(t, s) {
@@ -723,19 +742,19 @@ impl Nbe<'_> {
                         && ssp != Sp::NIL
                         && dt.name == ds.name
                         && matches!(decl_hints(&dt), Hints::Regular(_))
-                        && !self.eq_fail.contains(&pair(*t, *s))
+                        && self.pf(*t, *s) & EQ_FAIL == 0
                     {
                         if self.is_def_eq_levels(lt, ls) && self.is_def_eq_args(*t, *s)? {
                             return Ok(Step::Equal);
                         }
-                        self.eq_fail.insert(pair(*t, *s));
+                        self.pset(*t, *s, EQ_FAIL);
                     } else if let (Val::Const(_, lt, tsp), Val::Const(_, ls, ssp)) =
                         (self.a.get(*t), self.a.get(*s))
                         && tsp != Sp::NIL
                         && ssp != Sp::NIL
                         && dt.name == ds.name
                         && !matches!(decl_hints(&dt), Hints::Regular(_))
-                        && !self.eq_fail.contains(&pair(*t, *s))
+                        && self.pf(*t, *s) & EQ_FAIL == 0
                         && self.is_def_eq_levels(lt, ls)
                         && self.probe_worth(&dt, tsp, ssp)
                     {
@@ -746,7 +765,7 @@ impl Nbe<'_> {
                         if self.attempt(ARGS_PROBE, |nb| nb.is_def_eq_args(*t, *s))? == Some(true) {
                             return Ok(Step::Equal);
                         }
-                        self.eq_fail.insert(pair(*t, *s));
+                        self.pset(*t, *s, EQ_FAIL);
                     }
                     *t = self.unfold_cheap(*t)?;
                     *s = self.unfold_cheap(*s)?;
@@ -996,13 +1015,14 @@ impl Nbe<'_> {
     /// `is_def_eq` of two different values.
     #[inline(never)]
     fn is_def_eq_memo(&mut self, t: V, s: V) -> R<bool> {
-        if self.neq.contains(&pair(t, s)) {
+        let known = self.pf(t, s);
+        if known & NEQ != 0 {
             return Ok(false);
         }
         // In a heavy declaration, also remember results by the terms the
         // values stand for: different values (a thunk and its value, say,
         // inside them) often stand for one term, and then compare alike.
-        let named = if self.decl_steps > HEAVY_STEPS && !self.eq_ok.contains(&pair(t, s)) {
+        let named = if self.decl_steps > HEAVY_STEPS && known & EQ == 0 {
             match (self.name(t), self.name(s)) {
                 (Some(a), Some(b)) => {
                     if a == b {
@@ -1023,11 +1043,7 @@ impl Nbe<'_> {
         if let Some(k) = named {
             self.name_eq.insert(k, r);
         }
-        if r {
-            self.eq_ok.insert(pair(t, s));
-        } else {
-            self.neq.insert(pair(t, s));
-        }
+        self.pset(t, s, if r { EQ } else { NEQ });
         Ok(r)
     }
 }
@@ -1063,7 +1079,7 @@ impl Nbe<'_> {
         let r = self.syn_eq_v(t, s, &mut budget);
         if !r {
             // Out of budget too: a heuristic, not tried again on this pair.
-            self.syn_fail.insert(pair(t, s));
+            self.pset(t, s, SYN_FAIL);
         }
         r
     }
@@ -1076,11 +1092,11 @@ impl Nbe<'_> {
             return false;
         }
         *budget -= 1;
-        let k = pair(t, s);
-        if self.eq_ok.contains(&k) || self.syn_ok.contains(&k) {
+        let known = self.pf(t, s);
+        if known & (EQ | SYN_OK) != 0 {
             return true;
         }
-        if self.syn_fail.contains(&k) {
+        if known & SYN_FAIL != 0 {
             return false;
         }
         let r = match (self.a.get(t), self.a.get(s)) {
@@ -1105,9 +1121,9 @@ impl Nbe<'_> {
             _ => false,
         };
         if r {
-            self.syn_ok.insert(k);
+            self.pset(t, s, SYN_OK);
         } else if *budget > 0 {
-            self.syn_fail.insert(k);
+            self.pset(t, s, SYN_FAIL);
         }
         r
     }
@@ -1175,14 +1191,27 @@ impl Nbe<'_> {
             && k_r == d
             && matches!(self.st.node(t_l), ExprNode::App(..))
             && matches!(self.st.node(t_r), ExprNode::App(..));
-        let key = (t_l, e_l, l_l, t_r, e_r, l_r, d);
         if memo {
-            if let Some(&r) = self.syn_t.get(&key) {
-                return r;
+            let key = [t_l.0, e_l.0, l_l.0, t_r.0, e_r.0, l_r.0, d];
+            let h = crate::hash::hash2(
+                (t_l.0 as u64) << 32 | t_r.0 as u64,
+                (e_l.0 as u64) << 32
+                    ^ (e_r.0 as u64)
+                    ^ (l_l.0 as u64) << 48
+                    ^ (l_r.0 as u64) << 16
+                    ^ d as u64,
+            );
+            let i = (h >> 52) as usize & (super::SYN_T - 1);
+            let s = self.syn_t[i];
+            if s[..7] == key {
+                return s[7] != 0;
             }
             let r = self.syn_eq_t_node(t_l, e_l, l_l, k_l, t_r, e_r, l_r, k_r, d, budget);
             if r || *budget > 0 {
-                self.syn_t.insert(key, r);
+                let mut e = [0; 8];
+                e[..7].copy_from_slice(&key);
+                e[7] = r as u32;
+                self.syn_t[i] = e;
             }
             return r;
         }
