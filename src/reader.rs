@@ -454,7 +454,7 @@ impl Batch {
 }
 
 /// Adds scanned records to a batch.
-struct ToBatch<'a>(&'a mut Batch);
+struct ToBatch<'a>(&'a mut Batch, Option<Fail>);
 
 impl scan::Sink for ToBatch<'_> {
     fn app(&mut self, id: u64, f: u64, a: u64) -> R<()> {
@@ -502,6 +502,11 @@ impl scan::Sink for ToBatch<'_> {
             other => other,
         };
         self.0.push_scanned(line, item)
+    }
+
+    #[cold]
+    fn fail(&mut self, f: Fail) {
+        self.1 = Some(f);
     }
 }
 
@@ -565,6 +570,11 @@ impl scan::Sink for State {
 
     fn decl(&mut self, d: &scan::Decl, us: &[u64]) -> Option<R<()>> {
         Some(self.scanned_decl(d, us))
+    }
+
+    #[cold]
+    fn fail(&mut self, f: Fail) {
+        self.failed = Some(f);
     }
 }
 
@@ -807,12 +817,15 @@ fn parse_chunk(
     while pos < buf.len() {
         if seen_first {
             let mut us = std::mem::take(&mut batch.scratch);
-            let got = scan::line(&buf[pos..], &mut us, &mut ToBatch(&mut batch));
+            let mut sink = ToBatch(&mut batch, None);
+            let got = scan::line(&buf[pos..], &mut us, &mut sink);
+            let failed = sink.1;
             batch.scratch = us;
-            if let Some((n, res)) = got {
+            if let Some((n, took)) = got {
                 lines += 1;
                 bytes += n as u64;
-                if let Err(f) = res {
+                if !took {
+                    let f = failed.expect("a failure");
                     batch.end = Some(Err(ReadError {
                         line: lines,
                         class: f.class,
@@ -904,11 +917,16 @@ fn produce<B: BufRead>(mut r: B, full: SyncSender<Batch>, empty: Receiver<Batch>
 fn parse_line(tape: &mut Tape, buf: &[u8], batch: &mut Batch, seen_first: &mut bool) -> R<()> {
     if *seen_first {
         let mut us = std::mem::take(&mut batch.scratch);
-        let got = scan::line(buf, &mut us, &mut ToBatch(batch));
+        let mut sink = ToBatch(batch, None);
+        let got = scan::line(buf, &mut us, &mut sink);
+        let failed = sink.1;
         batch.scratch = us;
-        if let Some((n, res)) = got {
+        if let Some((n, took)) = got {
             debug_assert_eq!(n, buf.len());
-            return res;
+            return match failed {
+                Some(f) if !took => Err(f),
+                _ => Ok(()),
+            };
         }
     }
     let line = match std::str::from_utf8(buf) {
@@ -1211,6 +1229,8 @@ struct State {
     lazy: Option<Box<lazy::Builder>>,
     /// Add expressions without hash-consing them (see `read_open_file`).
     append: bool,
+    /// The failure of a line [`scan::line`] gave to this state.
+    failed: Option<Fail>,
 }
 
 /// The state of [`State::lines`] between blocks of input.
@@ -1313,6 +1333,7 @@ impl State {
             rules_buf: Vec::new(),
             lazy: None,
             append: false,
+            failed: None,
         }
     }
 
@@ -1441,11 +1462,12 @@ impl State {
             k += 1;
             if l.seen_first {
                 match scan::line(&data[pos..], &mut l.us, self) {
-                    Some((n, Ok(()))) => {
+                    Some((n, true)) => {
                         pos += n;
                         continue;
                     }
-                    Some((_, Err(f))) => {
+                    Some((_, false)) => {
+                        let f = self.failed.take().expect("a failure");
                         res = Err(fail(k, f));
                         break;
                     }
@@ -2098,9 +2120,11 @@ mod tests {
     fn scanned_one(input: &str, n: usize) -> bool {
         let mut b = Batch::default();
         let mut us = Vec::new();
-        let Some((got, res)) = scan::line(input.as_bytes(), &mut us, &mut ToBatch(&mut b)) else {
+        let mut sink = ToBatch(&mut b, None);
+        let Some((got, took)) = scan::line(input.as_bytes(), &mut us, &mut sink) else {
             return false;
         };
+        let res = if took { Ok(()) } else { Err(sink.1) };
         let line = &input[..n];
         assert_eq!(got, n, "line: {line}");
         assert!(res.is_ok());
