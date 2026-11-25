@@ -242,11 +242,10 @@ measures four checkers within 60 s and 4 GiB of resident memory; its README
 has every number. In short, the largest kernel-only LRAT proof checked
 within that budget:
 
-| | GBD instances | pigeonhole PHP(n+1, n) |
-|---|---:|---:|
-| nitrolean | 696 KB (45 s, 1.5 GiB) | 796 KB (47 s, 1.5 GiB) |
-| Lean's `leanchecker` | 1.9 KB | 1.7 KB |
-| gruszka, nano-lean | 31 KB | 9.6 KB |
+| series | nitrolean | Lean's `leanchecker` | gruszka, nano-lean |
+|---|---:|---:|---:|
+| GBD instances | 696 KB (45 s, 1.5 GiB) | 1.9 KB | 31 KB |
+| pigeonhole PHP(n+1, n) | 796 KB (47 s, 1.5 GiB) | 1.7 KB | 9.6 KB |
 
 The next sizes (1.8 MB and 4.5 MB) run out of 4 GiB after 2 to 5 minutes.
 The planar-graph result (doi:10.5281/zenodo.24467489, its own declarations

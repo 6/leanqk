@@ -33,7 +33,7 @@ bot_trailer='Co-Authored-By: 6[bot] <129682364+6[bot]@users.noreply.github.com>'
 tree_grep() { git grep --untracked -nIE "$@" -- . 2>/dev/null; }
 
 # 1. README.md is exactly one line, ending in a newline.
-readme_line='`nitrolean` - work in progress'
+readme_line='`nitrolean` - Independent Lean 4 proof checker in Rust, focused on speed and low memory use (work in progress)'
 if [[ ! -f README.md ]]; then
   violation "README.md is missing"
 elif [[ $(cat README.md) != "$readme_line" || $(wc -l <README.md) != 1 ]]; then
