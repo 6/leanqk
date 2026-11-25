@@ -1,0 +1,16 @@
+# Pinned projects for the corpus oracle (bench/oracle/README.md). One project per line,
+# tab-separated; adding a project is adding a line. Columns:
+#   id         short name, used for out/<id>/ and in RESULTS.md
+#   tier       1 runs by default (small, minutes in all); 2 and 3 are opt-in with --tier
+#   toolchain  the project's lean-toolchain at that commit (build.sh checks it)
+#   url        public git repository
+#   commit     full commit SHA
+#   subdir     the Lake project's directory in the repository (. for the top)
+#   roots      modules to build and export, comma-separated
+#   prefixes   module-name prefixes of the project's own modules, comma-separated: the export
+#              is the closure of the non-internal constants declared in them
+#   cache      yes: run `lake exe cache get` before building (Mathlib-based projects)
+#id	tier	toolchain	url	commit	subdir	roots	prefixes	cache
+batteries	1	leanprover/lean4:v4.36.0	https://github.com/leanprover-community/batteries	b4b25a3886a16daacaf6615c2eea7170a6e8f458	.	Batteries	Batteries	no
+aesop	1	leanprover/lean4:v4.36.0	https://github.com/leanprover-community/aesop	66ff77cf0c4c898799e4b94d14db55f7a02d0c5a	.	Aesop	Aesop	no
+plausible	1	leanprover/lean4:v4.36.0	https://github.com/leanprover-community/plausible	054b228ce0ac61d767c6e71ba73a24728f191b72	.	Plausible	Plausible	no
