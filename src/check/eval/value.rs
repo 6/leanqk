@@ -93,6 +93,9 @@ impl ArrVal {
 
     /// Makes `a` the root.
     fn reroot(a: &Rc<ArrVal>) {
+        if matches!(*a.node.borrow(), Node::Root(_)) {
+            return;
+        }
         let mut path = vec![a.clone()];
         loop {
             let next = match &*path[path.len() - 1].node.borrow() {

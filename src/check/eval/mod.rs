@@ -196,6 +196,9 @@ pub struct State {
     /// One thunk per closed term.
     closed: IdMap<ExprId, Th>,
     steps: u64,
+    /// Fast-path hits not yet added to `FAST` (kept here so that threads
+    /// do not share a counter on every hit).
+    fast: [u64; 6],
     depth: u32,
     array_names: Option<Option<(NameId, NameId, NameId)>>,
     nullary: IdMap<ExprId, V>,
@@ -283,6 +286,11 @@ pub fn whnf(tc: &mut Tc<'_>, e: ExprId) -> Option<ExprId> {
     }
     CALLS.fetch_add(1, Relaxed);
     STEPS.fetch_add(s.steps, Relaxed);
+    for (n, f) in s.fast.iter_mut().zip(&FAST) {
+        if *n > 0 {
+            f.fetch_add(std::mem::take(n), Relaxed);
+        }
+    }
     NANOS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
     match r {
         Ok(_) => HITS.fetch_add(1, Relaxed),
@@ -924,7 +932,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         });
         let f = match hit {
             Some(f) => {
-                FAST[4].fetch_add(1, Relaxed);
+                self.s.fast[4] += 1;
                 f
             }
             None => self.method_miss(c, v, args, rest.len())?,
@@ -1379,7 +1387,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             && *nf as usize <= margs.len()
             && args.len() >= ci.arity + *e as usize
         {
-            FAST[5].fetch_add(1, Relaxed);
+            self.s.fast[5] += 1;
             let (nf, e) = (*nf as usize, *e as usize);
             let mut rest = args.split_off(ci.arity);
             let tail = rest.split_off(e);
@@ -1752,7 +1760,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         let rest = args.split_off(6);
         let r = match self.beq_prod_fast(&args)? {
             Some(b) => {
-                FAST[2].fetch_add(1, Relaxed);
+                self.s.fast[2] += 1;
                 self.mk_bool(b)?
             }
             None => {
@@ -1811,7 +1819,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         let rest = args.split_off(n);
         let r = match self.int_fast(op, &args)? {
             Some(v) => {
-                FAST[3].fetch_add(1, Relaxed);
+                self.s.fast[3] += 1;
                 v
             }
             None => self.unfold_def(def, args)?,
@@ -2019,7 +2027,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         let rest = args.split_off(n);
         let r = match self.list_fast(c, op, &args)? {
             Some(v) => {
-                FAST[0].fetch_add(1, Relaxed);
+                self.s.fast[0] += 1;
                 v
             }
             None => self.unfold_def(def, args)?,
@@ -2413,7 +2421,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         let r = match r {
             Some(b) => match self.decision(c, b, &args) {
                 Some(v) => {
-                    FAST[1].fetch_add(1, Relaxed);
+                    self.s.fast[1] += 1;
                     v
                 }
                 None => self.unfold_def(def, args)?,
