@@ -74,7 +74,7 @@ pub enum Val {
 /// A table hash from 32 stored bits, so that growing a table reads no
 /// arena entries.
 #[inline]
-fn spread(h: u32) -> u64 {
+pub(super) fn spread(h: u32) -> u64 {
     (h as u64 | (h as u64) << 32).wrapping_mul(0x9e37_79b9_7f4a_7c15)
 }
 

@@ -72,6 +72,9 @@ const PRUNE: bool = true;
 /// substitution, right ones, depth, outcome)).
 const SYN_T: usize = 1 << 12;
 
+/// Slots of `Nbe::eager_slots`.
+pub(super) const EAGER_SLOTS: usize = 1 << 14;
+
 /// Slots of `Nbe::prunes`.
 const PRUNES: usize = 1 << 12;
 
@@ -98,6 +101,16 @@ pub struct Nbe<'e> {
     pub fvars: Vec<FVarInfo>,
     bigs: Vec<BigUint>,
     big_table: HashTable<u32>,
+    /// A direct-mapped front of `eager_memo`: (term, environment,
+    /// substitution, value).
+    pub(super) eager_slots: Vec<[u32; 4]>,
+    /// Values of terms evaluated by `thunk` at once, by the term, its
+    /// substitution and the entries of its environment it reads: indices
+    /// of records in `eager_keys`.
+    pub(super) eager_memo: HashTable<u32>,
+    /// Records of `eager_memo`: hash, term, substitution, range, holes,
+    /// number of values read, those values, the value.
+    pub(super) eager_keys: Vec<u32>,
     level_cache: lsub::Lsub<(LevelId, Ls), LevelId>,
     list_cache: lsub::Lsub<(LevelList, Ls), LevelList>,
     /// Universe parameter lists by their names (see `lsub::ParamClasses`).
@@ -258,6 +271,9 @@ impl<'e> Nbe<'e> {
             fvars: Vec::new(),
             bigs: Vec::new(),
             big_table: HashTable::new(),
+            eager_slots: vec![[val::NONE; 4]; EAGER_SLOTS],
+            eager_memo: HashTable::new(),
+            eager_keys: Vec::new(),
             level_cache: Default::default(),
             list_cache: Default::default(),
             param_classes: Default::default(),
@@ -452,6 +468,14 @@ impl<'e> Nbe<'e> {
         self.a.clear();
         self.prunes.fill([val::NONE; 3]);
         self.trim_holes_memo.fill([val::NONE; 4]);
+        self.eager_slots.fill([val::NONE; 4]);
+        if self.eager_memo.capacity() > 1 << 16 {
+            self.eager_memo = HashTable::new();
+            self.eager_keys = Vec::new();
+        } else {
+            self.eager_memo.clear();
+            self.eager_keys.clear();
+        }
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;
