@@ -1492,11 +1492,12 @@ impl State {
         let mut k = l.lines;
         let mut res = Ok(());
         while pos < data.len() {
+            // `{"app"`, `{"forallE"` or `{"ie"`.
             if l.seen_first
-                && data.get(pos + 2) == Some(&b'a')
+                && matches!(data.get(pos + 2..pos + 4), Some(b"ap" | b"fo" | b"ie"))
                 && let Some(b) = self.lazy.as_deref_mut()
             {
-                let (n, m) = b.apps(&data[pos..]);
+                let (n, m) = b.exprs(&data[pos..], &self.name_ids);
                 pos += n;
                 k += m;
                 if pos == data.len() {

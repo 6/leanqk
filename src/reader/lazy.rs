@@ -26,6 +26,7 @@ use hashbrown::HashMap;
 use super::{Fail, R};
 use crate::env::{Env, LAZY_BASE, LazyValues, TermSink};
 use crate::expr::{BinderInfo, ExprId, ExprNode, LetBinder};
+use crate::idmap::IdMap;
 use crate::name::NameId;
 use crate::strings::Overflow;
 
@@ -162,6 +163,13 @@ fn add(env: &mut Env, append: bool, n: Node, ids: [u32; 3]) -> R<u32> {
         }
         Node::Proj(s, i, _) => ExprNode::Proj(s, i, e(0)),
     };
+    add_node(env, append, node)
+}
+
+/// Add compound `node` to `env` (without hash-consing it if `append`);
+/// its arena id.
+#[inline(always)]
+fn add_node(env: &mut Env, append: bool, node: ExprNode) -> R<u32> {
     let id = if append {
         env.exprs.append_compound(node)?
     } else {
@@ -221,25 +229,25 @@ impl Builder {
         true
     }
 
-    /// The application lines at the start of `s` (see `run`): how many
-    /// bytes and lines it took.
+    /// The application and binder lines at the start of `s` (see `run`),
+    /// with the names' ids mapped by `names`: how many bytes and lines it
+    /// took.
     #[inline(never)]
-    pub(super) fn apps(&mut self, s: &[u8]) -> (usize, u64) {
+    pub(super) fn exprs(&mut self, s: &[u8], names: &IdMap) -> (usize, u64) {
         let e = self.recs.len() as u64;
         // Room for as many lines as fit in `s`, at 32 bytes or more each.
         if e + s.len() as u64 / 32 >= MAX_IDS {
             return (0, 0);
         }
-        // A local vector, which the loop can keep in registers.
-        let mut recs = std::mem::take(&mut self.recs);
-        let r = super::run::apps(s, e, |e, f, a| {
-            if f >= e || a >= e {
-                return false;
-            }
-            recs.push(T_APP << TAG | f << ID_BITS | a);
-            true
-        });
-        self.recs = recs;
+        // Local vectors, which the loop can keep in registers.
+        let mut out = Out {
+            recs: std::mem::take(&mut self.recs),
+            side: std::mem::take(&mut self.side),
+            names,
+        };
+        let r = super::run::exprs(s, e, &mut out);
+        self.recs = out.recs;
+        self.side = out.side;
         r
     }
 
@@ -326,7 +334,8 @@ impl Builder {
     #[inline(always)]
     fn real(&self, id: u32) -> u32 {
         let r = self.recs[id as usize];
-        if r & DONE == 0 && tag(r) == T_ALIAS {
+        // (An alias is never marked done or needed.)
+        if r >> TAG == T_ALIAS {
             (r & ID_MASK) as u32
         } else {
             id
@@ -366,7 +375,14 @@ impl Builder {
             let r = self.recs[j];
             if r & NEEDED != 0 {
                 left -= 1;
-                let (kids, k) = decode(&self.side, r).kids();
+                let (kids, k) = if tag(r) == T_APP {
+                    (
+                        [(r >> ID_BITS & ID_MASK) as u32, (r & ID_MASK) as u32, 0],
+                        2,
+                    )
+                } else {
+                    decode(&self.side, r).kids()
+                };
                 for &c in &kids[..k] {
                     let c = self.real(c) as usize;
                     if c >= from && self.recs[c] & (DONE | NEEDED) == 0 {
@@ -386,19 +402,32 @@ impl Builder {
             if r & NEEDED == 0 {
                 continue;
             }
-            let n = decode(&self.side, r & !NEEDED);
+            let r = r & !NEEDED;
+            if tag(r) == T_APP {
+                let f = self.known_or_old(env, append, (r >> ID_BITS & ID_MASK) as u32)?;
+                let a = self.known_or_old(env, append, (r & ID_MASK) as u32)?;
+                let id = add_node(env, append, ExprNode::App(ExprId(f), ExprId(a)))?;
+                self.recs[x] = DONE | id as u64;
+                continue;
+            }
+            let n = decode(&self.side, r);
             let (kids, k) = n.kids();
             let mut ids = [0u32; 3];
             for (&c, id) in kids[..k].iter().zip(&mut ids) {
-                *id = match self.known(c) {
-                    Some(v) => v,
-                    // An old record (recent ones are interned by now).
-                    None => self.promote_old(env, append, self.real(c))?.0,
-                };
+                *id = self.known_or_old(env, append, c)?;
             }
             self.recs[x] = DONE | add(env, append, n, ids)? as u64;
         }
         Ok(ExprId(self.recs[i] as u32))
+    }
+
+    /// The arena id of `c`, interned by now if it is recent.
+    #[inline(always)]
+    fn known_or_old(&mut self, env: &mut Env, append: bool, c: u32) -> R<u32> {
+        match self.known(c) {
+            Some(v) => Ok(v),
+            None => Ok(self.promote_old(env, append, self.real(c))?.0),
+        }
     }
 
     /// [`Builder::promote`] for any record, with a stack.
@@ -502,6 +531,39 @@ impl Builder {
             side: self.side,
             roots: self.roots,
         }))
+    }
+}
+
+/// Where [`Builder::exprs`] puts records.
+struct Out<'a> {
+    recs: Vec<u64>,
+    side: Vec<u32>,
+    names: &'a IdMap,
+}
+
+impl super::run::Records for Out<'_> {
+    #[inline(always)]
+    fn app(&mut self, id: u64, f: u64, a: u64) -> bool {
+        if f >= id || a >= id {
+            return false;
+        }
+        self.recs.push(T_APP << TAG | f << ID_BITS | a);
+        true
+    }
+
+    #[inline(always)]
+    fn binder(&mut self, id: u64, pi: bool, bi: BinderInfo, name: u64, ty: u64, body: u64) -> bool {
+        let Some(name) = self.names.get(name) else {
+            return false;
+        };
+        let o = self.side.len();
+        if ty >= id || body >= id || o > u32::MAX as usize - 4 {
+            return false;
+        }
+        self.side.extend_from_slice(&[name, ty as u32, body as u32]);
+        let t = if pi { T_PI } else { T_LAM };
+        self.recs.push(t << TAG | bi_bits(bi) << 32 | o as u64);
+        true
     }
 }
 
