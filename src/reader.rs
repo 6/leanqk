@@ -183,14 +183,15 @@ fn read_open_file(f: File, opts: &Options) -> Result<(Env, ReadStats), ReadError
             BufReader::with_capacity(1 << 20, f),
         );
     }
-    // A regular file is read optimistically: expressions are added
-    // without hash-consing (an export lists each term once) and indexed
+    // A regular file is read optimistically: names and expressions are
+    // added without hash-consing (an export lists each once) and indexed
     // at the end, on all threads. If two turn out equal after all, the
     // file is read again with hash-consing.
     let t0 = std::time::Instant::now();
     let (mut env, stats) = read_regular(&f, size, threads, state(opts, size, true))?;
     let t1 = std::time::Instant::now();
-    let ix = env.exprs.index(threads);
+    let names = env.names.index(threads).map_err(|(a, b)| (a.0, b.0));
+    let ix = names.and_then(|()| env.exprs.index(threads).map_err(|(a, b)| (a.0, b.0)));
     if std::env::var_os("NITROLEAN_READ_PROFILE").is_some() {
         eprintln!(
             "read {:.3} s (interning thread waited {:.3} s), index {:.3} s, duplicate {:?}",
@@ -218,9 +219,9 @@ fn state(opts: &Options, size: u64, append: bool) -> State {
         // bytes of a real export).
         st.expr_ids.reserve((size / 56).min(1 << 31) as usize);
     }
-    // About one name per 1 KiB of a real export.
-    st.env.names.reserve((size / 1024).min(1 << 31) as usize);
     if !append {
+        // About one name per 1 KiB of a real export.
+        st.env.names.reserve((size / 1024).min(1 << 31) as usize);
         // About 94% of the lines of a real export are expressions, and a
         // line averages 55 bytes; reserving up front avoids rehashing the
         // big table. With lazy proofs, about a third of them are interned.
@@ -606,6 +607,11 @@ fn finish(
     let res = read(&mut st);
     let id_map_bytes =
         st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
+    // The id maps are done with: free them before the lazy values are
+    // put together.
+    for m in [&mut st.name_ids, &mut st.level_ids, &mut st.expr_ids] {
+        *m = IdMap::new(0);
+    }
     if let Some(b) = st.lazy.take() {
         st.env.lazy = b.finish();
     }
@@ -1538,7 +1544,11 @@ impl State {
                     }
                     Comp::Num(n) => NameNode::Num(pre, n),
                 };
-                let (n, _) = self.env.names.intern(node)?;
+                let n = if self.append {
+                    self.env.names.append(node)?
+                } else {
+                    self.env.names.intern(node)?.0
+                };
                 self.bind(Table::Name, id, n.0)
             }
             Item::Level { id, node } => {
