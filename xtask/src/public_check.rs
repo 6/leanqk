@@ -19,8 +19,7 @@ use crate::util::{exit_with, glob_match, root};
 pub const ALLOW_FILE: &str = "xtask/public-check.allow";
 
 const README_LINE: &str = "`nitrolean` - Independent Lean 4 proof checker in Rust, focused on speed and low memory use (work in progress)";
-const BOT_TRAILER: &str =
-    "Co-Authored-By: 6[bot] <129682364+6[bot]@users.noreply.github.com>";
+const BOT_TRAILER: &str = "Co-Authored-By: 6[bot] <129682364+6[bot]@users.noreply.github.com>";
 const HOME_PATHS: &str = "/(home|Users)/[A-Za-z0-9_]";
 const IPV4: &str = r"\b([0-9]{1,3}\.){3}[0-9]{1,3}\b";
 
@@ -80,7 +79,9 @@ pub fn check(dir: &Path, range: Option<&str>) -> Result<Report> {
             let stripped = data.strip_suffix_all(b'\n');
             let lines = data.iter().filter(|&&b| b == b'\n').count();
             if stripped != README_LINE.as_bytes() || lines != 1 {
-                errors.push(format!("README.md must be exactly the one line '{README_LINE}'"));
+                errors.push(format!(
+                    "README.md must be exactly the one line '{README_LINE}'"
+                ));
             }
         }
     }
@@ -127,16 +128,19 @@ pub fn check(dir: &Path, range: Option<&str>) -> Result<Report> {
         }
     }
     let allowed = |f: &str| allow.iter().any(|p| glob_match(p, f));
-    let text: std::collections::HashSet<String> = git_lines(
-        dir,
-        &["grep", "--untracked", "-IlzE", "", "--", "."],
-        0,
-    )
-    .into_iter()
-    .collect();
+    let text: std::collections::HashSet<String> =
+        git_lines(dir, &["grep", "--untracked", "-IlzE", "", "--", "."], 0)
+            .into_iter()
+            .collect();
     for f in git_lines(
         dir,
-        &["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        &[
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
         0,
     ) {
         let p = dir.join(&f);
@@ -301,7 +305,11 @@ impl T<'_> {
 
     fn run(&self) -> Result<(bool, String)> {
         let r = check(self.repo, Some("base..HEAD"))?;
-        let mut out: Vec<String> = r.errors.iter().map(|e| format!("public-check: {e}")).collect();
+        let mut out: Vec<String> = r
+            .errors
+            .iter()
+            .map(|e| format!("public-check: {e}"))
+            .collect();
         if r.errors.is_empty() {
             out.push(r.ok_line);
         } else {
@@ -355,7 +363,10 @@ fn self_test_in(tmp: &Path) -> Result<usize> {
         "# test allowlist\nallowed.bin\nbig-allowed.txt  # trailing comment\n",
     )?;
     t.write("README.md", format!("{README_LINE}\n"))?;
-    t.write("notes.txt", "documentation address 192.0.2.17, version 4.36.0\n")?;
+    t.write(
+        "notes.txt",
+        "documentation address 192.0.2.17, version 4.36.0\n",
+    )?;
     t.g(&["add", "-A"])?;
     t.g(&["commit", "-qm", "Initial commit"])?;
     t.g(&["tag", "base"])?;
@@ -366,7 +377,10 @@ fn self_test_in(tmp: &Path) -> Result<usize> {
     t.expect_fail("README with two lines", "README.md must be exactly")?;
 
     t.write("README.md", README_LINE)?;
-    t.expect_fail("README without a final newline", "README.md must be exactly")?;
+    t.expect_fail(
+        "README without a final newline",
+        "README.md must be exactly",
+    )?;
 
     t.write("README.md", format!("{}\n", README_LINE.replace('`', "")))?;
     t.expect_fail("README without the backticks", "README.md must be exactly")?;
@@ -378,7 +392,10 @@ fn self_test_in(tmp: &Path) -> Result<usize> {
     t.expect_fail("macOS home path", "home directory path: a.txt:1")?;
 
     t.plant("a.txt", concat!("server at 10.1.2", ".3"))?;
-    t.expect_fail("IPv4 address", concat!("IPv4 address: a.txt:1: 10.1.2", ".3"))?;
+    t.expect_fail(
+        "IPv4 address",
+        concat!("IPv4 address: a.txt:1: 10.1.2", ".3"),
+    )?;
 
     t.write("b.txt", concat!("see /ho", "me/bob/y\n"))?;
     t.expect_fail("untracked file", "home directory path: b.txt:1")?;

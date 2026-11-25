@@ -2,6 +2,7 @@
 #![allow(dead_code)] // TEMP while porting
 
 mod arena;
+mod ci;
 mod corpus;
 mod kc;
 mod kernel_cases;
@@ -38,6 +39,8 @@ enum Cmd {
     LeanVerdicts(corpus::VerdictArgs),
     /// Check that the .olean reader gives the same environment as Lean's export.
     OleanEquivalence(corpus::OleanArgs),
+    /// Install elan from its pinned release archive (for CI).
+    InstallElan(ci::InstallElanArgs),
     /// Generate the kernel test cases under tests/kernel.
     KernelCases(kernel_cases::Args),
     /// The kernel-computation benchmarks (bench/kernel-compute).
@@ -52,6 +55,10 @@ enum Cmd {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.first().and_then(|a| a.rsplit('/').next()) == Some("nitrolean") {
+        selfcheck::fake_nitrolean(&args);
+    }
     let cli = Cli::parse();
     let r = match cli.cmd {
         Cmd::PublicCheck(a) => public_check::main(a),
@@ -62,6 +69,7 @@ fn main() {
         Cmd::CorpusChecksums(a) => corpus::checksums_main(a),
         Cmd::LeanVerdicts(a) => corpus::verdicts_main(a),
         Cmd::OleanEquivalence(a) => corpus::olean_main(a),
+        Cmd::InstallElan(a) => ci::install_elan(a),
         Cmd::KernelCases(a) => kernel_cases::main(a),
         Cmd::Kc(c) => kc::main(c),
         Cmd::Arena(c) => arena::main(c),

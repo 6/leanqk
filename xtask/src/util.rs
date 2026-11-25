@@ -105,7 +105,9 @@ pub fn find_files(dir: &Path, rel: &str, skip: &[&str], out: &mut Vec<String>) -
         for e in fs::read_dir(&p)? {
             let e = e?;
             let name = e.file_name();
-            let name = name.to_str().ok_or_else(|| anyhow!("non-UTF-8 file name"))?;
+            let name = name
+                .to_str()
+                .ok_or_else(|| anyhow!("non-UTF-8 file name"))?;
             let sub = if rel.ends_with('/') {
                 format!("{rel}{name}")
             } else {

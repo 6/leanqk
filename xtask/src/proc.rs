@@ -81,7 +81,9 @@ pub fn run_timed(
         // SAFETY: plain syscall.
         unsafe { libc::kill(-pid, libc::SIGKILL) };
     }
-    let stderr = reader.map(|r| r.join().unwrap_or_default()).unwrap_or_default();
+    let stderr = reader
+        .map(|r| r.join().unwrap_or_default())
+        .unwrap_or_default();
     let code = if libc::WIFEXITED(status) {
         libc::WEXITSTATUS(status)
     } else if libc::WIFSIGNALED(status) {

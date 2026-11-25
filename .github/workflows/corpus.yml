@@ -33,15 +33,24 @@ jobs:
 
       - uses: jdx/mise-action@v5
 
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'mise.toml') }}
+
       - name: Self-check
-        run: scripts/selfcheck.sh
+        run: cargo xtask selfcheck
 
       - name: Cache the corpus
         id: corpus-cache
         uses: actions/cache@v6
         with:
           path: corpus/exports
-          key: corpus-${{ hashFiles('scripts/fetch-corpus.sh', 'scripts/corpus.py', 'corpus/lean/**', 'corpus/exports.sha256') }}
+          key: corpus-${{ hashFiles('xtask/src/corpus.rs', 'corpus/lean/**', 'corpus/exports.sha256') }}
 
       - name: Cache elan and Lean
         if: steps.corpus-cache.outputs.cache-hit != 'true'
@@ -55,36 +64,19 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/uv
-          key: uv-${{ hashFiles('scripts/fetch-corpus.sh') }}
+          key: uv-${{ hashFiles('xtask/src/corpus.rs') }}
 
       - name: Install elan
         if: steps.corpus-cache.outputs.cache-hit != 'true'
-        run: |
-          if [ ! -x ~/.elan/bin/elan ]; then
-            curl -sSfL -o /tmp/elan.tar.gz \
-              "https://github.com/leanprover/elan/releases/download/$ELAN_VERSION/elan-x86_64-unknown-linux-gnu.tar.gz"
-            echo "$ELAN_SHA256  /tmp/elan.tar.gz" | sha256sum -c -
-            tar -xzf /tmp/elan.tar.gz -C /tmp
-            /tmp/elan-init -y --no-modify-path --default-toolchain none
-          fi
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+        run: cargo xtask install-elan
 
       - name: Fetch the corpus
         if: steps.corpus-cache.outputs.cache-hit != 'true'
-        run: time scripts/fetch-corpus.sh
+        run: time cargo xtask fetch-corpus
 
       - name: Check the cached corpus
         if: steps.corpus-cache.outputs.cache-hit == 'true'
-        run: python3 -I scripts/corpus.py checksums corpus/exports --check corpus/exports.sha256
-
-      - name: Cache cargo
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'mise.toml') }}
+        run: cargo xtask corpus-checksums corpus/exports --check corpus/exports.sha256
 
       - name: Install GNU time
         run: test -x /usr/bin/time || { sudo apt-get update -q && sudo apt-get install -yq time; }
@@ -94,13 +86,13 @@ jobs:
 
       # Every export the reader should be able to read must parse.
       - name: Parse the corpus
-        run: python3 -I scripts/run-corpus.py --parse-only -q --results corpus-parse.tsv
+        run: cargo xtask corpus --parse-only -q --results corpus-parse.tsv
 
       # Allowed to fail until the checker exists; set the repository variable
       # CORPUS_REQUIRED to true to make it count.
       - name: Run the corpus
         continue-on-error: ${{ vars.CORPUS_REQUIRED != 'true' }}
-        run: python3 -I scripts/run-corpus.py --results corpus-results.tsv
+        run: cargo xtask corpus --results corpus-results.tsv
 
       - name: Upload the results
         if: always()

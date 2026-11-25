@@ -1,3 +1,3 @@
-# Extra tools for scripts/fetch-corpus.sh (MISE_ENV=corpus).
+# Extra tools for cargo xtask fetch-corpus (MISE_ENV=corpus).
 [tools]
 uv = "0.13.9"
