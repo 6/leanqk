@@ -6,6 +6,7 @@ mod corpus;
 mod kc;
 mod kernel_cases;
 mod limited;
+mod matcert;
 mod oracle;
 mod proc;
 mod public_check;
@@ -46,6 +47,9 @@ enum Cmd {
     /// The kernel-computation benchmarks (bench/kernel-compute).
     #[command(subcommand)]
     Kc(kc::Cmd),
+    /// The matrix certificates (bench/certificates).
+    #[command(subcommand)]
+    Matcert(matcert::Cmd),
     /// The Lean Kernel Arena benchmark (bench/arena).
     #[command(subcommand)]
     Arena(arena::Cmd),
@@ -72,6 +76,7 @@ fn main() {
         Cmd::InstallElan(a) => ci::install_elan(a),
         Cmd::KernelCases(a) => kernel_cases::main(a),
         Cmd::Kc(c) => kc::main(c),
+        Cmd::Matcert(c) => matcert::main(c),
         Cmd::Arena(c) => arena::main(c),
         Cmd::Oracle(c) => oracle::main(c),
     };
