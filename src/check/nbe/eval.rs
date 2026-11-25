@@ -19,7 +19,6 @@ impl Nbe<'_> {
     /// are not unfolded.
     pub fn eval(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let d = self.st.data(e);
-        let env = self.trim(env, d.loose_bvar_range());
         let ls = if d.has_level_param() { ls } else { Ls::ID };
         match self.st.node(e) {
             ExprNode::BVar(i) => match self.a.lookup(env, i) {
@@ -55,11 +54,11 @@ impl Nbe<'_> {
                 r
             }
             ExprNode::Lam(..) => {
-                let env = self.prune(env, d);
+                let env = self.trim_prune(env, d);
                 self.a.mk(Val::Lam(e, env, ls))
             }
             ExprNode::Pi(..) => {
-                let env = self.prune(env, d);
+                let env = self.trim_prune(env, d);
                 self.a.mk(Val::Pi(e, env, ls))
             }
             ExprNode::Let(h, b) => {
@@ -137,8 +136,7 @@ impl Nbe<'_> {
     #[inline(never)]
     fn thunk_new(&mut self, e: ExprId, env: Env, ls: Ls, slot: usize) -> V {
         let d = self.st.data(e);
-        let env2 = self.trim(env, d.loose_bvar_range());
-        let env2 = self.prune(env2, d);
+        let env2 = self.trim_prune(env, d);
         let ls2 = if d.has_level_param() { ls } else { Ls::ID };
         let t = self.a.mk(Val::Thunk(e, env2, ls2));
         self.a.set_thunk_slot(slot, e, env, ls, t);
