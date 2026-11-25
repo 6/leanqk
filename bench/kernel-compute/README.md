@@ -118,7 +118,7 @@ numbers are from a single run each.
 
 12-core aarch64 Linux, limits 60 s and 4 GiB resident (`measure.sh` defaults), plus 600 s runs
 for the largest sizes. `leanchecker` is Lean v4.36.0's; gruszka and nano-lean are at the commits
-in `build-checkers.sh`. The gruszka and nano-lean rows for the GBD series, the published result and
+in `build-checkers.sh`. The gruszka and nano-lean columns for the GBD series, the published result and
 Mathlib are from an earlier run on the same exports and checker builds. Wall time in seconds and
 peak resident memory in MiB; `oom` is over 4 GiB, `timeout` over 60 s.
 
@@ -148,12 +148,10 @@ LRAT series (GBD instances, then pigeonhole), by LRAT size:
 
 The largest proof checked within 60 s and 4 GiB:
 
-| | GBD series | pigeonhole series |
-| --- | ---: | ---: |
-| nitrolean | 695 602 B (lrat07) | 795 584 B (php7) |
-| leanchecker | 1 916 B (lrat02) | 1 748 B (php4) |
-| gruszka | 31 206 B (lrat14) | 9 615 B (php5) |
-| nano-lean | 31 206 B (lrat14) | 9 615 B (php5) |
+| series | nitrolean | leanchecker | gruszka | nano-lean |
+| --- | ---: | ---: | ---: | ---: |
+| GBD series | 695 602 B (lrat07) | 1 916 B (lrat02) | 31 206 B (lrat14) | 31 206 B (lrat14) |
+| pigeonhole series | 795 584 B (php7) | 1 748 B (php4) | 9 615 B (php5) | 9 615 B (php5) |
 
 gruszka rejects `lrat01` (application type mismatch), which the other three accept.
 

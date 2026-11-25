@@ -15,7 +15,7 @@ git init -q "$repo"
 mkdir "$repo/scripts"
 cp "$SRC/public-check.sh" "$repo/scripts/"
 printf '# test allowlist\nallowed.bin\nbig-allowed.txt  # trailing comment\n' >"$repo/scripts/public-check.allow"
-echo '`nitrolean` - work in progress' >"$repo/README.md"
+echo '`nitrolean` - Independent Lean 4 proof checker in Rust, focused on speed and low memory use (work in progress)' >"$repo/README.md"
 echo "documentation address 192.0.2.17, version 4.36.0" >"$repo/notes.txt"
 g add -A
 g commit -qm "Initial commit"
@@ -46,13 +46,13 @@ commit() { g commit -q --allow-empty -m "$1"; }
 
 expect_pass "clean tree"
 
-printf '`nitrolean` - work in progress\nmore\n' >"$repo/README.md"
+printf '`nitrolean` - Independent Lean 4 proof checker in Rust, focused on speed and low memory use (work in progress)\nmore\n' >"$repo/README.md"
 expect_fail "README with two lines" "README.md must be exactly"
 
-printf '`nitrolean` - work in progress' >"$repo/README.md"
+printf '`nitrolean` - Independent Lean 4 proof checker in Rust, focused on speed and low memory use (work in progress)' >"$repo/README.md"
 expect_fail "README without a final newline" "README.md must be exactly"
 
-echo 'nitrolean - work in progress' >"$repo/README.md"
+echo 'nitrolean - Independent Lean 4 proof checker in Rust, focused on speed and low memory use (work in progress)' >"$repo/README.md"
 expect_fail "README without the backticks" "README.md must be exactly"
 
 plant a.txt "see /ho""me/alice/x"
