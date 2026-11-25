@@ -344,6 +344,19 @@ Steps on the way, on that result and on the 278 KB LRAT proof (lrat06):
 | adaptive memoization, before erasing proofs | 32.9 s, 270 MiB | 18.4 s, 875 MiB |
 | proofs erased, decisions read back without their proofs | 26.6 s, 248 MiB | 15.8 s, 458 MiB |
 
+With the `List` and `DecidableEq` fast paths, on a second machine where
+the previous build takes 40.3 s on lrat07, 41.7 s on php7 and 20.6 s on the
+planar-graph result:
+
+| | before | after |
+|---|---|---|
+| LRAT, 696 KB (lrat07) | 40.3 s, 1.1 GiB, 798 M steps | 13.0 s, 1.1 GiB, 236 M steps |
+| pigeonhole, 796 KB (php7) | 41.7 s, 1.2 GiB | 14.3 s, 1.2 GiB |
+| planar-graph result | 20.6 s, 216 MiB | 9.6 s, 118 MiB |
+
+The next sizes still run out of 4 GiB, now within 35 to 70 s. Memory, not
+time, bounds the curve now.
+
 ## Not done
 
 - A hook in definitional equality (comparing two closed terms by evaluating
@@ -351,7 +364,7 @@ Steps on the way, on that result and on the 278 KB LRAT proof (lrat06):
   through `whnf`.
 - Compiling hot definitions to closures. The machine interprets the term DAG,
   at about 60 ns per step.
-- Fast paths for `ByteArray`, `List` operations and derived `DecidableEq`
-  instances, which dominate what is left of the LRAT checker's time. Its
-  steps grow a little faster than the proof (about 1,400 steps per LRAT
-  byte at 700 KB), and memory about linearly once proofs are erased.
+- Memory on the largest LRAT proofs: at 1.8 MB of LRAT the check passes
+  4 GiB. The values that the checker's clause arrays keep alive grow about
+  linearly with the proof.
+- Fast paths for `ByteArray`, and for `decide` on `Fin` and `ZMod`.
