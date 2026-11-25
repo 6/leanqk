@@ -22,6 +22,19 @@ fn pair(a: V, b: V) -> (V, V) {
     if a <= b { (a, b) } else { (b, a) }
 }
 
+/// Bits of `Nbe::pairs`: found definitionally equal, found not equal,
+/// found not equal by the arguments of one head (`lazy_delta_step`), found
+/// alike and found not alike by `syn_eq`.
+const EQ: u8 = 1;
+const NEQ: u8 = 2;
+const EQ_FAIL: u8 = 4;
+const SYN_OK: u8 = 8;
+const SYN_FAIL: u8 = 16;
+
+/// Steps a failed structural comparison must have taken to be remembered
+/// (`SYN_FAIL`): a cheaper one is cheaper to try again than to remember.
+const SYN_FAIL_MIN: u32 = 4;
+
 fn compare_hints(h_l: Hints, h_r: Hints) -> i32 {
     match (h_l, h_r) {
         (Hints::Regular(a), Hints::Regular(b)) => {
@@ -138,15 +151,35 @@ impl Nbe<'_> {
                 .all(|(&x, &y)| self.is_def_eq_level(x, y))
     }
 
+    /// What is known of `t` and `s` (bits `EQ` and the others).
+    #[inline]
+    fn pf(&self, t: V, s: V) -> u8 {
+        self.pairs.get(&pair(t, s)).copied().unwrap_or(0)
+    }
+
+    fn pset(&mut self, t: V, s: V, bit: u8) {
+        *self.pairs.entry(pair(t, s)).or_insert(0) |= bit;
+    }
+
     fn is_lit(v: &Val) -> bool {
         matches!(v, Val::Nat(..) | Val::NatBig(_) | Val::Str(_))
     }
 
     fn quick_is_def_eq(&mut self, t: V, s: V) -> R<Option<bool>> {
-        if t == s || self.eq_ok.contains(&pair(t, s)) {
+        if t == s {
             return Ok(Some(true));
         }
-        if self.syn_eq(t, s) {
+        let known = self.pf(t, s);
+        self.quick_known(t, s, known)
+    }
+
+    /// `quick_is_def_eq` of two different values, with what is `known` of
+    /// them.
+    fn quick_known(&mut self, t: V, s: V, known: u8) -> R<Option<bool>> {
+        if known & EQ != 0 {
+            return Ok(Some(true));
+        }
+        if self.syn_eq_known(t, s, known) {
             return Ok(Some(true));
         }
         let (nt, ns) = (self.a.get(t), self.a.get(s));
@@ -723,19 +756,19 @@ impl Nbe<'_> {
                         && ssp != Sp::NIL
                         && dt.name == ds.name
                         && matches!(decl_hints(&dt), Hints::Regular(_))
-                        && !self.eq_fail.contains(&pair(*t, *s))
+                        && self.pf(*t, *s) & EQ_FAIL == 0
                     {
                         if self.is_def_eq_levels(lt, ls) && self.is_def_eq_args(*t, *s)? {
                             return Ok(Step::Equal);
                         }
-                        self.eq_fail.insert(pair(*t, *s));
+                        self.pset(*t, *s, EQ_FAIL);
                     } else if let (Val::Const(_, lt, tsp), Val::Const(_, ls, ssp)) =
                         (self.a.get(*t), self.a.get(*s))
                         && tsp != Sp::NIL
                         && ssp != Sp::NIL
                         && dt.name == ds.name
                         && !matches!(decl_hints(&dt), Hints::Regular(_))
-                        && !self.eq_fail.contains(&pair(*t, *s))
+                        && self.pf(*t, *s) & EQ_FAIL == 0
                         && self.is_def_eq_levels(lt, ls)
                         && self.probe_worth(&dt, tsp, ssp)
                     {
@@ -746,7 +779,7 @@ impl Nbe<'_> {
                         if self.attempt(ARGS_PROBE, |nb| nb.is_def_eq_args(*t, *s))? == Some(true) {
                             return Ok(Step::Equal);
                         }
-                        self.eq_fail.insert(pair(*t, *s));
+                        self.pset(*t, *s, EQ_FAIL);
                     }
                     *t = self.unfold_cheap(*t)?;
                     *s = self.unfold_cheap(*s)?;
@@ -922,9 +955,18 @@ impl Nbe<'_> {
     }
 
     pub fn is_def_eq_core(&mut self, t: V, s: V) -> R<bool> {
-        let t = self.force(t);
-        let s = self.force(s);
-        if let Some(r) = self.quick_is_def_eq(t, s)? {
+        self.is_def_eq_known(t, s, None)
+    }
+
+    /// `is_def_eq_core`, with what is `known` of `t` and `s` if looked up.
+    fn is_def_eq_known(&mut self, t0: V, s0: V, known: Option<u8>) -> R<bool> {
+        let t = self.force(t0);
+        let s = self.force(s0);
+        let quick = match known {
+            Some(k) if (t, s) == (t0, s0) && t != s => self.quick_known(t, s, k)?,
+            _ => self.quick_is_def_eq(t, s)?,
+        };
+        if let Some(r) = quick {
             return Ok(r);
         }
         if (!self.a.has_fvar(t) || self.eager) && self.is_bool_true(s) {
@@ -996,38 +1038,36 @@ impl Nbe<'_> {
     /// `is_def_eq` of two different values.
     #[inline(never)]
     fn is_def_eq_memo(&mut self, t: V, s: V) -> R<bool> {
-        if self.neq.contains(&pair(t, s)) {
+        let known = self.pf(t, s);
+        if known & NEQ != 0 {
             return Ok(false);
         }
         // In a heavy declaration, also remember results by the terms the
         // values stand for: different values (a thunk and its value, say,
         // inside them) often stand for one term, and then compare alike.
-        let named = if self.decl_steps > HEAVY_STEPS && !self.eq_ok.contains(&pair(t, s)) {
-            match (self.name(t), self.name(s)) {
-                (Some(a), Some(b)) => {
-                    if a == b {
-                        return Ok(true);
+        let named =
+            if self.decl_steps > HEAVY_STEPS && self.a.len() > NAMES_AFTER && known & EQ == 0 {
+                match (self.name(t), self.name(s)) {
+                    (Some(a), Some(b)) => {
+                        if a == b {
+                            return Ok(true);
+                        }
+                        let k = if a.0 <= b.0 { (a, b) } else { (b, a) };
+                        if let Some(&r) = self.name_eq.get(&k) {
+                            return Ok(r);
+                        }
+                        Some(k)
                     }
-                    let k = if a.0 <= b.0 { (a, b) } else { (b, a) };
-                    if let Some(&r) = self.name_eq.get(&k) {
-                        return Ok(r);
-                    }
-                    Some(k)
+                    _ => None,
                 }
-                _ => None,
-            }
-        } else {
-            None
-        };
-        let r = self.is_def_eq_core(t, s)?;
+            } else {
+                None
+            };
+        let r = self.is_def_eq_known(t, s, Some(known))?;
         if let Some(k) = named {
             self.name_eq.insert(k, r);
         }
-        if r {
-            self.eq_ok.insert(pair(t, s));
-        } else {
-            self.neq.insert(pair(t, s));
-        }
+        self.pset(t, s, if r { EQ } else { NEQ });
         Ok(r)
     }
 }
@@ -1035,6 +1075,11 @@ impl Nbe<'_> {
 /// Whether arguments a definition's body does not read are left out when
 /// two applications of it are compared (`unused_positions`).
 const UNUSED_ARGS: bool = true;
+
+/// Values in the arena past which heavy declarations also compare by
+/// names (`is_def_eq_memo`): naming costs more than it saves until the
+/// arena grows.
+const NAMES_AFTER: usize = 1 << 20;
 
 /// Whether proof irrelevance first asks `surely_not_proof`.
 const NOT_PROOF: bool = true;
@@ -1058,12 +1103,14 @@ impl Nbe<'_> {
     /// (Lean's `eqv_manager` check): equal closures over equal environments,
     /// equal spines. Nothing is reduced. Sound, and much cheaper than a
     /// comparison by reduction when two routes built the same computation.
-    pub(super) fn syn_eq(&mut self, t: V, s: V) -> bool {
-        let mut budget = SYN_BUDGET;
-        let r = self.syn_eq_v(t, s, &mut budget);
-        if !r {
-            // Out of budget too: a heuristic, not tried again on this pair.
-            self.syn_fail.insert(pair(t, s));
+    /// For two different values, with what is `known` of them.
+    fn syn_eq_known(&mut self, t: V, s: V, known: u8) -> bool {
+        let mut budget = SYN_BUDGET - 1;
+        let r = self.syn_eq_with(t, s, &mut budget, known);
+        if !r && budget == 0 {
+            // Out of budget too (a failure within it is remembered by
+            // `syn_eq_v`): a heuristic, not tried again on this pair.
+            self.pset(t, s, SYN_FAIL);
         }
         r
     }
@@ -1076,11 +1123,17 @@ impl Nbe<'_> {
             return false;
         }
         *budget -= 1;
-        let k = pair(t, s);
-        if self.eq_ok.contains(&k) || self.syn_ok.contains(&k) {
+        let known = self.pf(t, s);
+        self.syn_eq_with(t, s, budget, known)
+    }
+
+    /// `syn_eq_v` past its first step, with what is `known` of the pair.
+    fn syn_eq_with(&mut self, t: V, s: V, budget: &mut u32, known: u8) -> bool {
+        let start = *budget;
+        if known & (EQ | SYN_OK) != 0 {
             return true;
         }
-        if self.syn_fail.contains(&k) {
+        if known & SYN_FAIL != 0 {
             return false;
         }
         let r = match (self.a.get(t), self.a.get(s)) {
@@ -1105,9 +1158,9 @@ impl Nbe<'_> {
             _ => false,
         };
         if r {
-            self.syn_ok.insert(k);
-        } else if *budget > 0 {
-            self.syn_fail.insert(k);
+            self.pset(t, s, SYN_OK);
+        } else if *budget > 0 && start - *budget >= SYN_FAIL_MIN {
+            self.pset(t, s, SYN_FAIL);
         }
         r
     }
@@ -1175,14 +1228,27 @@ impl Nbe<'_> {
             && k_r == d
             && matches!(self.st.node(t_l), ExprNode::App(..))
             && matches!(self.st.node(t_r), ExprNode::App(..));
-        let key = (t_l, e_l, l_l, t_r, e_r, l_r, d);
         if memo {
-            if let Some(&r) = self.syn_t.get(&key) {
-                return r;
+            let key = [t_l.0, e_l.0, l_l.0, t_r.0, e_r.0, l_r.0, d];
+            let h = crate::hash::hash2(
+                (t_l.0 as u64) << 32 | t_r.0 as u64,
+                (e_l.0 as u64) << 32
+                    ^ (e_r.0 as u64)
+                    ^ (l_l.0 as u64) << 48
+                    ^ (l_r.0 as u64) << 16
+                    ^ d as u64,
+            );
+            let i = (h >> 52) as usize & (super::SYN_T - 1);
+            let s = self.syn_t[i];
+            if s[..7] == key {
+                return s[7] != 0;
             }
             let r = self.syn_eq_t_node(t_l, e_l, l_l, k_l, t_r, e_r, l_r, k_r, d, budget);
             if r || *budget > 0 {
-                self.syn_t.insert(key, r);
+                let mut e = [0; 8];
+                e[..7].copy_from_slice(&key);
+                e[7] = r as u32;
+                self.syn_t[i] = e;
             }
             return r;
         }

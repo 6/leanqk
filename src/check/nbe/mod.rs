@@ -68,17 +68,23 @@ const KEEP_VALUES: usize = 1 << 16;
 /// not read (`prune`).
 const PRUNE: bool = true;
 
+/// Slots of `Nbe::syn_t` (direct-mapped: (left term, environment and
+/// substitution, right ones, depth, outcome)).
+const SYN_T: usize = 1 << 12;
+
 /// Slots of `Nbe::prunes`.
 const PRUNES: usize = 1 << 12;
 
 /// Closed terms remembered as checked (`checked_closed`) before they are
 /// forgotten.
-const CHECKED_KEEP: usize = 1 << 20;
+const CHECKED_KEEP: usize = 1 << 19;
+
+/// Whether open terms are remembered as checked too, keyed by the binder
+/// types they were checked under (`ctx_of`).
+const OPEN_FACTS: bool = true;
 
 /// Terms read from `.olean` files the store may hold between declarations.
 const READ_KEEP: usize = 1 << 20;
-
-type SynKey = (ExprId, val::Env, val::Ls, ExprId, val::Env, val::Ls, u32);
 
 pub struct Nbe<'e> {
     pub st: Store<'e>,
@@ -100,17 +106,13 @@ pub struct Nbe<'e> {
     const_value: IdMap<(NameId, LevelList), V>,
     /// Values left in their `.olean` files, as built in the store.
     lazy_values: IdMap<ExprId, ExprId>,
-    eq_ok: IdSet<(V, V)>,
-    eq_fail: IdSet<(V, V)>,
-    /// Pairs found not definitionally equal.
-    neq: IdSet<(V, V)>,
+    /// What is known of pairs of values (`conv::EQ` and the other bits).
+    pairs: IdMap<(V, V), u8>,
     /// Terms with universe parameters marked checked in this declaration.
     level_checked: Vec<V>,
     fresh: bool,
-    syn_ok: IdSet<(V, V)>,
-    syn_fail: IdSet<(V, V)>,
     /// Structural comparisons of terms in environments, by `syn_eq_t`.
-    syn_t: IdMap<SynKey, bool>,
+    syn_t: Vec<[u32; 8]>,
     level_eq: IdMap<(LevelId, LevelId), bool>,
     major_induct: IdMap<NameId, NameId>,
     /// `prop_positions` of constants.
@@ -118,7 +120,8 @@ pub struct Nbe<'e> {
     /// `unused_positions` of definitions.
     unused_pos: IdMap<NameId, u64>,
     open_count: IdMap<(V, V), u32>,
-    trim_cache: IdMap<(val::Env, u32), val::Env>,
+    /// `trim_long` (direct-mapped): (environment, length, result).
+    trim_cache: Vec<[u32; 3]>,
     canon_fvar: IdMap<(V, V, u32), u32>,
     elims: Vec<Vec<val::Elim>>,
     terms: Vec<ExprId>,
@@ -143,15 +146,25 @@ pub struct Nbe<'e> {
     /// `prune` by environment and holes (direct-mapped): (environment,
     /// holes, pruned environment).
     prunes: Vec<[u32; 3]>,
+    /// `trim_holes` (direct-mapped): (environment, holes, length, result).
+    trim_holes_memo: Vec<[u32; 4]>,
     /// `surely_not_proof` by constant and number of arguments.
     not_proof: IdMap<(NameId, u32), bool>,
     /// Terms added to `st` for names: they do not count towards its size
     /// for keeping it between declarations.
     name_exprs: usize,
-    /// Closed terms of the environment checked in an earlier declaration,
-    /// with (the id of) the universe parameters they were checked under:
-    /// they stay well-typed as the environment grows.
-    checked_closed: IdMap<(ExprId, u64), ()>,
+    /// Terms of the environment checked in an earlier declaration, closed
+    /// or under the binders of a context (`ctxs`), with (the id of) the
+    /// universe parameters they were checked under, packed in one word
+    /// (`infer_term`): they stay well-typed as the environment grows.
+    checked_closed: IdSet<u64>,
+    /// Contexts of open terms in `checked_closed`, ids from 1 (0 is the
+    /// empty context): the context with one more binder, of type the term
+    /// of the environment `.1`, after `.0`.
+    ctxs: IdMap<(u32, ExprId), u32>,
+    /// The context (`ctxs`) of environments made of the free variables of
+    /// binders only, as opened by checking.
+    ctx_of: IdMap<val::Env, u32>,
     /// `checked_closed`'s key for `lparams`, or `None` until computed.
     lparams_key: Option<u64>,
     /// Ids of lists of universe parameters, from 1.
@@ -251,20 +264,16 @@ impl<'e> Nbe<'e> {
             const_type: IdMap::default(),
             const_value: IdMap::default(),
             lazy_values: IdMap::default(),
-            eq_ok: IdSet::default(),
-            eq_fail: IdSet::default(),
-            neq: IdSet::default(),
+            pairs: IdMap::default(),
             level_checked: Vec::new(),
             fresh: true,
-            syn_ok: IdSet::default(),
-            syn_fail: IdSet::default(),
-            syn_t: IdMap::default(),
+            syn_t: vec![[val::NONE; 8]; SYN_T],
             level_eq: IdMap::default(),
             major_induct: IdMap::default(),
             prop_pos: IdMap::default(),
             unused_pos: IdMap::default(),
             open_count: IdMap::default(),
-            trim_cache: IdMap::default(),
+            trim_cache: vec![[val::NONE; 3]; PRUNES],
             canon_fvar: IdMap::default(),
             elims: Vec::new(),
             terms: Vec::new(),
@@ -280,9 +289,12 @@ impl<'e> Nbe<'e> {
             names: IdMap::default(),
             name_eq: IdMap::default(),
             prunes: vec![[val::NONE; 3]; PRUNES],
+            trim_holes_memo: vec![[val::NONE; 4]; PRUNES],
             not_proof: IdMap::default(),
             name_exprs: 0,
-            checked_closed: IdMap::default(),
+            checked_closed: IdSet::default(),
+            ctxs: IdMap::default(),
+            ctx_of: IdMap::default(),
             lparams_key: None,
             lparams_ids: Default::default(),
             ticks: 0,
@@ -334,6 +346,37 @@ impl<'e> Nbe<'e> {
         self.fresh = self.a.is_empty();
     }
 
+    /// Note that `env2` is `env` with one more binder, of type `dom` in
+    /// `env` under `ls`, for the contexts of `checked_closed`.
+    pub(super) fn ctx_push(&mut self, env: val::Env, dom: ExprId, ls: val::Ls, env2: val::Env) {
+        if !OPEN_FACTS || ls != val::Ls::ID || self.st.is_local_expr(dom) {
+            return;
+        }
+        if self.st.data(dom).has_fvar() {
+            return;
+        }
+        let parent = if env == val::Env::NIL {
+            0
+        } else {
+            match self.ctx_of.get(&env) {
+                Some(&c) => c,
+                None => return,
+            }
+        };
+        let next = self.ctxs.len() as u32 + 1;
+        let c = *self.ctxs.entry((parent, dom)).or_insert(next);
+        // Equal environments are one context, whichever binders made them.
+        self.ctx_of.entry(env2).or_insert(c);
+    }
+
+    /// The context (`ctxs`) of `env`, if it is one.
+    pub(super) fn ctx(&self, env: val::Env) -> Option<u32> {
+        if env == val::Env::NIL {
+            return Some(0);
+        }
+        self.ctx_of.get(&env).copied()
+    }
+
     /// The id of the declaration's list of universe parameters.
     pub(super) fn lparams_key(&mut self) -> u64 {
         if let Some(k) = self.lparams_key {
@@ -382,10 +425,12 @@ impl<'e> Nbe<'e> {
         self.st.reset_nat_unfold_work();
         self.limit = limit;
         self.lparams_key = None;
-        if self.checked_closed.len() > CHECKED_KEEP {
-            self.checked_closed = IdMap::default();
+        if self.checked_closed.len() > CHECKED_KEEP || self.ctxs.len() > CHECKED_KEEP {
+            self.checked_closed = IdSet::default();
+            self.ctxs = IdMap::default();
             self.lparams_ids = Default::default();
         }
+        shrink(&mut self.ctx_of);
         self.decl_steps = 0;
         // Names hold free variables by index, and those go now.
         if !self.names.is_empty() {
@@ -400,12 +445,13 @@ impl<'e> Nbe<'e> {
         self.vargs.clear();
         self.eager_depth = 0;
         shrink(&mut self.open_count);
-        shrink(&mut self.trim_cache);
+        self.trim_cache.fill([val::NONE; 3]);
         shrink(&mut self.key_envs);
         shrink(&mut self.canon_fvar);
         shrink(&mut self.level_checked);
         self.a.clear();
         self.prunes.fill([val::NONE; 3]);
+        self.trim_holes_memo.fill([val::NONE; 4]);
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;
@@ -424,12 +470,8 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.list_cache);
         shrink(&mut self.const_type);
         shrink(&mut self.const_value);
-        shrink(&mut self.eq_ok);
-        shrink(&mut self.eq_fail);
-        shrink(&mut self.neq);
-        shrink(&mut self.syn_ok);
-        shrink(&mut self.syn_fail);
-        shrink(&mut self.syn_t);
+        shrink(&mut self.pairs);
+        self.syn_t.fill([val::NONE; 8]);
         shrink(&mut self.level_eq);
         shrink(&mut self.major_induct);
         self.fresh = true;
@@ -677,6 +719,58 @@ impl<'e> Nbe<'e> {
         self.prune_holes(env, holes)
     }
 
+    /// `prune(trim(env, n))` for a term with data `d` and range `n`, with
+    /// one rebuild where both cut.
+    #[inline]
+    pub fn trim_prune(&mut self, env: val::Env, d: crate::expr::ExprData) -> val::Env {
+        let n = d.loose_bvar_range();
+        if n == 0 {
+            return val::Env::NIL;
+        }
+        if self.a.env_len(env) <= n {
+            return self.prune(env, d);
+        }
+        let holes = if PRUNE {
+            d.unused_low() & ((1u64 << n.min(32)) - 1) as u32
+        } else {
+            0
+        };
+        if holes == 0 {
+            return self.trim_long(env, n);
+        }
+        self.trim_holes(env, n, holes)
+    }
+
+    /// The first `n` entries of `env` with holes at those `holes` sets.
+    #[inline(never)]
+    fn trim_holes(&mut self, env: val::Env, n: u32, holes: u32) -> val::Env {
+        let i =
+            (hash2(env.0 as u64 | (n as u64) << 32, holes as u64) >> 52) as usize & (PRUNES - 1);
+        let s = self.trim_holes_memo[i];
+        if s[0] == env.0 && s[1] == holes && s[2] == n {
+            return val::Env(s[3]);
+        }
+        let hole = self.hole();
+        let base = self.vargs.len();
+        let mut cur = env;
+        for _ in 0..n {
+            self.vargs.push(self.a.env_head(cur));
+            cur = self.a.env_tail(cur);
+        }
+        let mut r = val::Env::NIL;
+        for j in (0..n as usize).rev() {
+            let v = if j < 32 && holes >> j & 1 != 0 {
+                hole
+            } else {
+                self.vargs[base + j]
+            };
+            r = self.a.cons(r, v);
+        }
+        self.vargs.truncate(base);
+        self.trim_holes_memo[i] = [env.0, holes, n, r.0];
+        r
+    }
+
     /// `prune` with holes at the entries `holes` sets.
     #[inline(never)]
     fn prune_holes(&mut self, env: val::Env, holes: u32) -> val::Env {
@@ -716,8 +810,10 @@ impl<'e> Nbe<'e> {
     /// `trim` of an environment longer than `n`.
     #[inline(never)]
     fn trim_long(&mut self, env: val::Env, n: u32) -> val::Env {
-        if let Some(&e) = self.trim_cache.get(&(env, n)) {
-            return e;
+        let i = (hash2(env.0 as u64, n as u64) >> 52) as usize & (PRUNES - 1);
+        let s = self.trim_cache[i];
+        if s[0] == env.0 && s[1] == n {
+            return val::Env(s[2]);
         }
         let base = self.vargs.len();
         let mut cur = env;
@@ -730,7 +826,7 @@ impl<'e> Nbe<'e> {
             r = self.a.cons(r, self.vargs[k]);
         }
         self.vargs.truncate(base);
-        self.trim_cache.insert((env, n), r);
+        self.trim_cache[i] = [env.0, n, r.0];
         r
     }
 
