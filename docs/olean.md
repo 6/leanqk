@@ -115,6 +115,9 @@ the default for `check`; `src/reader/lazy.rs`):
   records, from its declaration's first line on, in two passes (one down
   marks the ones the value needs, one up builds them in order, with a
   dense memo); records of earlier declarations it uses, from a stack.
+  The value's own nodes go to the store with `TermSink::expr_owned`: the
+  store appends them with no Env lookup and no table insert, so an equal
+  term built later gets a second id, which costs a cache hit at most.
 - Lines are read by a byte scanner for the fixed shapes lean4export
   writes (`src/reader/scan.rs`), with no allocation per line. It looks at
   a window of 288 bytes from the line's start; each token checks its

@@ -210,6 +210,12 @@ pub trait TermSink {
     fn list(&mut self, levels: &[LevelId]) -> LevelList;
     /// A node other than `Let` and big literals.
     fn expr(&mut self, node: ExprNode) -> ExprId;
+    /// A compound node (not `Let`) that no other term uses: the sink may
+    /// give it an id of its own without looking it up or indexing it (so
+    /// an equal node may get another id).
+    fn expr_owned(&mut self, node: ExprNode) -> ExprId {
+        self.expr(node)
+    }
     fn let_in(&mut self, binder: LetBinder, body: ExprId) -> ExprId;
     /// A natural number literal of at least 2^64.
     fn nat_big(&mut self, n: BigUint) -> ExprId;

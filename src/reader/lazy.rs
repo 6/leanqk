@@ -576,18 +576,28 @@ impl Builder {
     }
 }
 
-/// Node `n` in `sink`, its children being `ids` (in [`Node::kids`]'s order).
-fn make(sink: &mut dyn TermSink, n: Node, ids: [ExprId; 3]) -> ExprId {
+/// Node `n` in `sink`, its children being `ids` (in [`Node::kids`]'s
+/// order); `owned` if no other value or interned term uses it (see
+/// [`TermSink::expr_owned`]).
+fn make(sink: &mut dyn TermSink, n: Node, ids: [ExprId; 3], owned: bool) -> ExprId {
+    let expr = |sink: &mut dyn TermSink, node| {
+        if owned {
+            sink.expr_owned(node)
+        } else {
+            sink.expr(node)
+        }
+    };
     match n {
-        Node::App(..) => sink.expr(ExprNode::App(ids[0], ids[1])),
+        Node::App(..) => expr(sink, ExprNode::App(ids[0], ids[1])),
         Node::Bind { pi, bi, name, .. } => {
             let name = sink.shared_name(name);
             let (t, b) = (ids[0], ids[1]);
-            sink.expr(if pi {
+            let node = if pi {
                 ExprNode::Pi(bi, name, t, b)
             } else {
                 ExprNode::Lam(bi, name, t, b)
-            })
+            };
+            expr(sink, node)
         }
         Node::Let { name, nondep, .. } => {
             let name = sink.shared_name(name);
@@ -601,7 +611,7 @@ fn make(sink: &mut dyn TermSink, n: Node, ids: [ExprId; 3]) -> ExprId {
         }
         Node::Proj(s, i, _) => {
             let s = sink.shared_name(s);
-            sink.expr(ExprNode::Proj(s, i, ids[0]))
+            expr(sink, ExprNode::Proj(s, i, ids[0]))
         }
     }
 }
@@ -788,7 +798,10 @@ impl Stored {
                     self.build(c, sink, &mut s.memo, &mut s.stack)?
                 };
             }
-            s.own[(x - start) as usize] = make(sink, n, ids).0;
+            // Records of the value's own declaration are taken as used by
+            // it alone (one that a later value uses too is built there
+            // again, by `build`, hash-consed).
+            s.own[(x - start) as usize] = make(sink, n, ids, true).0;
         }
         Ok(ExprId(s.own[n - 1]))
     }
@@ -833,7 +846,7 @@ impl Stored {
             for (&c, id) in kids[..k].iter().zip(&mut ids) {
                 *id = done(memo, sink, c).expect("built");
             }
-            let id = make(sink, n, ids);
+            let id = make(sink, n, ids, false);
             memo.insert(top, id);
             stack.pop();
         }
