@@ -213,6 +213,15 @@ pub trait TermSink {
     fn let_in(&mut self, binder: LetBinder, body: ExprId) -> ExprId;
     /// A natural number literal of at least 2^64.
     fn nat_big(&mut self, n: BigUint) -> ExprId;
+    /// A name of the shared arena (a subterm decoded at load time): the
+    /// sink's id for it. A store above the same environment keeps it.
+    fn shared_name(&mut self, n: NameId) -> NameId {
+        n
+    }
+    /// An expression of the shared arena, likewise.
+    fn shared_expr(&mut self, e: ExprId) -> ExprId {
+        e
+    }
 }
 
 /// The source of lazily read values (the `.olean` loader's).

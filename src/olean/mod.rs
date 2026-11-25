@@ -108,8 +108,8 @@ pub struct Options {
     /// Root modules to load instead of the target's own (for a project
     /// target: modules of the project or its packages).
     pub modules: Vec<String>,
-    /// Leave theorem values in their files (an experiment: the checker
-    /// cannot use such an environment yet).
+    /// Leave theorem values in their files, to be decoded when checked
+    /// (see [`crate::env::Env::value_into`]).
     pub lazy_proofs: bool,
 }
 
@@ -555,7 +555,7 @@ fn new_env() -> Env {
 
 /// What a worker makes of a module: its declarations, its files if it
 /// has lazily read values, its number of files and their size.
-type Done = Result<(build::ModOut, Option<Vec<OleanFile>>, usize, u64), OleanError>;
+type Done = Result<(build::ModOut, Option<lazy::LazyModule>, usize, u64), OleanError>;
 
 /// Nanoseconds spent decoding and interning, over all threads (for
 /// `NITROLEAN_OLEAN_PROFILE`).
@@ -563,21 +563,27 @@ static DECODE_NS: AtomicU64 = AtomicU64::new(0);
 static INTERN_NS: AtomicU64 = AtomicU64::new(0);
 static TAPE_EXPRS: AtomicU64 = AtomicU64::new(0);
 static TAPE_NAMES: AtomicU64 = AtomicU64::new(0);
+static TAPE_FRONTIER: AtomicU64 = AtomicU64::new(0);
 
 fn work(par: &Par, loc: &mut par::Local, m: &Module, lazy: bool) -> Done {
     let t = Instant::now();
     let (tape, parts, bytes) = decode_module(m, lazy)?;
     let d = t.elapsed();
     let files = parts.len();
-    let keep = (!tape.lazy.is_empty()).then(|| {
+    let has_lazy = !tape.lazy.is_empty();
+    if has_lazy {
         for p in &parts {
             p.release();
         }
-        parts
-    });
+    }
     TAPE_EXPRS.fetch_add(tape.exprs.len() as u64, Ordering::Relaxed);
     TAPE_NAMES.fetch_add(tape.names.len() as u64, Ordering::Relaxed);
-    let out = build::intern_module(par, loc, &tape).map_err(|e| e.at(&m.path))?;
+    TAPE_FRONTIER.fetch_add(tape.frontier.len() as u64, Ordering::Relaxed);
+    let mut out = build::intern_module(par, loc, &tape).map_err(|e| e.at(&m.path))?;
+    let keep = has_lazy.then(|| lazy::LazyModule {
+        parts,
+        pre: std::mem::take(&mut out.frontier).into_iter().collect(),
+    });
     DECODE_NS.fetch_add(d.as_nanos() as u64, Ordering::Relaxed);
     INTERN_NS.fetch_add((t.elapsed() - d).as_nanos() as u64, Ordering::Relaxed);
     Ok((out, keep, files, bytes))
@@ -603,7 +609,7 @@ fn load_modules(mods: &[Module], threads: usize, lazy: bool) -> Result<(Env, Sta
     };
     let names = |i: u32| mods[i as usize].name.clone();
     let mut intern = Duration::ZERO;
-    let mut kept: Vec<Option<Vec<OleanFile>>> = Vec::new();
+    let mut kept: Vec<Option<lazy::LazyModule>> = Vec::new();
     let mut add = |asm: &mut build::Assembler<'_>, i: usize, r: Done| {
         let (out, keep, files, bytes) = r?;
         if keep.is_some() {
@@ -666,13 +672,14 @@ fn load_modules(mods: &[Module], threads: usize, lazy: bool) -> Result<(Env, Sta
     let t = Instant::now();
     if std::env::var_os("NITROLEAN_OLEAN_PROFILE").is_some() {
         eprintln!(
-            "rss before finish: {:?} MiB, peak {:?}; decode {:.3} s, intern {:.3} s (all threads); module-local expressions {}, names {}",
+            "rss before finish: {:?} MiB, peak {:?}; decode {:.3} s, intern {:.3} s (all threads); module-local expressions {}, names {}; lazy values' shared subterms {}",
             rss_now(),
             crate::stats::peak_rss_bytes(),
             DECODE_NS.load(Ordering::Relaxed) as f64 / 1e9,
             INTERN_NS.load(Ordering::Relaxed) as f64 / 1e9,
             TAPE_EXPRS.load(Ordering::Relaxed),
             TAPE_NAMES.load(Ordering::Relaxed),
+            TAPE_FRONTIER.load(Ordering::Relaxed),
         );
     }
     let build::Assembler {

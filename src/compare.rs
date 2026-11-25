@@ -18,16 +18,19 @@ use crate::name::{NameId, NameNode};
 /// Builds a lazily read value of `b` in `a`'s arenas by lookup only: a
 /// term node `a` does not have makes the result [`IntoEnv::missing`] (the
 /// value is then not one of `a`'s terms).
-pub(crate) struct IntoEnv<'e> {
+pub(crate) struct IntoEnv<'e, 't> {
     pub a: &'e Env,
     pub b: &'e Env,
     pub missing: bool,
+    /// Translates `b`'s terms into `a` (for the shared subterms that
+    /// `b`'s lazy values come with).
+    pub back: &'t mut Tr<'e>,
 }
 
 /// An id no arena has.
 const NONE: u32 = u32::MAX - 2;
 
-impl IntoEnv<'_> {
+impl IntoEnv<'_, '_> {
     fn got<T>(&mut self, x: Option<T>, none: T) -> T {
         x.unwrap_or_else(|| {
             self.missing = true;
@@ -36,7 +39,16 @@ impl IntoEnv<'_> {
     }
 }
 
-impl TermSink for IntoEnv<'_> {
+impl TermSink for IntoEnv<'_, '_> {
+    fn shared_name(&mut self, n: NameId) -> NameId {
+        self.back.name(n).unwrap_or(NameId(NONE))
+    }
+
+    fn shared_expr(&mut self, e: ExprId) -> ExprId {
+        let r = self.back.expr(e);
+        self.got(r, ExprId(NONE))
+    }
+
     fn name(&mut self, node: NameNode) -> NameId {
         let node = match node {
             NameNode::Str(p, s) => self
@@ -100,17 +112,19 @@ const UNKNOWN: u32 = u32::MAX;
 const MISSING: u32 = u32::MAX - 1;
 
 /// Translation of ids from environment `a` into environment `b`.
-struct Tr<'e> {
+pub(crate) struct Tr<'e> {
     a: &'e Env,
     b: &'e Env,
     names: Vec<u32>,
     levels: Vec<u32>,
     exprs: Vec<u32>,
     stack: Vec<(ExprId, bool)>,
+    /// From `b` into `a`, made when first needed.
+    back: Option<Box<Tr<'e>>>,
 }
 
 impl<'e> Tr<'e> {
-    fn new(a: &'e Env, b: &'e Env) -> Self {
+    pub(crate) fn new(a: &'e Env, b: &'e Env) -> Self {
         Tr {
             a,
             b,
@@ -118,6 +132,7 @@ impl<'e> Tr<'e> {
             levels: vec![UNKNOWN; a.levels.len()],
             exprs: vec![UNKNOWN; a.exprs.len()],
             stack: Vec::new(),
+            back: None,
         }
     }
 
@@ -337,10 +352,13 @@ impl<'e> Tr<'e> {
                 if !self.names_eq(all_a, all_b) {
                     Some("all")
                 } else if is_lazy(value_b) {
+                    let (a, b) = (self.a, self.b);
+                    let back = self.back.get_or_insert_with(|| Box::new(Tr::new(b, a)));
                     let mut sink = IntoEnv {
-                        a: self.a,
-                        b: self.b,
+                        a,
+                        b,
                         missing: false,
+                        back,
                     };
                     match self.b.value_into(y, &mut sink) {
                         Ok(Some(v)) if !sink.missing && v == value_a => None,

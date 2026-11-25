@@ -47,7 +47,24 @@ pub struct Tape {
     pub lazy: Vec<LazyValue>,
     /// The local constants they mention: ranges in here.
     pub lazy_refs: Vec<NameId>,
+    /// Objects decoded at load time that lazy values point to: (memo
+    /// slot, local id), the id of a name marked with [`PRE_NAME`].
+    /// Decoding a lazy value stops at them (see [`Pre`]).
+    pub frontier: Vec<(u32, u32)>,
+    /// When decoding a lazy value: the entries of `names` and `exprs`
+    /// that stand for terms already in the shared arena, (index, id), in
+    /// increasing index order.
+    pub pre_names: Vec<(u32, NameId)>,
+    pub pre_exprs: Vec<(u32, ExprId)>,
 }
+
+/// Marks a name in [`Tape::frontier`] and [`Pre`].
+pub const PRE_NAME: u32 = 1 << 31;
+
+/// The shared arena's ids of objects of a module decoded at load time,
+/// for those that lazy values point to, by memo slot (the object's
+/// position in the module's parts, in words; `PRE_NAME` marks names).
+pub type Pre = hashbrown::HashMap<u32, u32>;
 
 /// The value of a theorem that is not decoded at load time, only scanned
 /// for the constants of its module it mentions (so that declarations can
@@ -119,6 +136,8 @@ pub struct Memo {
     mentions: Vec<u64>,
     /// The name objects of the module's constants.
     decl_names: Vec<u64>,
+    /// The objects in [`Tape::frontier`].
+    frontier: Vec<u64>,
     stamp: Vec<u32>,
     epoch: u32,
     /// When decoding one value lazily: entries are valid where their
@@ -182,6 +201,8 @@ impl Memo {
         self.mentions.resize(n, 0);
         self.decl_names.clear();
         self.decl_names.resize(n, 0);
+        self.frontier.clear();
+        self.frontier.resize(n, 0);
         if self.stamp.len() < self.vals.len() {
             self.stamp.resize(self.vals.len(), 0);
         }
@@ -219,7 +240,12 @@ impl Memo {
 
     #[inline]
     fn get(&self, kind: Kind, addr: u64) -> Option<u32> {
-        let k = self.slot(addr)?;
+        self.get_at(kind, self.slot(addr)?)
+    }
+
+    /// [`Memo::get`] by slot.
+    #[inline]
+    fn get_at(&self, kind: Kind, k: usize) -> Option<u32> {
         let valid = if self.stamped {
             self.stamp[k] == self.epoch
         } else {
@@ -260,6 +286,8 @@ pub struct Decoder<'h, 'a> {
     /// array (for the scan of lazy values).
     decl_name_ptrs: Vec<u64>,
     consts_addr: u64,
+    /// When decoding a lazy value: terms already in the shared arena.
+    pub pre: Option<&'h Pre>,
 }
 
 fn too_many(what: &str) -> Fail {
@@ -300,6 +328,7 @@ impl<'h, 'a> Decoder<'h, 'a> {
             name_buf: Vec::new(),
             decl_name_ptrs: Vec::new(),
             consts_addr: 0,
+            pre: None,
             lvl_buf: Vec::new(),
         }
     }
@@ -487,6 +516,9 @@ impl<'h, 'a> Decoder<'h, 'a> {
             }
             let Some(k) = self.memo.slot(a) else { return };
             let fields = other as usize;
+            if tag <= 11 && size >= 8 + 8 * fields && self.memo.get_at(Kind::Expr, k).is_none() {
+                self.note_frontier(b, tag, fields);
+            }
             let m = if tag <= 11 && size >= 8 + 8 * fields {
                 let mb = |d: &Self, i: usize| -> bool {
                     let p = rd(b, 8 + 8 * i);
@@ -532,6 +564,49 @@ impl<'h, 'a> Decoder<'h, 'a> {
                 Memo::set_bit(&mut self.memo.mentions, k);
             }
             a += size as u64;
+        }
+    }
+
+    /// Note the children of an object not decoded at load time (read as
+    /// if it were an expression, as in `sweep`) that were decoded: lazy
+    /// values that reach them can stop there.
+    fn note_frontier(&mut self, b: &[u8], tag: u8, fields: usize) {
+        let rd = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().expect("8"));
+        let (name, kids): (bool, &[usize]) = match (tag, fields) {
+            (4, 2) => (true, &[]),
+            (5, 2) => (false, &[0, 1]),
+            (6 | 7, 3) => (true, &[1, 2]),
+            (8, 4) => (true, &[1, 2, 3]),
+            (10, 2) => (false, &[1]),
+            (11, 3) => (true, &[2]),
+            _ => return,
+        };
+        if name {
+            self.note_pre(rd(8), Kind::Name);
+        }
+        for &i in kids {
+            self.note_pre(rd(8 + 8 * i), Kind::Expr);
+        }
+    }
+
+    /// Put the object at `p` in the frontier if it was decoded as `kind`.
+    #[inline]
+    fn note_pre(&mut self, p: u64, kind: Kind) {
+        if p & 1 == 1 {
+            return;
+        }
+        let Some(k) = self.memo.slot(p) else { return };
+        if Memo::bit(&self.memo.frontier, k) {
+            return;
+        }
+        if let Some(id) = self.memo.get_at(kind, k) {
+            Memo::set_bit(&mut self.memo.frontier, k);
+            let id = if matches!(kind, Kind::Name) {
+                id | PRE_NAME
+            } else {
+                id
+            };
+            self.tape.frontier.push((k as u32, id));
         }
     }
 
@@ -636,6 +711,10 @@ impl<'h, 'a> Decoder<'h, 'a> {
             lv.refs = (start, n as u32);
             self.tape.lazy[i] = lv;
         }
+        // Values that are themselves decoded (shared with other data).
+        for i in 0..self.tape.lazy.len() {
+            self.note_pre(self.tape.lazy[i].ptr, Kind::Expr);
+        }
         Ok(())
     }
 
@@ -666,6 +745,16 @@ impl<'h, 'a> Decoder<'h, 'a> {
                 Val::Scalar(_) => return Err(Fail::malformed("bad name")),
                 Val::Obj(o) => {
                     if let Some(id) = self.memo.get(Kind::Name, o.addr) {
+                        break NameId(id);
+                    }
+                    if let Some(&g) = self.pre_get(o.addr) {
+                        if g & PRE_NAME == 0 {
+                            return Err(Fail::malformed("an expression where a name should be"));
+                        }
+                        let id = idx(self.tape.names.len(), "names")?;
+                        self.tape.names.push(NameNode::Anon);
+                        self.tape.pre_names.push((id, NameId(g & !PRE_NAME)));
+                        self.memo.insert(Kind::Name, o.addr, id);
                         break NameId(id);
                     }
                     let node = match o.tag {
@@ -820,9 +909,33 @@ impl<'h, 'a> Decoder<'h, 'a> {
         self.memo.get(Kind::Expr, ptr).map(ExprId)
     }
 
+    fn pre_get(&self, ptr: u64) -> Option<&'h u32> {
+        let pre = self.pre?;
+        pre.get(&(self.memo.slot(ptr)? as u32))
+    }
+
+    /// An expression already in the shared arena (see [`Decoder::pre`]),
+    /// as a local id standing for it.
+    fn pre_expr(&mut self, ptr: u64) -> Result<Option<ExprId>, Fail> {
+        let Some(&g) = self.pre_get(ptr) else {
+            return Ok(None);
+        };
+        if g & PRE_NAME != 0 {
+            return Err(Fail::malformed("a name where an expression should be"));
+        }
+        let id = idx(self.tape.exprs.len(), "expressions")?;
+        self.tape.exprs.push(ExprNode::BVar(0));
+        self.tape.pre_exprs.push((id, ExprId(g)));
+        self.memo.insert(Kind::Expr, ptr, id);
+        Ok(Some(ExprId(id)))
+    }
+
     /// An `Expr`, with an explicit stack.
     pub fn expr(&mut self, ptr: u64, holder: u64) -> Result<ExprId, Fail> {
         if let Some(e) = self.expr_done(ptr) {
+            return Ok(e);
+        }
+        if let Some(e) = self.pre_expr(ptr)? {
             return Ok(e);
         }
         let root = self.obj(ptr, holder, "an expression")?;
@@ -861,7 +974,7 @@ impl<'h, 'a> Decoder<'h, 'a> {
                 let mut pushed = false;
                 for &i in kids.iter().rev() {
                     let c = o.field(i);
-                    if self.expr_done(c).is_none() {
+                    if self.expr_done(c).is_none() && self.pre_expr(c)?.is_none() {
                         // Resolving the child checks that it lies below
                         // its holder, so the walk only goes down.
                         let co = self.obj(c, o.addr, "an expression")?;
@@ -1211,6 +1324,9 @@ impl Tape {
             expr_order,
             lazy,
             lazy_refs,
+            frontier,
+            pre_names,
+            pre_exprs,
         } = self;
         strs.clear();
         names.clear();
@@ -1229,6 +1345,9 @@ impl Tape {
         *expr_order = Layers::default();
         lazy.clear();
         lazy_refs.clear();
+        frontier.clear();
+        pre_names.clear();
+        pre_exprs.clear();
     }
 
     pub fn level_list(&self, l: LevelList) -> &[LevelId] {
