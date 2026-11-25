@@ -194,6 +194,16 @@ pub(super) struct Builder {
 }
 
 impl Builder {
+    /// A builder for an export of about `size` bytes.
+    pub(super) fn with_capacity(size: u64) -> Self {
+        let mut b = Builder::default();
+        // About two thirds of a real export's lines are compound
+        // expressions left stored, at about 3.5 words each; the space is
+        // only reserved, so a smaller file costs nothing.
+        b.words.reserve((size / 24).min(PEND as u64) as usize);
+        b
+    }
+
     /// Add a pending record; its reference.
     pub(super) fn pend(&mut self, id: u64, n: Node) -> R<u32> {
         let i = self.pending.len() as u32;
@@ -376,22 +386,50 @@ impl Builder {
         if self.roots.is_empty() {
             return None;
         }
+        // Refer to the stored records interned since by their arena ids
+        // (a bit per word marks them, to spare most lookups).
+        let p = &self.promoted;
+        let mut marks = vec![0u64; self.words.len().div_ceil(64)];
+        for &off in p.keys() {
+            marks[off as usize / 64] |= 1 << (off % 64);
+        }
+        let tr = |r: &mut u32| {
+            let off = *r & !KIND;
+            if *r & KIND == STORED
+                && marks[off as usize / 64] >> (off % 64) & 1 != 0
+                && let Some(&id) = p.get(&off)
+            {
+                *r = id;
+            }
+        };
+        let mut off = 0;
+        while off < self.words.len() {
+            let (size, refs): (usize, &[usize]) = match self.words[off] & 7 {
+                T_APP => (3, &[1, 2]),
+                T_LAM | T_PI => (4, &[2, 3]),
+                T_LET => (5, &[2, 3, 4]),
+                _ => (4, &[3]),
+            };
+            for &i in refs {
+                tr(&mut self.words[off + i]);
+            }
+            off += size;
+        }
+        self.roots.iter_mut().for_each(tr);
         self.words.shrink_to_fit();
         self.roots.shrink_to_fit();
-        self.promoted.shrink_to_fit();
         Some(Box::new(Stored {
             words: self.words,
             roots: self.roots,
-            promoted: self.promoted,
         }))
     }
 }
 
-/// Theorem values of an export, kept as stored records.
+/// Theorem values of an export, kept as stored records (which refer to
+/// interned terms by their arena ids).
 struct Stored {
     words: Vec<u32>,
     roots: Vec<u32>,
-    promoted: HashMap<u32, u32>,
 }
 
 thread_local! {
@@ -418,7 +456,7 @@ impl LazyValues for Stored {
     }
 
     fn heap_bytes(&self) -> usize {
-        self.words.capacity() * 4 + self.roots.capacity() * 4 + self.promoted.capacity() * 9
+        self.words.capacity() * 4 + self.roots.capacity() * 4
     }
 }
 
@@ -435,11 +473,7 @@ impl Stored {
             if r & KIND == 0 {
                 return Some(sink.shared_expr(ExprId(r)));
             }
-            let off = r & !KIND;
-            if let Some(&id) = self.promoted.get(&off) {
-                return Some(sink.shared_expr(ExprId(id)));
-            }
-            memo.get(&off).copied()
+            memo.get(&(r & !KIND)).copied()
         };
         stack.push(root);
         while let Some(&top) = stack.last() {

@@ -82,8 +82,8 @@ A lazy value is decoded only down to the subterms that were built at
 load time. Proofs share most of their types and instances with their
 statements, and in Lean's compacted files equal objects are one object.
 So the scan in step 3 records which loaded objects the lazy values point
-to, by address, and keeps them per module in a small map from address to
-shared id (`decode::Pre`). On the Lean package this map has 0.75M entries
+to, and keeps them per module in a small map from the object's position
+in the module (its memo slot) to its shared id (`decode::Pre`). On the Lean package this map has 0.75M entries
 across all modules, and cuts the nodes decoded for proofs by 40%.
 
 The files of modules with lazy values stay mapped. Their pages are
@@ -91,3 +91,26 @@ released after loading, and again every 1024 decoded values, so they do
 not add up in memory as checking reads every proof.
 
 `NITROLEAN_OLEAN_PROFILE=1` prints decode and intern times and node counts.
+
+## Exports
+
+The NDJSON export reader (`src/reader.rs`) gives the checker the same
+interface, lazy theorem values included (`reader::Options::lazy_proofs`,
+the default for `check`; `src/reader/lazy.rs`):
+
+- Leaves (`bvar`, `sort`, `const`, literals) are added to the arena at
+  once. Other expression records stay pending until the next declaration
+  line. There, the terms the declaration needs at once (types, definition
+  values, recursor rules) are added from the pending records, and the
+  rest (a theorem's proof, mostly) moves to a compact store of words with
+  references either to arena ids or to other stored records. A later
+  declaration that needs a stored term adds it then.
+- A regular file is parsed on several threads (`--threads`): each parses
+  chunks of whole lines, and their batches are applied in file order on
+  one thread.
+- An export lists each term once, so expressions are added without
+  hash-consing and indexed at the end, on all threads. If two are equal
+  after all (an export that repeats a term), the file is read again with
+  hash-consing.
+
+`NITROLEAN_READ_PROFILE=1` prints the time of the read and of the index.

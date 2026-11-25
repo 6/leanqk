@@ -192,8 +192,9 @@ fn read_open_file(f: File, opts: &Options) -> Result<(Env, ReadStats), ReadError
     let ix = env.exprs.index(threads);
     if std::env::var_os("NITROLEAN_READ_PROFILE").is_some() {
         eprintln!(
-            "read {:.3} s, index {:.3} s, duplicate {:?}",
+            "read {:.3} s (interning thread waited {:.3} s), index {:.3} s, duplicate {:?}",
             (t1 - t0).as_secs_f64(),
+            WAIT_NS.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9,
             t1.elapsed().as_secs_f64(),
             ix.err()
         );
@@ -211,8 +212,13 @@ fn state(opts: &Options, size: u64, append: bool) -> State {
     let mut st = State::new();
     st.append = append;
     if opts.lazy_proofs {
-        st.lazy = Some(Box::default());
+        st.lazy = Some(Box::new(lazy::Builder::with_capacity(size)));
+        // Export ids map to references (about one expression per 56
+        // bytes of a real export).
+        st.expr_ids.reserve((size / 56).min(1 << 31) as usize);
     }
+    // About one name per 1 KiB of a real export.
+    st.env.names.reserve((size / 1024).min(1 << 31) as usize);
     if !append {
         // About 94% of the lines of a real export are expressions, and a
         // line averages 55 bytes; reserving up front avoids rehashing the
@@ -232,7 +238,9 @@ fn read_regular(
     if threads > 1 {
         // The interning stage runs on this thread.
         let parsers = threads - 1;
-        return run_with(st, |full, _empty| produce_parallel(f, size, parsers, full));
+        return run_with(st, |full, empty| {
+            produce_parallel(f, size, parsers, full, empty)
+        });
     }
     use std::io::{Seek, SeekFrom};
     let mut f = f.try_clone().map_err(|e| ReadError {
@@ -416,6 +424,10 @@ fn run_inner(
     Ok(stats)
 }
 
+/// Time the interning stage waited for batches (for
+/// `NITROLEAN_READ_PROFILE`).
+static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Bytes of a file each parsing thread reads at a time.
 const CHUNK: u64 = 4 << 20;
 
@@ -423,19 +435,30 @@ const CHUNK: u64 = 4 << 20;
 /// parses chunks `t`, `t + threads`, ... (each the whole lines that start
 /// in it), and this thread forwards their batches in file order, with
 /// line numbers made absolute.
-fn produce_parallel(f: &File, size: u64, threads: usize, full: SyncSender<Batch>) {
+fn produce_parallel(
+    f: &File,
+    size: u64,
+    threads: usize,
+    full: SyncSender<Batch>,
+    empty: Receiver<Batch>,
+) {
     let chunks = size.div_ceil(CHUNK).max(1) as usize;
     let threads = threads.clamp(1, chunks);
+    // Batches the interning stage is done with, for the parsers to reuse
+    // (so that their buffers are not freed and allocated again).
+    let pool = std::sync::Mutex::new(Vec::<Batch>::new());
     std::thread::scope(|s| {
         let mut rxs = Vec::new();
         for t in 0..threads {
-            let (tx, rx) = mpsc::sync_channel::<Batch>(2);
+            let (tx, rx) = mpsc::sync_channel::<Batch>(1);
             rxs.push(rx);
+            let pool = &pool;
             s.spawn(move || {
                 let mut tape = Tape::new();
                 let mut buf = Vec::new();
                 for c in (t..chunks).step_by(threads) {
-                    let b = parse_chunk(f, size, c as u64, &mut tape, &mut buf);
+                    let b = pool.lock().unwrap_or_else(|e| e.into_inner()).pop();
+                    let b = parse_chunk(f, size, c as u64, &mut tape, &mut buf, b);
                     let stop = b.end.as_ref().is_some_and(|e| e.is_err());
                     if tx.send(b).is_err() || stop {
                         return;
@@ -445,6 +468,11 @@ fn produce_parallel(f: &File, size: u64, threads: usize, full: SyncSender<Batch>
         }
         let (mut lines, mut bytes) = (0u64, 0u64);
         for c in 0..chunks {
+            while let Ok(mut b) = empty.try_recv() {
+                b.clear();
+                b.end = None;
+                pool.lock().unwrap_or_else(|e| e.into_inner()).push(b);
+            }
             let Ok(mut b) = rxs[c % threads].recv() else {
                 return;
             };
@@ -478,9 +506,16 @@ fn produce_parallel(f: &File, size: u64, threads: usize, full: SyncSender<Batch>
 /// Parse chunk `c` of a file: the lines that start in bytes
 /// `[c * CHUNK, (c + 1) * CHUNK)`. Line numbers are relative to the
 /// chunk; `lines_read` and `bytes_read` are the chunk's.
-fn parse_chunk(f: &File, size: u64, c: u64, tape: &mut Tape, buf: &mut Vec<u8>) -> Batch {
+fn parse_chunk(
+    f: &File,
+    size: u64,
+    c: u64,
+    tape: &mut Tape,
+    buf: &mut Vec<u8>,
+    batch: Option<Batch>,
+) -> Batch {
     use std::os::unix::fs::FileExt;
-    let mut batch = Batch::default();
+    let mut batch = batch.unwrap_or_default();
     let (lo, hi) = (c * CHUNK, ((c + 1) * CHUNK).min(size));
     // Read the chunk, one byte before it (to see whether a line starts at
     // `lo`), and on until the end of its last line.
@@ -1079,7 +1114,13 @@ impl State {
         let mut tape = Tape::new();
         let mut seen_meta = false;
         loop {
-            let Ok(mut batch) = full.recv() else {
+            let w = std::time::Instant::now();
+            let got = full.recv();
+            WAIT_NS.fetch_add(
+                w.elapsed().as_nanos() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            let Ok(mut batch) = got else {
                 return Err(ReadError {
                     line: 0,
                     class: ErrorClass::Io,
