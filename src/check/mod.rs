@@ -303,6 +303,14 @@ fn check_header(tc: &mut Tc<'_>, d: &Decl) -> R<()> {
 }
 
 fn check_value(tc: &mut Tc<'_>, d: &Decl, value: crate::expr::ExprId) -> R<()> {
+    let value = if crate::env::is_lazy(value) {
+        match tc.value(d) {
+            Ok(v) => v.unwrap_or(value),
+            Err(e) => return err(format!("malformed value: {e}")),
+        }
+    } else {
+        value
+    };
     let lps: Vec<NameId> = tc.st.lparams(d).to_vec();
     let vt = tc.check(value, &lps)?;
     if !tc.is_def_eq(vt, d.ty)? {

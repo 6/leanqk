@@ -76,6 +76,8 @@ pub struct Tc<'e> {
     whnf_core_cache: IdMap<ExprId, ExprId>,
     whnf_cache: IdMap<ExprId, ExprId>,
     unfold_cache: IdMap<ExprId, ExprId>,
+    /// Values read lazily from `.olean` files, built in the store.
+    values: IdMap<ExprId, ExprId>,
     eq_ok: IdSet<(ExprId, ExprId)>,
     eq_fail: IdSet<(ExprId, ExprId)>,
     level_eq: IdMap<(LevelId, LevelId), bool>,
@@ -104,6 +106,7 @@ impl<'e> Tc<'e> {
             whnf_core_cache: IdMap::default(),
             whnf_cache: IdMap::default(),
             unfold_cache: IdMap::default(),
+            values: IdMap::default(),
             eq_ok: IdSet::default(),
             eq_fail: IdSet::default(),
             level_eq: IdMap::default(),
@@ -128,6 +131,7 @@ impl<'e> Tc<'e> {
         self.whnf_core_cache = IdMap::default();
         self.whnf_cache = IdMap::default();
         self.unfold_cache = IdMap::default();
+        self.values = IdMap::default();
         self.eq_ok = IdSet::default();
         self.eq_fail = IdSet::default();
         self.level_eq = IdMap::default();
@@ -242,6 +246,36 @@ impl<'e> Tc<'e> {
             DeclKind::Definition { value, .. } | DeclKind::Theorem { value, .. } => Some(value),
             _ => None,
         }
+    }
+
+    /// The value of a definition, theorem or opaque `d` (`None` for other
+    /// kinds), as a term of the store: a value left in its `.olean` file
+    /// is built in the store on first use (see [`Env::value_into`]).
+    pub fn value(&mut self, d: &Decl) -> Result<Option<ExprId>, String> {
+        let v = match d.kind {
+            DeclKind::Definition { value, .. }
+            | DeclKind::Theorem { value, .. }
+            | DeclKind::Opaque { value, .. } => value,
+            _ => return Ok(None),
+        };
+        if !crate::env::is_lazy(v) {
+            return Ok(Some(v));
+        }
+        if let Some(&e) = self.values.get(&v) {
+            return Ok(Some(e));
+        }
+        let env = self.st.env;
+        let e = env.value_into(d, &mut self.st)?;
+        if let Some(e) = e {
+            self.values.insert(v, e);
+        }
+        Ok(e)
+    }
+
+    /// [`Tc::value`] where a malformed file is a bug of the loader.
+    fn unfold_value(&mut self, d: &Decl) -> Option<ExprId> {
+        Self::decl_value(d)?;
+        self.value(d).unwrap_or_else(|e| panic!("{e}"))
     }
 
     fn decl_hints(d: &Decl) -> Hints {
@@ -1148,7 +1182,7 @@ impl<'e> Tc<'e> {
             return None;
         };
         let d = self.is_delta(e)?;
-        let v = Self::decl_value(&d)?;
+        let v = self.unfold_value(&d)?;
         if self.st.list(ls).is_empty() {
             return Some(v);
         }

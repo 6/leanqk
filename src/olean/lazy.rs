@@ -5,8 +5,10 @@
 //! (memory-mapped, with their pages released after loading, so they cost
 //! no memory until read again) and a handle per value: the module, the
 //! value's address and its holder's. Decoding a value is the loader's
-//! decoding of one term, with a hash-map memo instead of the module-wide
-//! array, and the same checks.
+//! decoding of one term, with the same checks; each thread reuses its
+//! memo and buffers. The pages read are released again every so often
+//! (`touched`), so the files' pages do not pile up in memory as checking
+//! reads every proof.
 
 use super::decode::{Decoder, Memo, Tape};
 use super::file::OleanFile;
@@ -22,7 +24,13 @@ pub struct OleanValues {
     pub modules: Vec<Option<Vec<OleanFile>>>,
     /// Per value: module, address, holder.
     pub handles: Vec<(u32, u64, u64)>,
+    /// Modules read since their pages were last released, and how many
+    /// values were decoded since.
+    pub touched: std::sync::Mutex<(Vec<u32>, u32)>,
 }
+
+/// Release the pages read after this many values.
+const RELEASE_EVERY: u32 = 1024;
 
 impl LazyValues for OleanValues {
     fn decode(&self, env: &Env, k: u32, sink: &mut dyn TermSink) -> Result<ExprId, String> {
@@ -45,6 +53,7 @@ impl LazyValues for OleanValues {
         let (memo, tape) = d.into_parts();
         let res = res.and_then(|root| build(env, &tape, root, sink));
         SCRATCH.with(|s| s.set(Some((memo, tape))));
+        self.touch(m);
         res
     }
 
@@ -54,6 +63,35 @@ impl LazyValues for OleanValues {
 
     fn heap_bytes(&self) -> usize {
         self.handles.capacity() * 24 + self.modules.capacity() * 24
+    }
+}
+
+impl OleanValues {
+    pub fn new(modules: Vec<Option<Vec<OleanFile>>>, handles: Vec<(u32, u64, u64)>) -> Self {
+        OleanValues {
+            modules,
+            handles,
+            touched: Default::default(),
+        }
+    }
+
+    fn touch(&self, m: u32) {
+        let mut t = self.touched.lock().unwrap_or_else(|e| e.into_inner());
+        if !t.0.contains(&m) {
+            t.0.push(m);
+        }
+        t.1 += 1;
+        if t.1 < RELEASE_EVERY {
+            return;
+        }
+        let ms = std::mem::take(&mut t.0);
+        t.1 = 0;
+        drop(t);
+        for m in ms {
+            if let Some(Some(parts)) = self.modules.get(m as usize) {
+                parts.iter().for_each(OleanFile::release);
+            }
+        }
     }
 }
 

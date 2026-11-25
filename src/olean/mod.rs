@@ -680,10 +680,7 @@ fn load_modules(mods: &[Module], threads: usize, lazy: bool) -> Result<(Env, Sta
     } = asm;
     drop(add);
     if !handles.is_empty() {
-        env.lazy = Some(Box::new(lazy::OleanValues {
-            modules: kept,
-            handles,
-        }));
+        env.lazy = Some(Box::new(lazy::OleanValues::new(kept, handles)));
     }
     let (names, levels, exprs) = par.finish(threads).map_err(|o| {
         err(
