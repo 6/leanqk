@@ -1,4 +1,4 @@
-//! The `leanqk check` command-line contract: output and exit codes. Until
+//! The `nitrolean check` command-line contract: output and exit codes. Until
 //! type checking exists, a well-formed export is declined (exit 2) unless
 //! `--parse-only` is given
 //! (0 accepted, 1 rejected, including any malformed input; 2 declined or
@@ -14,11 +14,11 @@ const GOOD: &str = r#"{"in":1,"str":{"pre":0,"str":"a"}}
 {"axiom":{"name":1,"levelParams":[],"type":0,"isUnsafe":false}}
 "#;
 
-fn leanqk(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_leanqk"))
+fn nitrolean(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_nitrolean"))
         .args(args)
         .output()
-        .expect("run leanqk")
+        .expect("run nitrolean")
 }
 
 /// Write `contents` to a fresh file under the target directory.
@@ -38,7 +38,7 @@ fn check_with(name: &str, contents: &str, flags: &[&str]) -> Output {
     let mut args = vec!["check"];
     args.extend_from_slice(flags);
     args.push(p.to_str().unwrap());
-    let out = leanqk(&args);
+    let out = nitrolean(&args);
     let _ = std::fs::remove_file(p);
     out
 }
@@ -99,7 +99,7 @@ fn parse_only_still_rejects_and_declines() {
 #[test]
 fn stats_flag_prints_time_and_memory() {
     let p = temp_file("stats", &format!("{META}\n{GOOD}"));
-    let out = leanqk(&["check", "--stats", "--parse-only", p.to_str().unwrap()]);
+    let out = nitrolean(&["check", "--stats", "--parse-only", p.to_str().unwrap()]);
     let _ = std::fs::remove_file(p);
     assert_eq!(out.status.code(), Some(0));
     let stdout = text(&out.stdout);
@@ -109,7 +109,7 @@ fn stats_flag_prints_time_and_memory() {
 
 #[test]
 fn reads_standard_input() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_leanqk"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_nitrolean"))
         .args(["check", "--parse-only", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -182,19 +182,19 @@ fn duplicate_declaration_exits_1() {
 
 #[test]
 fn missing_file_and_bad_usage_exit_2() {
-    let out = leanqk(&["check", "/nonexistent/leanqk-test.ndjson"]);
+    let out = nitrolean(&["check", "/nonexistent/nitrolean-test.ndjson"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(text(&out.stderr).contains("leanqk-test.ndjson"));
-    assert_eq!(leanqk(&[]).status.code(), Some(2));
-    assert_eq!(leanqk(&["check"]).status.code(), Some(2));
-    assert_eq!(leanqk(&["frobnicate"]).status.code(), Some(2));
-    assert_eq!(leanqk(&["check", "--bogus", "x"]).status.code(), Some(2));
+    assert!(text(&out.stderr).contains("nitrolean-test.ndjson"));
+    assert_eq!(nitrolean(&[]).status.code(), Some(2));
+    assert_eq!(nitrolean(&["check"]).status.code(), Some(2));
+    assert_eq!(nitrolean(&["frobnicate"]).status.code(), Some(2));
+    assert_eq!(nitrolean(&["check", "--bogus", "x"]).status.code(), Some(2));
 }
 
 #[test]
 fn help_documents_exit_codes() {
     for args in [&["--help"][..], &["check", "--help"][..]] {
-        let out = leanqk(args);
+        let out = nitrolean(args);
         assert_eq!(out.status.code(), Some(0));
         let stdout = text(&out.stdout);
         assert!(stdout.contains("Exit status:"), "{stdout}");
@@ -208,7 +208,7 @@ fn help_documents_exit_codes() {
 #[test]
 fn reads_standard_input_redirected_from_a_file() {
     let p = temp_file("stdin", &format!("{META}\n{GOOD}"));
-    let out = Command::new(env!("CARGO_BIN_EXE_leanqk"))
+    let out = Command::new(env!("CARGO_BIN_EXE_nitrolean"))
         .args(["check", "--parse-only", "-"])
         .stdin(std::fs::File::open(&p).unwrap())
         .output()
@@ -216,4 +216,37 @@ fn reads_standard_input_redirected_from_a_file() {
     let _ = std::fs::remove_file(p);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert!(text(&out.stdout).contains("axioms        1"));
+}
+
+#[test]
+fn nlean_is_the_same_program() {
+    let p = temp_file("alias", &format!("{META}\n{GOOD}"));
+    let path = p.to_str().unwrap();
+    for args in [
+        &["check", "--parse-only", path][..],
+        &["check", "/nonexistent/nitrolean-test.ndjson"][..],
+        &["frobnicate"][..],
+        &["--version"][..],
+    ] {
+        let long = nitrolean(args);
+        let short = Command::new(env!("CARGO_BIN_EXE_nlean"))
+            .args(args)
+            .output()
+            .expect("run nlean");
+        assert_eq!(long.status.code(), short.status.code(), "{args:?}");
+        assert_eq!(long.stdout, short.stdout, "{args:?}");
+        // Usage lines name the binary as invoked; everything else matches.
+        assert_eq!(
+            text(&long.stderr),
+            text(&short.stderr).replace("nlean", "nitrolean"),
+            "{args:?}"
+        );
+    }
+    let _ = std::fs::remove_file(p);
+    let out = Command::new(env!("CARGO_BIN_EXE_nlean"))
+        .arg("--help")
+        .output()
+        .expect("run nlean");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(text(&out.stdout).contains("Usage: nlean"));
 }

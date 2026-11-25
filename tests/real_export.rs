@@ -1,7 +1,7 @@
 //! Parse a real export produced by `leanexport`. Ignored by default; run with
 //!
 //! ```text
-//! LEANQK_EXPORT=path/to/export.ndjson cargo test --release -- --ignored
+//! NITROLEAN_EXPORT=path/to/export.ndjson cargo test --release -- --ignored
 //! ```
 //!
 //! To make one with Lean v4.36.0 (elan):
@@ -12,14 +12,14 @@
 //!   leanexport Init > init.ndjson
 //! ```
 
-use leanqk::env::DeclKind;
-use leanqk::reader::read_file;
+use nitrolean::env::DeclKind;
+use nitrolean::reader::read_file;
 
 #[test]
-#[ignore = "needs LEANQK_EXPORT"]
+#[ignore = "needs NITROLEAN_EXPORT"]
 fn parses_real_export() {
-    let Some(path) = std::env::var_os("LEANQK_EXPORT") else {
-        eprintln!("LEANQK_EXPORT not set; skipping");
+    let Some(path) = std::env::var_os("NITROLEAN_EXPORT") else {
+        eprintln!("NITROLEAN_EXPORT not set; skipping");
         return;
     };
     let (env, stats) = read_file(path.as_ref()).unwrap_or_else(|e| panic!("{e}"));

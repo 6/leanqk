@@ -32,11 +32,12 @@ bot_trailer='Co-Authored-By: 6[bot] <129682364+6[bot]@users.noreply.github.com>'
 # Prints matches of an extended regex in the tree as path:line:text.
 tree_grep() { git grep --untracked -nIE "$@" -- . 2>/dev/null; }
 
-# 1. README.md is exactly one line.
+# 1. README.md is exactly one line, ending in a newline.
+readme_line='`nitrolean` - work in progress'
 if [[ ! -f README.md ]]; then
   violation "README.md is missing"
-elif [[ $(cat README.md) != "Lean quick kernel - work in progress" || $(wc -l <README.md) != 1 ]]; then
-  violation "README.md must be exactly the one line 'Lean quick kernel - work in progress'"
+elif [[ $(cat README.md) != "$readme_line" || $(wc -l <README.md) != 1 ]]; then
+  violation "README.md must be exactly the one line '$readme_line'"
 fi
 
 # 2. Home directory paths.

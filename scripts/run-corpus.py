@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Run `leanqk check` on every export of the corpus and compare the verdicts.
+"""Run `nitrolean check` on every export of the corpus and compare the verdicts.
 
-  scripts/run-corpus.py [--leanqk BIN] [--corpus DIR] [--expected TSV] [--jobs N]
+  scripts/run-corpus.py [--nitrolean BIN] [--corpus DIR] [--expected TSV] [--jobs N]
                         [--timeout S] [--filter REGEX] [--results TSV] [--strict]
 
-Each test's expected verdict comes from corpus/expected-leanqk.tsv, its export
+Each test's expected verdict comes from corpus/expected-nitrolean.tsv, its export
 from DIR/<test id>.ndjson (made by scripts/fetch-corpus.sh) and its timeout from
 DIR/manifest.tsv (the Arena's per-test timeout, else --timeout).
 
-`leanqk check FILE` exits 0 for accepted, 1 for rejected (malformed input
+`nitrolean check FILE` exits 0 for accepted, 1 for rejected (malformed input
 included) and 2 for declined (usage or I/O errors, an unsupported format, or a
 check it cannot do yet). A test is
 
   pass     the verdict is the expected one
   fail     the other verdict
-  pending  leanqk declined (exit 2), or said "not implemented"; listed and
+  pending  nitrolean declined (exit 2), or said "not implemented"; listed and
            counted, but not a failure unless --strict
   crash    any other exit status, or killed by a signal
   timeout  no verdict within the timeout
@@ -23,7 +23,7 @@ check it cannot do yet). A test is
 and the run exits 1 if any test fails, crashes, times out or is missing (or is
 pending, with --strict).
 
-With --parse-only, it runs `leanqk check --parse-only FILE` instead, which
+With --parse-only, it runs `nitrolean check --parse-only FILE` instead, which
 exits 0 once the file has been read: every test expected to be accepted must
 then exit 0, and a test expected to be rejected may exit 0 or 1 (its export
 may be well formed or not).
@@ -59,11 +59,11 @@ def read_tsv(path: Path) -> list[dict]:
 
 
 def gnu_time() -> str | None:
-    """GNU time, which measures the peak memory of leanqk alone.
+    """GNU time, which measures the peak memory of nitrolean alone.
 
     The resource usage that wait4 reports for a direct child of this process
     includes the memory the child had as a fork of this Python process, before
-    it ran leanqk, which is more than a small test needs.
+    it ran nitrolean, which is more than a small test needs.
     """
     for path in ("/usr/bin/time", shutil.which("gtime")):
         if path and os.path.isfile(path):
@@ -76,11 +76,11 @@ def gnu_time() -> str | None:
 TERMINATED = re.compile(r"Command terminated by signal (\d+)")
 
 
-def run_one(leanqk: str, export: Path, timeout: float, time_bin: str | None,
+def run_one(nitrolean: str, export: Path, timeout: float, time_bin: str | None,
             parse_only: bool = False) -> dict:
-    """Run leanqk on one export: exit status, wall time, peak RSS, stderr."""
+    """Run nitrolean on one export: exit status, wall time, peak RSS, stderr."""
     with tempfile.NamedTemporaryFile(prefix="run-corpus-", suffix=".time") as tf:
-        cmd = [leanqk, "check"] + (["--parse-only"] if parse_only else []) + [str(export)]
+        cmd = [nitrolean, "check"] + (["--parse-only"] if parse_only else []) + [str(export)]
         if time_bin:
             cmd = [time_bin, "-f", "%M", "-o", tf.name] + cmd
         start = time.monotonic()
@@ -145,9 +145,11 @@ def first_line(text: str) -> str:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--leanqk", default=None, help="leanqk binary (default: target/release/leanqk)")
+    p.add_argument("--nitrolean", default=None, help="nitrolean binary (default: target/release/nitrolean)")
+    # The flag's name before the rename, kept as a hidden alias.
+    p.add_argument("--leanqk", dest="nitrolean", help=argparse.SUPPRESS)
     p.add_argument("--corpus", type=Path, default=ROOT / "corpus" / "exports")
-    p.add_argument("--expected", type=Path, default=ROOT / "corpus" / "expected-leanqk.tsv")
+    p.add_argument("--expected", type=Path, default=ROOT / "corpus" / "expected-nitrolean.tsv")
     p.add_argument("--jobs", "-j", type=int, default=1,
                    help="tests to run at once (default 1, for stable times)")
     p.add_argument("--timeout", type=float, default=120,
@@ -158,13 +160,13 @@ def main() -> int:
     p.add_argument("--results", type=Path, help="also write the results as TSV here")
     p.add_argument("--strict", action="store_true", help="pending tests fail the run")
     p.add_argument("--parse-only", action="store_true",
-                   help="only check that leanqk reads every export (leanqk check --parse-only)")
+                   help="only check that nitrolean reads every export (nitrolean check --parse-only)")
     p.add_argument("--quiet", "-q", action="store_true", help="table rows only for tests that did not pass")
     args = p.parse_args()
 
-    leanqk = args.leanqk or str(ROOT / "target" / "release" / "leanqk")
-    if not (os.path.isfile(leanqk) or shutil.which(leanqk)):
-        print(f"run-corpus: {leanqk} not found (cargo build --release)", file=sys.stderr)
+    nitrolean = args.nitrolean or str(ROOT / "target" / "release" / "nitrolean")
+    if not (os.path.isfile(nitrolean) or shutil.which(nitrolean)):
+        print(f"run-corpus: {nitrolean} not found (cargo build --release)", file=sys.stderr)
         return 2
     tests = read_tsv(args.expected)
     if args.filter:
@@ -185,7 +187,7 @@ def main() -> int:
         timeout = timeouts.get(t["test_id"], args.timeout) * args.timeout_scale
         if not export.exists():
             return t, "missing", "-", {"time": 0.0, "rss": 0, "stderr": "", "code": None}, timeout
-        r = run_one(leanqk, export, timeout, time_bin, args.parse_only)
+        r = run_one(nitrolean, export, timeout, time_bin, args.parse_only)
         status, got = classify(t["verdict"], r, args.parse_only)
         return t, status, got, r, timeout
 
@@ -214,7 +216,7 @@ def main() -> int:
     summary = ", ".join(f"{counts[s]} {s}" for s in STATUSES if counts[s] or s in ("pass", "fail", "timeout", "pending"))
     print()
     print(f"run-corpus: {len(results)} tests: {summary}")
-    print(f"run-corpus: {total_time:.1f} s in leanqk ({wall:.1f} s wall), peak {peak / 2**20:.1f} MiB")
+    print(f"run-corpus: {total_time:.1f} s in nitrolean ({wall:.1f} s wall), peak {peak / 2**20:.1f} MiB")
     bad = [s for s in FAILING if counts[s]] + (["pending"] if args.strict and counts["pending"] else [])
 
     if args.results:
@@ -229,7 +231,7 @@ def main() -> int:
             f.write(f"## Corpus{' (parse only)' if args.parse_only else ''}\n\n| status | tests |\n|---|---:|\n")
             for s in STATUSES:
                 f.write(f"| {s} | {counts[s]} |\n")
-            f.write(f"\n{total_time:.1f} s in leanqk, peak {peak / 2**20:.1f} MiB\n\n")
+            f.write(f"\n{total_time:.1f} s in nitrolean, peak {peak / 2**20:.1f} MiB\n\n")
             unexpected = [x for x in results if x[1] in FAILING]
             if unexpected:
                 f.write("| test | expected | status | got | note |\n|---|---|---|---|---|\n")

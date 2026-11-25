@@ -14,8 +14,8 @@ Standard library only; run with `python3 -I`.
   corpus.py lean-verdicts OUT TSV [--jobs N]
       Run Lean's leanchecker on every export in OUT/manifest.tsv and write
       corpus/expected-lean-*.tsv.
-  corpus.py expected-leanqk LEAN_TSV DIVERGENCES_MD OUT_TSV [--check]
-      Derive leanqk's intended verdicts from Lean's and the divergence list.
+  corpus.py expected-nitrolean LEAN_TSV DIVERGENCES_MD OUT_TSV [--check]
+      Derive nitrolean's intended verdicts from Lean's and the divergence list.
 """
 
 from __future__ import annotations
@@ -164,7 +164,7 @@ def lean_verdicts(out: Path, tsv: Path, jobs: int, toolchain: str) -> None:
 DIVERGENCE_ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*(accept|reject)\s*\|")
 
 
-def expected_leanqk(lean_tsv: Path, divergences: Path, out_tsv: Path, check: bool) -> None:
+def expected_nitrolean(lean_tsv: Path, divergences: Path, out_tsv: Path, check: bool) -> None:
     rows = read_tsv(lean_tsv)
     ids = {r["test_id"] for r in rows}
     overrides = {}
@@ -216,7 +216,7 @@ def main() -> None:
     v.add_argument("tsv", type=Path)
     v.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     v.add_argument("--toolchain", default="leanprover/lean4:v4.36.0")
-    e = sub.add_parser("expected-leanqk")
+    e = sub.add_parser("expected-nitrolean")
     e.add_argument("lean_tsv", type=Path)
     e.add_argument("divergences", type=Path)
     e.add_argument("out_tsv", type=Path)
@@ -230,8 +230,8 @@ def main() -> None:
         checksums(args.out, args.check, args.allow_extra)
     elif args.cmd == "lean-verdicts":
         lean_verdicts(args.out, args.tsv, args.jobs, args.toolchain)
-    elif args.cmd == "expected-leanqk":
-        expected_leanqk(args.lean_tsv, args.divergences, args.out_tsv, args.check)
+    elif args.cmd == "expected-nitrolean":
+        expected_nitrolean(args.lean_tsv, args.divergences, args.out_tsv, args.check)
 
 
 if __name__ == "__main__":

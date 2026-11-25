@@ -1,22 +1,28 @@
 [package]
-name = "leanqk"
+name = "nitrolean"
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.100"
-description = "Lean quick kernel"
+description = "An independent Lean 4 proof checker in Rust"
 license = "Apache-2.0"
-repository = "https://github.com/6/leanqk"
+repository = "https://github.com/6/nitrolean"
+homepage = "https://github.com/6/nitrolean"
 readme = "README.md"
 keywords = ["lean", "proof-checker", "kernel"]
 categories = ["command-line-utilities", "mathematics"]
 exclude = [".github/", "mise.toml", "mise.*.toml", "corpus/", "scripts/"]
 
 [lib]
+name = "nitrolean"
 path = "src/lib.rs"
 
 [[bin]]
-name = "leanqk"
+name = "nitrolean"
 path = "src/main.rs"
+
+[[bin]]
+name = "nlean"
+path = "src/bin/nlean.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

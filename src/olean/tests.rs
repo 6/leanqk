@@ -163,7 +163,7 @@ fn write(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
 }
 
 fn tmpdir(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("leanqk-olean-{tag}-{}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("nitrolean-olean-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&d).expect("temp dir");
     d
 }
@@ -336,10 +336,10 @@ fn corrupt_files_never_panic() {
 }
 
 /// The same on a real module, if a Lean v4.36.0 library is at
-/// `LEANQK_LEAN_LIB` (its `lib/lean` directory).
+/// `NITROLEAN_LEAN_LIB` (its `lib/lean` directory).
 #[test]
 fn corrupt_real_files_never_panic() {
-    let Some(lib) = std::env::var_os("LEANQK_LEAN_LIB") else {
+    let Some(lib) = std::env::var_os("NITROLEAN_LEAN_LIB") else {
         return;
     };
     let parts = ["olean", "olean.server", "olean.private"];

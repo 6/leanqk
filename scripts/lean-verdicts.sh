@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Record Lean's own verdict on every export of the corpus, and derive leanqk's.
+# Record Lean's own verdict on every export of the corpus, and derive nitrolean's.
 #
 #   scripts/lean-verdicts.sh [--out DIR] [--jobs N]
 #
 # Runs `leanchecker --from-export` of the pinned Lean on every export in DIR
 # (default: corpus/exports, made by scripts/fetch-corpus.sh) and writes
-# corpus/expected-lean-v4.36.0.tsv, then corpus/expected-leanqk.tsv from it and
+# corpus/expected-lean-v4.36.0.tsv, then corpus/expected-nitrolean.tsv from it and
 # corpus/divergences.md.
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -21,5 +21,5 @@ while [[ $# -gt 0 ]]; do
 done
 python3 -I "$ROOT/scripts/corpus.py" lean-verdicts "$OUT" "$ROOT/corpus/expected-lean-v4.36.0.tsv" \
   --jobs "$JOBS" --toolchain leanprover/lean4:v4.36.0
-python3 -I "$ROOT/scripts/corpus.py" expected-leanqk "$ROOT/corpus/expected-lean-v4.36.0.tsv" \
-  "$ROOT/corpus/divergences.md" "$ROOT/corpus/expected-leanqk.tsv"
+python3 -I "$ROOT/scripts/corpus.py" expected-nitrolean "$ROOT/corpus/expected-lean-v4.36.0.tsv" \
+  "$ROOT/corpus/divergences.md" "$ROOT/corpus/expected-nitrolean.tsv"

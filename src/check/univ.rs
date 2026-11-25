@@ -3,7 +3,7 @@
 //! normal forms, `is_geq`, and the syntactic `is_not_zero` and
 //! `normalizes_to_zero`. These are sound but incomplete for `imax` (the
 //! lean-kernel-arena corner cases `imax-nested-absorption` and
-//! `imax-right-successor` are true equations they miss); leanqk follows
+//! `imax-right-successor` are true equations they miss); nitrolean follows
 //! Lean's verdicts there. The tests check them against an exact decision
 //! procedure (in `exact` below): whatever Lean's procedures claim must hold
 //! for every assignment of the parameters.

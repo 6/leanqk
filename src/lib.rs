@@ -1,4 +1,4 @@
-//! leanqk: an independent, fast, memory-light proof checker for Lean 4.
+//! nitrolean: an independent, fast, memory-light proof checker for Lean 4.
 //!
 //! The crate reads Lean's NDJSON kernel export (format 3, as written by
 //! `leanexport`) into an [`env::Env`]: hash-consed arenas of names, universe
@@ -20,6 +20,7 @@
 #![deny(unsafe_code)]
 
 pub mod check;
+pub mod cli;
 pub mod compare;
 pub mod env;
 pub mod expr;
