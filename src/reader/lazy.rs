@@ -218,7 +218,7 @@ fn add(env: &mut Env, append: bool, n: Node, ids: [u32; 3]) -> R<u32> {
         Node::Proj(s, i, _) => ExprNode::Proj(s, i, e(0)),
     };
     let id = if append {
-        env.exprs.append(node, &env.levels)?
+        env.exprs.append_compound(node)?
     } else {
         env.exprs.intern(node, &env.levels)?.0
     };
