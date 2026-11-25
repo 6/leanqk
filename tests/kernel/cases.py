@@ -1054,6 +1054,15 @@ eval_case("eval-rec-lit", "K.ev_rec_lit", "accept",
 eval_case("eval-rec-lit-wrong", "K.ev_rec_lit_wrong", "reject", "the same, off by one")
 eval_case("eval-big", "K.ev_big", "accept", "literal arithmetic past 2^64 inside decide")
 eval_case("eval-big-wrong", "K.ev_big_wrong", "reject", "the same, false")
+eval_case("eval-cast-thm", "K.ev_cast_thm", "accept",
+          "cast over a theorem applied to a variable: the erased proof is a K-like major premise")
+eval_case("eval-cast-thm-wrong", "K.ev_cast_thm_wrong", "reject", "the same, off by one")
+eval_case("eval-and-rec", "K.ev_and_ok", "accept",
+          "And.rec on a constructed proof: the erased proof is a major premise")
+eval_case("eval-and-rec-wrong", "K.ev_and_wrong", "reject", "the same, off by one")
+eval_case("eval-sub", "K.ev_sub_ok", "accept",
+          "a weak head normal form holding a proof (a Subtype value)")
+eval_case("eval-sub-wrong", "K.ev_sub_wrong", "reject", "its value, claimed 3")
 eval_case("eval-let", "K.ev_let_ok", "accept", "a let-bound value used twice")
 eval_case("eval-let-wrong", "K.ev_let_wrong", "reject", "the same, off by one")
 eval_case("eval-fn", "K.ev_fn_ok", "accept",
