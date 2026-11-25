@@ -28,6 +28,7 @@ use num_bigint::BigUint;
 
 use crate::env::{Decl, DeclKind};
 use crate::expr::{BinderInfo, ExprId, ExprNode};
+use crate::hash::hash2;
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
@@ -60,6 +61,13 @@ const NAMES_KEEP: usize = 1 << 18;
 
 /// Values an arena may hold before it is dropped between declarations.
 const KEEP_VALUES: usize = 1 << 16;
+
+/// Whether closures and thunks hold holes at the entries their terms do
+/// not read (`prune`).
+const PRUNE: bool = true;
+
+/// Slots of `Nbe::prunes`.
+const PRUNES: usize = 1 << 12;
 
 /// Closed terms remembered as checked (`checked_closed`) before they are
 /// forgotten.
@@ -103,16 +111,23 @@ pub struct Nbe<'e> {
     major_induct: IdMap<NameId, NameId>,
     /// `prop_positions` of constants.
     prop_pos: IdMap<NameId, u64>,
+    /// `unused_positions` of definitions.
+    unused_pos: IdMap<NameId, u64>,
     open_count: IdMap<(V, V), u32>,
     trim_cache: IdMap<(val::Env, u32), val::Env>,
     canon_fvar: IdMap<(V, V, u32), u32>,
     elims: Vec<Vec<val::Elim>>,
     terms: Vec<ExprId>,
+    /// Declarations found by name, a direct-mapped front for the
+    /// environment's table: (name, index), or `NONE` names.
+    found: Box<[std::cell::Cell<(u32, u32)>]>,
     vargs: Vec<V>,
     /// Nesting of eager argument evaluation (see `thunk`).
     eager_depth: u32,
     /// Whether closed values go to the closed-term evaluator (`closed.rs`).
     closed_eval: bool,
+    /// Inside `whnf_closed`'s attempt without the evaluator.
+    eval_probe: bool,
     /// The evaluator's checker, over `st` while it runs.
     ev: Option<Box<Tc<'e>>>,
     /// Whether `ev` was used since `begin`.
@@ -121,6 +136,11 @@ pub struct Nbe<'e> {
     names: IdMap<V, ExprId>,
     /// Definitional equality of terms named so.
     name_eq: IdMap<(ExprId, ExprId), bool>,
+    /// `prune` by environment and holes (direct-mapped): (environment,
+    /// holes, pruned environment).
+    prunes: Vec<[u32; 3]>,
+    /// `surely_not_proof` by constant and number of arguments.
+    not_proof: IdMap<(NameId, u32), bool>,
     /// Terms added to `st` for names: they do not count towards its size
     /// for keeping it between declarations.
     name_exprs: usize,
@@ -151,11 +171,15 @@ pub struct Nbe<'e> {
     pub(crate) decl_steps: u32,
 }
 
+/// The log of the number of slots in the table of declarations found by
+/// name.
+const FOUND_BITS: u32 = 12;
+
 /// Empty `c`, dropping its storage if it is large: clearing a table costs
 /// its capacity, and one big declaration should not slow down every later
 /// one.
 fn shrink<T: Default + Cap>(c: &mut T) {
-    if c.cap() > 1 << 12 {
+    if c.cap() > 1 << 16 {
         *c = T::default();
     } else {
         c.clear_keep();
@@ -231,18 +255,25 @@ impl<'e> Nbe<'e> {
             level_eq: IdMap::default(),
             major_induct: IdMap::default(),
             prop_pos: IdMap::default(),
+            unused_pos: IdMap::default(),
             open_count: IdMap::default(),
             trim_cache: IdMap::default(),
             canon_fvar: IdMap::default(),
             elims: Vec::new(),
             terms: Vec::new(),
+            found: (0..1 << FOUND_BITS)
+                .map(|_| std::cell::Cell::new((val::NONE, 0)))
+                .collect(),
             vargs: Vec::new(),
             eager_depth: 0,
             closed_eval: super::eval::enabled(),
+            eval_probe: false,
             ev: None,
             ev_used: false,
             names: IdMap::default(),
             name_eq: IdMap::default(),
+            prunes: vec![[val::NONE; 3]; PRUNES],
+            not_proof: IdMap::default(),
             name_exprs: 0,
             checked_closed: IdMap::default(),
             lparams_key: None,
@@ -312,7 +343,7 @@ impl<'e> Nbe<'e> {
         self.ticks += 1;
         if self.ticks > self.stop {
             self.stopped = true;
-            return Err(KErr(String::new()));
+            return Err(KErr::new(String::new()));
         }
         Ok(())
     }
@@ -364,6 +395,7 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.canon_fvar);
         shrink(&mut self.level_checked);
         self.a.clear();
+        self.prunes.fill([val::NONE; 3]);
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;
@@ -399,14 +431,22 @@ impl<'e> Nbe<'e> {
     /// The declaration named `n`, if it is visible.
     pub fn find(&self, n: NameId) -> Option<Decl> {
         let env = self.st.env;
-        let &i = env.by_name.get(&n)?;
+        let slot = &self.found[(n.0.wrapping_mul(0x9e37_79b9) >> (32 - FOUND_BITS)) as usize];
+        let (k, i) = slot.get();
+        let i = if k == n.0 {
+            i
+        } else {
+            let &i = env.by_name.get(&n)?;
+            slot.set((n.0, i));
+            i
+        };
         (i < self.limit).then(|| env.decls[i as usize])
     }
 
     pub fn get(&self, n: NameId) -> R<Decl> {
         match self.find(n) {
             Some(d) => Ok(d),
-            None => Err(KErr(format!("unknown constant '{}'", self.st.show(n)))),
+            None => Err(KErr::new(format!("unknown constant '{}'", self.st.show(n)))),
         }
     }
 
@@ -446,6 +486,7 @@ impl<'e> Nbe<'e> {
 
     // ---- universe substitutions ----
 
+    #[inline]
     pub fn inst_level(&mut self, l: LevelId, ls: Ls) -> LevelId {
         if ls == Ls::ID || !self.st.level_has_param(l) {
             return l;
@@ -453,6 +494,12 @@ impl<'e> Nbe<'e> {
         if let Some(&r) = self.level_cache.get(&(l, ls)) {
             return r;
         }
+        self.inst_level_new(l, ls)
+    }
+
+    /// `inst_level` not in its memo yet.
+    #[inline(never)]
+    fn inst_level_new(&mut self, l: LevelId, ls: Ls) -> LevelId {
         let node = self.a.ls(ls);
         let ps: Vec<NameId> = self.st.name_list(node.params).to_vec();
         let lv: Vec<LevelId> = self.st.list(node.levels).to_vec();
@@ -461,6 +508,7 @@ impl<'e> Nbe<'e> {
         r
     }
 
+    #[inline]
     pub fn inst_list(&mut self, ll: LevelList, ls: Ls) -> LevelList {
         if ls == Ls::ID || !self.st.list_has_param(ll) {
             return ll;
@@ -468,6 +516,12 @@ impl<'e> Nbe<'e> {
         if let Some(&r) = self.list_cache.get(&(ll, ls)) {
             return r;
         }
+        self.inst_list_new(ll, ls)
+    }
+
+    /// `inst_list` not in its memo yet.
+    #[inline(never)]
+    fn inst_list_new(&mut self, ll: LevelList, ls: Ls) -> LevelList {
         let node = self.a.ls(ls);
         let ps: Vec<NameId> = self.st.name_list(node.params).to_vec();
         let lv: Vec<LevelId> = self.st.list(node.levels).to_vec();
@@ -582,19 +636,78 @@ impl<'e> Nbe<'e> {
         if self.a.env_len(env) <= n {
             return env;
         }
+        self.trim_long(env, n)
+    }
+
+    /// `env`, trimmed for a term with data `d`, with a hole at each entry
+    /// the term does not read, so that values agreeing on what they read
+    /// are one value.
+    #[inline]
+    pub fn prune(&mut self, env: val::Env, d: crate::expr::ExprData) -> val::Env {
+        if !PRUNE {
+            return env;
+        }
+        let n = self.a.env_len(env).min(32);
+        let holes = d.unused_low() & ((1u64 << n) - 1) as u32;
+        if holes == 0 {
+            return env;
+        }
+        self.prune_holes(env, holes)
+    }
+
+    /// `prune` with holes at the entries `holes` sets.
+    #[inline(never)]
+    fn prune_holes(&mut self, env: val::Env, holes: u32) -> val::Env {
+        let i = (hash2(env.0 as u64, holes as u64) >> 52) as usize & (PRUNES - 1);
+        let s = self.prunes[i];
+        if s[0] == env.0 && s[1] == holes {
+            return val::Env(s[2]);
+        }
+        let hole = self.hole();
+        let k = 32 - holes.leading_zeros();
+        let base = self.vargs.len();
+        let mut cur = env;
+        let mut same = true;
+        for j in 0..k {
+            let v = self.a.env_head(cur);
+            same &= holes >> j & 1 == 0 || v == hole;
+            self.vargs.push(v);
+            cur = self.a.env_tail(cur);
+        }
+        let mut r = env;
+        if !same {
+            r = cur;
+            for j in (0..k as usize).rev() {
+                let v = if holes >> j & 1 != 0 {
+                    hole
+                } else {
+                    self.vargs[base + j]
+                };
+                r = self.a.cons(r, v);
+            }
+        }
+        self.vargs.truncate(base);
+        self.prunes[i] = [env.0, holes, r.0];
+        r
+    }
+
+    /// `trim` of an environment longer than `n`.
+    #[inline(never)]
+    fn trim_long(&mut self, env: val::Env, n: u32) -> val::Env {
         if let Some(&e) = self.trim_cache.get(&(env, n)) {
             return e;
         }
-        let mut vs = Vec::with_capacity(n as usize);
+        let base = self.vargs.len();
         let mut cur = env;
         for _ in 0..n {
-            vs.push(self.a.env_head(cur));
+            self.vargs.push(self.a.env_head(cur));
             cur = self.a.env_tail(cur);
         }
         let mut r = val::Env::NIL;
-        for &v in vs.iter().rev() {
-            r = self.a.cons(r, v);
+        for k in (base..self.vargs.len()).rev() {
+            r = self.a.cons(r, self.vargs[k]);
         }
+        self.vargs.truncate(base);
         self.trim_cache.insert((env, n), r);
         r
     }
@@ -648,11 +761,24 @@ impl<'e> Nbe<'e> {
     /// `env` as the key of a memo about `e`: trimmed, and with `HOLE` for
     /// the entries `e` does not use, so that the same term under different
     /// unused bindings has one key.
+    /// A value standing where nothing will read one (any closed value
+    /// would do; Lean's `dontcare`).
+    #[inline]
+    pub fn hole(&mut self) -> V {
+        self.a.sort(LevelId::ZERO)
+    }
+
+    /// Whether `key_env` of `e` is its environment trimmed.
+    #[inline]
+    pub fn key_is_trim(&self, e: ExprId) -> bool {
+        // Only worth its cost where terms are inferred again and again.
+        self.st.data(e).loose_bvar_range() <= 1 || self.decl_steps <= conv::HEAVY_STEPS
+    }
+
     pub fn key_env(&mut self, env: val::Env, e: ExprId) -> val::Env {
         let n = self.st.data(e).loose_bvar_range();
         let env = self.trim(env, n);
-        // Only worth its cost where terms are inferred again and again.
-        if n <= 1 || self.decl_steps <= conv::HEAVY_STEPS {
+        if self.key_is_trim(e) {
             return env;
         }
         let m = self.used_bvars(e);
@@ -665,7 +791,7 @@ impl<'e> Nbe<'e> {
         let mut vs = Vec::new();
         self.a.env_values(env, &mut vs);
         // Any value will do where the term does not look.
-        let hole = self.a.mk(val::Val::Sort(LevelId::ZERO));
+        let hole = self.hole();
         let mut r = val::Env::NIL;
         for i in (0..vs.len()).rev() {
             r = self.a.cons(r, if m >> i & 1 != 0 { vs[i] } else { hole });

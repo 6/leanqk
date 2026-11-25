@@ -13,6 +13,10 @@ use super::super::tc::{KErr, NAT_MAX_BYTES, R};
 use super::val::{Elim, Sp, V, Val};
 use super::{BOTTOM, Nbe};
 
+/// Steps of reduction before a closed computation goes to the closed-term
+/// evaluator (`whnf_closed`; 0: at once).
+const EVAL_AFTER: u64 = 1024;
+
 impl Nbe<'_> {
     /// The value bound to the let-variable `k`, if it is one.
     #[inline]
@@ -57,6 +61,9 @@ impl Nbe<'_> {
         let Val::Const(c, l, sp) = self.a.get(v) else {
             unreachable!()
         };
+        if !self.a.sp_has_proj(sp) && !self.may_reduce_rec(c) {
+            return Ok(v);
+        }
         let mut es = self.take_elims();
         self.a.elims(sp, &mut es);
         let p = es
@@ -103,6 +110,22 @@ impl Nbe<'_> {
             c = self.whnf(x)?;
         }
         Ok(self.ctor_field(c, s, i))
+    }
+
+    /// Whether `c` is a recursor or a quotient's lift or induction.
+    fn may_reduce_rec(&self, c: NameId) -> bool {
+        if let Some(q) = self.ext.quot.as_ref()
+            && (c == q.lift || c == q.ind)
+        {
+            return true;
+        }
+        matches!(
+            self.find(c),
+            Some(Decl {
+                kind: DeclKind::Recursor { .. },
+                ..
+            })
+        )
     }
 
     fn reduce_recursor(
@@ -409,7 +432,9 @@ impl Nbe<'_> {
             unreachable!()
         };
         let (Some(zero), Some(succ)) = (self.ext.nat_zero, self.ext.nat_succ) else {
-            return Err(KErr("a `Nat` literal needs the prelude's `Nat`".into()));
+            return Err(KErr::new(
+                "a `Nat` literal needs the prelude's `Nat`".into(),
+            ));
         };
         if n == BigUint::ZERO {
             return Ok(self.cnst(zero, LevelList::EMPTY));
@@ -425,7 +450,7 @@ impl Nbe<'_> {
             unreachable!()
         };
         let Some(x) = self.ext.string() else {
-            return Err(KErr(
+            return Err(KErr::new(
                 "a `String` literal needs the prelude's `String`".into(),
             ));
         };
@@ -495,7 +520,7 @@ impl Nbe<'_> {
 
     fn nat_size_ok(v: &BigUint) -> R<()> {
         if v.bits().div_ceil(8) > NAT_MAX_BYTES {
-            return Err(KErr(
+            return Err(KErr::new(
                 "the kernel refused a `Nat` numeral because its size exceeds the maximum".into(),
             ));
         }
@@ -510,7 +535,7 @@ impl Nbe<'_> {
         };
         match n {
             Some(n) => Ok(self.cnst(n, LevelList::EMPTY)),
-            None => Err(KErr("`Bool` is missing".into())),
+            None => Err(KErr::new("`Bool` is missing".into())),
         }
     }
 
@@ -527,7 +552,7 @@ impl Nbe<'_> {
         }
         match self.a.sp_len(sp) {
             1 if Some(n) == self.ext.nat_succ => {
-                let Elim::Arg(a) = self.a.sp_last(sp).1 else {
+                let Elim::Arg(a) = self.a.sp_elim(sp, 0) else {
                     unreachable!()
                 };
                 let a = self.whnf(a)?;
@@ -542,8 +567,8 @@ impl Nbe<'_> {
                 let Some(op) = self.ext.nat_op(n) else {
                     return Ok(None);
                 };
-                let (p, e_r) = self.a.sp_last(sp);
-                let (_, e_l) = self.a.sp_last(p);
+                let e_r = self.a.sp_elim(sp, 1);
+                let e_l = self.a.sp_elim(sp, 0);
                 let (Elim::Arg(a_l), Elim::Arg(a_r)) = (e_l, e_r) else {
                     unreachable!()
                 };
@@ -602,7 +627,7 @@ impl Nbe<'_> {
             NatOp::Xor => x ^ y,
             NatOp::Pow => {
                 let Ok(k) = u32::try_from(&y) else {
-                    return Err(KErr(
+                    return Err(KErr::new(
                         "the kernel refused to evaluate `Nat.pow` because its second argument does not fit in a 32-bit unsigned integer".into(),
                     ));
                 };
@@ -610,7 +635,7 @@ impl Nbe<'_> {
                     && k != 0
                     && x.bits().div_ceil(8) > NAT_MAX_BYTES / k as u64
                 {
-                    return Err(KErr(
+                    return Err(KErr::new(
                         "the kernel refused to evaluate `Nat.pow` because the result would exceed the maximum numeral size".into(),
                     ));
                 }
@@ -621,12 +646,12 @@ impl Nbe<'_> {
                     BigUint::ZERO
                 } else {
                     let Ok(k) = u32::try_from(&y) else {
-                        return Err(KErr(
+                        return Err(KErr::new(
                             "the kernel refused to evaluate `Nat.shiftLeft` because its second argument does not fit in a 32-bit unsigned integer".into(),
                         ));
                     };
                     if x.bits().div_ceil(8) + k as u64 / 8 + 1 > NAT_MAX_BYTES {
-                        return Err(KErr(
+                        return Err(KErr::new(
                             "the kernel refused a `Nat` numeral because its size exceeds the maximum".into(),
                         ));
                     }
@@ -642,6 +667,26 @@ impl Nbe<'_> {
             Self::nat_size_ok(&r)?;
         }
         Ok(self.nat(r))
+    }
+
+    /// The weak head normal form of `t`, a closed definition applied, if
+    /// it is worth asking the closed-term evaluator: past `EVAL_AFTER`
+    /// steps of reduction here (most computations are a few steps, where
+    /// converting to terms and back costs more than it saves).
+    fn whnf_closed(&mut self, t: V) -> R<Option<V>> {
+        if self.eval_probe || !self.closed_eval || self.a.has_fvar(t) {
+            return Ok(None);
+        }
+        if EVAL_AFTER == 0 || self.stop != u64::MAX {
+            return Ok(self.closed_whnf(t));
+        }
+        self.eval_probe = true;
+        let r = self.attempt(EVAL_AFTER, |nb| nb.whnf_from(t, false));
+        self.eval_probe = false;
+        match r? {
+            Some(n) => Ok(Some(n)),
+            None => Ok(self.closed_whnf(t)),
+        }
     }
 
     pub fn whnf(&mut self, v: V) -> R<V> {
@@ -661,8 +706,13 @@ impl Nbe<'_> {
         if c != super::val::NONE {
             return Ok(V(c));
         }
+        self.whnf_from(v, true)
+    }
+
+    /// `whnf` of `v`, by the closed-term evaluator too if `eval`.
+    fn whnf_from(&mut self, v: V, eval: bool) -> R<V> {
         let mut t = v;
-        let mut first = true;
+        let mut first = eval;
         loop {
             self.tick()?;
             let t_l = self.whnf_core(t, false, false)?;
@@ -672,7 +722,7 @@ impl Nbe<'_> {
             }
             if first && self.is_delta(t_l).is_some() {
                 first = false;
-                if let Some(n) = self.closed_whnf(t_l) {
+                if let Some(n) = self.whnf_closed(t_l)? {
                     self.a.rm(v).whnf = n.0;
                     self.a.rm(n).whnf = n.0;
                     return Ok(n);

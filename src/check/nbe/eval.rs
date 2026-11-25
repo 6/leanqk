@@ -28,11 +28,11 @@ impl Nbe<'_> {
             },
             ExprNode::Sort(l) => {
                 let l = self.inst_level(l, ls);
-                self.a.mk(Val::Sort(l))
+                self.a.sort(l)
             }
             ExprNode::Const(n, lv) => {
                 let lv = self.inst_list(lv, ls);
-                self.a.mk(Val::Const(n, lv, Sp::NIL))
+                self.a.cnst(n, lv)
             }
             ExprNode::App(..) => {
                 self.ticks += 1;
@@ -54,8 +54,14 @@ impl Nbe<'_> {
                 self.vargs.truncate(vbase);
                 r
             }
-            ExprNode::Lam(..) => self.a.mk(Val::Lam(e, env, ls)),
-            ExprNode::Pi(..) => self.a.mk(Val::Pi(e, env, ls)),
+            ExprNode::Lam(..) => {
+                let env = self.prune(env, d);
+                self.a.mk(Val::Lam(e, env, ls))
+            }
+            ExprNode::Pi(..) => {
+                let env = self.prune(env, d);
+                self.a.mk(Val::Pi(e, env, ls))
+            }
             ExprNode::Let(h, b) => {
                 let lb = self.st.let_binder(h);
                 let v = self.thunk(lb.value, env, ls);
@@ -95,10 +101,7 @@ impl Nbe<'_> {
             // reducing anything: build it now, so that the same term reached
             // in different environments is the same value.
             _ => {
-                let d = self.st.data(e);
-                let env = self.trim(env, d.loose_bvar_range());
-                let ls = if d.has_level_param() { ls } else { Ls::ID };
-                let t = self.a.mk(Val::Thunk(e, env, ls));
+                let t = self.thunk_value(e, env, ls);
                 let f = self.a.r(t).forced;
                 if f != super::val::NONE {
                     return V(f);
@@ -118,6 +121,28 @@ impl Nbe<'_> {
                 t
             }
         }
+    }
+
+    /// The thunk of `e` in `env` (trimmed to what `e` may use) under `ls`.
+    #[inline]
+    pub fn thunk_value(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        let (slot, hit) = self.a.thunk_slot(e, env, ls);
+        match hit {
+            Some(t) => t,
+            None => self.thunk_new(e, env, ls, slot),
+        }
+    }
+
+    /// `thunk_value` not in the thunk table's `slot`.
+    #[inline(never)]
+    fn thunk_new(&mut self, e: ExprId, env: Env, ls: Ls, slot: usize) -> V {
+        let d = self.st.data(e);
+        let env2 = self.trim(env, d.loose_bvar_range());
+        let env2 = self.prune(env2, d);
+        let ls2 = if d.has_level_param() { ls } else { Ls::ID };
+        let t = self.a.mk(Val::Thunk(e, env2, ls2));
+        self.a.set_thunk_slot(slot, e, env, ls, t);
+        t
     }
 
     /// Whether the head of the application `e` is a constant or a bound
@@ -174,14 +199,7 @@ impl Nbe<'_> {
                 let env2 = self.a.cons(env, a);
                 self.eval(body, env2, ls)
             }
-            Val::Const(n, l, sp) => {
-                let sp = self.a.snoc(sp, Elim::Arg(a));
-                self.a.mk(Val::Const(n, l, sp))
-            }
-            Val::FVar(k, sp) => {
-                let sp = self.a.snoc(sp, Elim::Arg(a));
-                self.a.mk(Val::FVar(k, sp))
-            }
+            h @ (Val::Const(..) | Val::FVar(..)) => self.a.neutral(h, &[a]),
             _ => {
                 let sp = self.a.snoc(Sp::NIL, Elim::Arg(a));
                 self.bottom(sp)
@@ -217,26 +235,11 @@ impl Nbe<'_> {
                     }
                     f = self.eval(body, env, ls);
                 }
-                Val::Const(n, l, mut sp) => {
-                    while i < end {
-                        sp = self.a.snoc(sp, Elim::Arg(self.vargs[i]));
-                        i += 1;
-                    }
-                    return self.a.mk(Val::Const(n, l, sp));
-                }
-                Val::FVar(k, mut sp) => {
-                    while i < end {
-                        sp = self.a.snoc(sp, Elim::Arg(self.vargs[i]));
-                        i += 1;
-                    }
-                    return self.a.mk(Val::FVar(k, sp));
+                h @ (Val::Const(..) | Val::FVar(..)) => {
+                    return self.a.neutral(h, &self.vargs[i..end]);
                 }
                 _ => {
-                    let mut sp = Sp::NIL;
-                    while i < end {
-                        sp = self.a.snoc(sp, Elim::Arg(self.vargs[i]));
-                        i += 1;
-                    }
+                    let sp = self.a.snoc_args(Sp::NIL, &self.vargs[i..end]);
                     return self.bottom(sp);
                 }
             }

@@ -164,20 +164,21 @@ impl Nbe<'_> {
 
     /// The arguments after the last projection of a neutral's spine, and
     /// the spine before them.
-    fn split_args(&self, sp: Sp, out: &mut Vec<V>) -> Sp {
+    fn split_args(&mut self, sp: Sp, out: &mut Vec<V>) -> Sp {
         out.clear();
-        let mut cur = sp;
-        while cur != Sp::NIL {
-            match self.a.sp_last(cur) {
-                (p, Elim::Arg(v)) => {
+        let n = self.a.sp_len(sp);
+        let mut k = n;
+        while k > 0 {
+            match self.a.sp_elim(sp, k - 1) {
+                Elim::Arg(v) => {
                     out.push(v);
-                    cur = p;
+                    k -= 1;
                 }
-                (_, Elim::Proj(..)) => break,
+                Elim::Proj(..) => break,
             }
         }
         out.reverse();
-        cur
+        self.a.sp_prefix(sp, k)
     }
 
     /// Whether the term `d`, under binders whose domains are `ctx`
@@ -289,6 +290,47 @@ impl Nbe<'_> {
         m
     }
 
+    /// The argument positions (below 63) the value of the definition at
+    /// the head of `t` does not read: its body past its leading lambdas
+    /// does not mention them.
+    fn unused_positions(&mut self, t: V) -> u64 {
+        if !UNUSED_ARGS {
+            return 0;
+        }
+        let Val::Const(n, _, _) = self.a.get(t) else {
+            return 0;
+        };
+        if let Some(&m) = self.unused_pos.get(&n) {
+            return m;
+        }
+        let m = match self.is_delta(t) {
+            Some(d) if matches!(d.kind, DeclKind::Definition { .. }) => match self.unfold_value(&d)
+            {
+                Some(value) => {
+                    let mut body = value;
+                    let mut k = 0u32;
+                    while let ExprNode::Lam(_, _, _, b) = self.st.node(body) {
+                        body = b;
+                        k += 1;
+                    }
+                    let used = self.used_bvars(body);
+                    let mut m = 0u64;
+                    for i in 0..k.min(63) {
+                        let j = k - 1 - i;
+                        if j < 63 && used & 1 << j == 0 {
+                            m |= 1 << i;
+                        }
+                    }
+                    m
+                }
+                None => 0,
+            },
+            _ => 0,
+        };
+        self.unused_pos.insert(n, m);
+        m
+    }
+
     fn is_def_eq_args(&mut self, t: V, s: V) -> R<bool> {
         let (Val::Const(n, _, tsp), Val::Const(n_r, _, ssp)) = (self.a.get(t), self.a.get(s))
         else {
@@ -302,18 +344,22 @@ impl Nbe<'_> {
         } else {
             0
         };
-        let (mut ts, mut ss) = (tsp, ssp);
-        loop {
-            match (ts == Sp::NIL, ss == Sp::NIL) {
-                (true, true) => return Ok(true),
-                (false, false) => {}
-                _ => return Ok(false),
-            }
-            let (tp, te) = self.a.sp_last(ts);
-            let (sp_, se) = self.a.sp_last(ss);
-            let pos = self.a.sp_len(tp);
+        // Both sides unfold (the callers' heads are one definition at equal
+        // levels) to its body, which does not read some arguments.
+        let skip = if n == n_r {
+            props | self.unused_positions(t)
+        } else {
+            props
+        };
+        let len = self.a.sp_len(tsp);
+        if len != self.a.sp_len(ssp) {
+            return Ok(false);
+        }
+        for pos in (0..len).rev() {
+            let te = self.a.sp_elim(tsp, pos);
+            let se = self.a.sp_elim(ssp, pos);
             match (te, se) {
-                (Elim::Arg(_), Elim::Arg(_)) if pos < 64 && props & 1 << pos != 0 => {}
+                (Elim::Arg(_), Elim::Arg(_)) if pos < 64 && skip & 1 << pos != 0 => {}
                 (Elim::Arg(a), Elim::Arg(b)) => {
                     if !self.is_def_eq(a, b)? {
                         return Ok(false);
@@ -321,9 +367,8 @@ impl Nbe<'_> {
                 }
                 _ => return Ok(false),
             }
-            ts = tp;
-            ss = sp_;
         }
+        Ok(true)
     }
 
     fn try_eta_expansion_core(&mut self, t: V, s: V) -> R<bool> {
@@ -474,12 +519,81 @@ impl Nbe<'_> {
     }
 
     fn is_def_eq_proof_irrel(&mut self, t: V, s: V) -> R<Option<bool>> {
+        if self.surely_not_proof(t) {
+            return Ok(None);
+        }
         let tt = self.infer_value(t)?;
         if !self.is_prop(tt)? {
             return Ok(None);
         }
         let ts = self.infer_value(s)?;
         Ok(Some(self.is_def_eq(tt, ts)?))
+    }
+
+    /// Whether `t` is no proof by its head constant's declared type alone:
+    /// past its arguments that type ends in a sort, or in an application
+    /// of a constant whose type ends in a sort that is never `Prop`.
+    fn surely_not_proof(&mut self, t: V) -> bool {
+        if !NOT_PROOF {
+            return false;
+        }
+        let (c, sp) = match self.a.get(t) {
+            Val::Const(c, _, sp) => (c, sp),
+            // Types and literals.
+            Val::Sort(_) | Val::Pi(..) | Val::Nat(..) | Val::NatBig(_) | Val::Str(_) => {
+                return true;
+            }
+            _ => return false,
+        };
+        if self.a.sp_has_proj(sp) {
+            return false;
+        }
+        let k = self.a.sp_len(sp);
+        if let Some(&r) = self.not_proof.get(&(c, k)) {
+            return r;
+        }
+        let r = self.not_proof_by_type(c, k);
+        self.not_proof.insert((c, k), r);
+        r
+    }
+
+    fn not_proof_by_type(&self, c: crate::name::NameId, k: u32) -> bool {
+        let Some(d) = self.find(c) else {
+            return false;
+        };
+        let mut e = d.ty;
+        let mut doms = Vec::new();
+        while let ExprNode::Pi(_, _, dom, b) = self.st.node(e) {
+            doms.push(dom);
+            e = b;
+        }
+        if doms.len() < k as usize {
+            return false;
+        }
+        while let ExprNode::App(f, _) = self.st.node(e) {
+            e = f;
+        }
+        let head = match self.st.node(e) {
+            ExprNode::Sort(_) => return true,
+            ExprNode::Const(h, _) => h,
+            // A variable of the telescope whose type is a sort, never `Prop`.
+            ExprNode::BVar(j) if (j as usize) < doms.len() => {
+                let mut t = doms[doms.len() - 1 - j as usize];
+                while let ExprNode::Pi(_, _, _, b) = self.st.node(t) {
+                    t = b;
+                }
+                return matches!(self.st.node(t), ExprNode::Sort(l) if univ::is_not_zero(&self.st, l));
+            }
+            _ => return false,
+        };
+        let Some(hd) = self.find(head) else {
+            return false;
+        };
+        let mut e = hd.ty;
+        while let ExprNode::Pi(_, _, _, b) = self.st.node(e) {
+            e = b;
+        }
+        matches!(self.st.node(e), ExprNode::Sort(l) if univ::is_not_zero(&self.st, l))
     }
 
     /// Lean's `try_unfold_proj_app`: a neutral headed by a projection.
@@ -669,7 +783,7 @@ impl Nbe<'_> {
                     && ls == LevelList::EMPTY
                     && self.a.sp_len(sp) == 1 =>
             {
-                match self.a.sp_last(sp).1 {
+                match self.a.sp_elim(sp, 0) {
                     Elim::Arg(a) => Some(a),
                     Elim::Proj(..) => None,
                 }
@@ -798,8 +912,11 @@ impl Nbe<'_> {
         if sp == Sp::NIL {
             return None;
         }
-        match self.a.sp_last(sp) {
-            (pre, Elim::Proj(s, i)) => Some((self.with_spine(head, pre), s, i)),
+        match self.a.sp_last_elim(sp) {
+            Elim::Proj(s, i) => {
+                let pre = self.a.sp_prefix(sp, self.a.sp_len(sp) - 1);
+                Some((self.with_spine(head, pre), s, i))
+            }
             _ => None,
         }
     }
@@ -868,10 +985,17 @@ impl Nbe<'_> {
         self.is_def_eq_unit_like(tn, sn)
     }
 
+    #[inline]
     pub fn is_def_eq(&mut self, t: V, s: V) -> R<bool> {
         if t == s {
             return Ok(true);
         }
+        self.is_def_eq_memo(t, s)
+    }
+
+    /// `is_def_eq` of two different values.
+    #[inline(never)]
+    fn is_def_eq_memo(&mut self, t: V, s: V) -> R<bool> {
         if self.neq.contains(&pair(t, s)) {
             return Ok(false);
         }
@@ -907,6 +1031,13 @@ impl Nbe<'_> {
         Ok(r)
     }
 }
+
+/// Whether arguments a definition's body does not read are left out when
+/// two applications of it are compared (`unused_positions`).
+const UNUSED_ARGS: bool = true;
+
+/// Whether proof irrelevance first asks `surely_not_proof`.
+const NOT_PROOF: bool = true;
 
 /// Lazy delta steps after which a declaration counts as heavy, and
 /// definitional equality also goes by names (`is_def_eq`).
@@ -986,13 +1117,17 @@ impl Nbe<'_> {
         if f != super::val::NONE { V(f) } else { v }
     }
 
-    fn syn_eq_sp(&mut self, mut a: Sp, mut b: Sp, budget: &mut u32) -> bool {
-        if self.a.sp_len(a) != self.a.sp_len(b) {
+    fn syn_eq_sp(&mut self, a: Sp, b: Sp, budget: &mut u32) -> bool {
+        let n = self.a.sp_len(a);
+        if n != self.a.sp_len(b) {
             return false;
         }
-        while a != b {
-            let (pa, ea) = self.a.sp_last(a);
-            let (pb, eb) = self.a.sp_last(b);
+        if a == b {
+            return true;
+        }
+        for i in (0..n).rev() {
+            let ea = self.a.sp_elim(a, i);
+            let eb = self.a.sp_elim(b, i);
             let ok = match (ea, eb) {
                 (Elim::Arg(x), Elim::Arg(y)) => self.syn_eq_v(x, y, budget),
                 (Elim::Proj(s_l, i_l), Elim::Proj(s_r, i_r)) => s_l == s_r && i_l == i_r,
@@ -1001,8 +1136,6 @@ impl Nbe<'_> {
             if !ok {
                 return false;
             }
-            a = pa;
-            b = pb;
         }
         true
     }
@@ -1193,18 +1326,19 @@ impl Nbe<'_> {
             Val::Const(_, _, sp) | Val::FVar(_, sp) => {
                 let head = self.a.get(x);
                 let mut cur = t;
-                let mut sp = sp;
+                let mut m = self.a.sp_len(sp);
                 loop {
                     match self.st.node(cur) {
                         ExprNode::BVar(j) if j >= k => {
                             let Some(y) = self.a.lookup(e, j - k) else {
                                 return false;
                             };
-                            let h = self.with_spine(head, sp);
+                            let pre = self.a.sp_prefix(sp, m);
+                            let h = self.with_spine(head, pre);
                             return self.syn_eq_v(h, y, budget);
                         }
-                        ExprNode::App(f, a) if sp != Sp::NIL => {
-                            let (p, el) = self.a.sp_last(sp);
+                        ExprNode::App(f, a) if m > 0 => {
+                            let el = self.a.sp_elim(sp, m - 1);
                             let Elim::Arg(y) = el else {
                                 return false;
                             };
@@ -1212,18 +1346,17 @@ impl Nbe<'_> {
                                 return false;
                             }
                             cur = f;
-                            sp = p;
+                            m -= 1;
                         }
-                        ExprNode::Proj(s_r, i_r, b) if sp != Sp::NIL => {
-                            let (p, el) = self.a.sp_last(sp);
-                            if el != Elim::Proj(s_r, i_r) {
+                        ExprNode::Proj(s_r, i_r, b) if m > 0 => {
+                            if self.a.sp_elim(sp, m - 1) != Elim::Proj(s_r, i_r) {
                                 return false;
                             }
                             cur = b;
-                            sp = p;
+                            m -= 1;
                         }
                         n => {
-                            if sp != Sp::NIL {
+                            if m > 0 {
                                 return false;
                             }
                             return match (head, n) {

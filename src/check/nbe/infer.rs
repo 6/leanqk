@@ -14,7 +14,7 @@ use super::val::{Elim, Env, Ls, Sp, V, Val};
 use super::{BOTTOM, Nbe};
 
 fn err<T>(msg: impl Into<String>) -> R<T> {
-    Err(KErr(msg.into()))
+    Err(KErr::new(msg.into()))
 }
 
 impl Nbe<'_> {
@@ -217,7 +217,7 @@ impl Nbe<'_> {
     fn proj_error(&mut self, x: V, s: NameId, i: u32) -> KErr {
         let e = self.readback(x);
         let e = self.st.proj(s, i, e);
-        KErr(format!("invalid projection {}", self.pp_term(e)))
+        KErr::new(format!("invalid projection {}", self.pp_term(e)))
     }
 
     /// The type of `x.idx` (of the structure `sname`), given the type `xt`
@@ -329,6 +329,7 @@ impl Nbe<'_> {
             ExprNode::Lam(..) if infer_only => {
                 let d = self.st.data(e);
                 let env = self.trim(env, d.loose_bvar_range());
+                let env = self.prune(env, d);
                 let ls = if d.has_level_param() { ls } else { Ls::ID };
                 return Ok(self.a.mk(Val::PiInfer(e, env, ls)));
             }
@@ -337,9 +338,14 @@ impl Nbe<'_> {
         // A memo keyed by the term in its environment, without the entries
         // it does not use.
         let d = self.st.data(e);
-        let kenv = self.key_env(env, e);
-        let kls = if d.has_level_param() { ls } else { Ls::ID };
-        let key = self.a.mk(Val::Thunk(e, kenv, kls));
+        let key = if self.key_is_trim(e) {
+            // The key is the term's thunk, likely made already.
+            self.thunk_value(e, env, ls)
+        } else {
+            let kenv = self.key_env(env, e);
+            let kls = if d.has_level_param() { ls } else { Ls::ID };
+            self.a.mk(Val::Thunk(e, kenv, kls))
+        };
         let c = self.a.r(key).ty;
         if c != super::val::NONE && (infer_only || self.a.checked(key)) {
             return Ok(V(c));
@@ -446,41 +452,114 @@ impl Nbe<'_> {
     }
 
     fn infer_app(&mut self, e: ExprId, env: Env, ls: Ls, infer_only: bool) -> R<V> {
-        let mut args = Vec::new();
-        let f = self.st.spine(e, &mut args);
+        // The arguments go on the `terms` stack, which calls below leave
+        // as they found it (or with more on top, after an error).
+        let base = self.terms.len();
+        let mut f = e;
+        while let ExprNode::App(g, a) = self.st.node(f) {
+            self.terms.push(a);
+            f = g;
+        }
+        let n = self.terms.len() - base;
+        self.terms[base..].reverse();
+        let r = self.infer_app_args(f, base, n, env, ls, infer_only);
+        self.terms.truncate(base);
+        r
+    }
+
+    fn infer_app_args(
+        &mut self,
+        f: ExprId,
+        base: usize,
+        n: usize,
+        env: Env,
+        ls: Ls,
+        infer_only: bool,
+    ) -> R<V> {
         let mut ft = self.infer_term(f, env, ls, infer_only)?;
-        for &a in &args {
+        let mut k = base;
+        while k < base + n {
             ft = self.ensure_pi(ft)?;
-            let av = self.thunk(a, env, ls);
-            if !infer_only {
-                let dom = self.binder_dom(ft);
-                let ok = if self.is_eager_reduce(a) {
-                    let saved = std::mem::replace(&mut self.eager, true);
-                    let r = self.check_against(a, env, ls, dom);
-                    self.eager = saved;
-                    r?
-                } else {
-                    self.check_against(a, env, ls, dom)?
+            let Val::Pi(mut t, mut pi_env, pi_ls) = self.a.get(ft) else {
+                let a = self.terms[k];
+                let av = self.thunk(a, env, ls);
+                if !infer_only {
+                    let dom = self.binder_dom(ft);
+                    self.check_arg(a, env, ls, dom)?;
+                }
+                ft = self.instantiate(ft, av)?;
+                k += 1;
+                continue;
+            };
+            // Through the Π binders of the term itself, without building
+            // the values in between: the same values as instantiating one
+            // binder at a time.
+            loop {
+                let ExprNode::Pi(_, _, d, b) = self.st.node(t) else {
+                    unreachable!()
                 };
-                if !ok {
-                    let at = self.infer_term(a, env, ls, true)?;
-                    return err(format!(
-                        "application type mismatch: argument {} has type {} but is expected to have type {}",
-                        self.pp(av),
-                        self.pp(at),
-                        self.pp(dom)
-                    ));
+                let a = self.terms[k];
+                if !infer_only {
+                    let dom = self.thunk(d, pi_env, pi_ls);
+                    self.check_arg(a, env, ls, dom)?;
+                }
+                // The argument's value only if the codomain may read it.
+                let av = if self.st.data(b).may_use_bvar(0) {
+                    self.thunk(a, env, ls)
+                } else {
+                    self.hole()
+                };
+                pi_env = self.a.cons(pi_env, av);
+                k += 1;
+                if k < base + n && matches!(self.st.node(b), ExprNode::Pi(..)) {
+                    t = b;
+                } else {
+                    ft = self.eval(b, pi_env, pi_ls);
+                    break;
                 }
             }
-            ft = self.instantiate(ft, av)?;
         }
         Ok(ft)
+    }
+
+    /// Check the argument `a` against the domain `dom`.
+    fn check_arg(&mut self, a: ExprId, env: Env, ls: Ls, dom: V) -> R<()> {
+        let ok = if self.is_eager_reduce(a) {
+            let saved = std::mem::replace(&mut self.eager, true);
+            let r = self.check_against(a, env, ls, dom);
+            self.eager = saved;
+            r?
+        } else {
+            self.check_against(a, env, ls, dom)?
+        };
+        if !ok {
+            let av = self.thunk(a, env, ls);
+            let at = self.infer_term(a, env, ls, true)?;
+            return err(format!(
+                "application type mismatch: argument {} has type {} but is expected to have type {}",
+                self.pp(av),
+                self.pp(at),
+                self.pp(dom)
+            ));
+        }
+        Ok(())
     }
 
     /// Check `e` in `env` and whether its type is `expected`. A λ is
     /// checked against a Π binder by binder; anything else is inferred
     /// and compared.
+    #[inline]
     pub fn check_against(&mut self, e: ExprId, env: Env, ls: Ls, expected: V) -> R<bool> {
+        if matches!(self.st.node(e), ExprNode::Lam(..)) {
+            return self.check_lambda_against(e, env, ls, expected);
+        }
+        let t = self.infer_term(e, env, ls, false)?;
+        self.is_def_eq(t, expected)
+    }
+
+    /// `check_against` of a λ.
+    #[inline(never)]
+    fn check_lambda_against(&mut self, e: ExprId, env: Env, ls: Ls, expected: V) -> R<bool> {
         if let ExprNode::Lam(bi, n, dom, body) = self.st.node(e) {
             let ex = self.force(expected);
             let ex = if matches!(self.a.get(ex), Val::Pi(..) | Val::PiInfer(..)) {
@@ -529,6 +608,7 @@ impl Nbe<'_> {
         }
         let d = self.st.data(e);
         let env = self.trim(env, d.loose_bvar_range());
+        let env = self.prune(env, d);
         let ls = if d.has_level_param() { ls } else { Ls::ID };
         Ok(self.a.mk(Val::PiInfer(e, env, ls)))
     }
