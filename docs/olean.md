@@ -120,9 +120,17 @@ the default for `check`; `src/reader/lazy.rs`):
 - Runs of application and binder lines (nine lines in ten) are read in
   one loop (`src/reader/run.rs`) straight into the table: it matches
   their fixed text and reads their numbers, and stops at any line it does
-  not take, which the scanner then reads.
+  not take, which the scanner then reads. The loop makes no calls, so
+  that its state stays in registers: records go to a batch of 128,
+  copied into the table after it; a line's own id is compared as text
+  with the expected one's, which is counted up in a word; numbers are
+  read 8 digits at a time, a ninth only where the text after the eighth
+  is not what follows a number. The scanner reads strings 8 bytes at a
+  time.
 - On one thread (`--threads 1`) the scanner hands each line straight to
-  the reader's state, declarations included. On several, each thread
+  the reader's state, declarations included. The file is memory-mapped
+  and read 16 MiB of whole lines at a time; the pages of each step are
+  dropped after it, so the map does not add to peak memory. On several, each thread
   parses chunks of whole lines, and their batches are applied in file
   order on one thread.
 - The records since the last declaration line are added in two passes:
@@ -131,9 +139,12 @@ the default for `check`; `src/reader/lazy.rs`):
 - An export lists each term once, so expressions are added without
   hash-consing, and their cached data (`ExprData`) is filled in one pass
   over the arena before the index. The index is built at the end, on all
-  threads: entries are bucketed by hash into a scratch buffer (the
-  expression id map's, without lazy proofs), each bucket is sorted, and the table
-  is filled in order. If two terms are equal after all (an export that
-  repeats one), the file is read again with hash-consing.
+  threads. On one, entries are bucketed by hash, each bucket is sorted,
+  and the table is filled in order. The buckets are kept in eight
+  groups, each in a memory map of its own that goes back to the system
+  once the group is in the table, and the table's slots are written
+  only as the buckets reach them, so the two are never all in memory
+  at once. If two terms are equal after all (an export that repeats
+  one), the file is read again with hash-consing.
 
 `NITROLEAN_READ_PROFILE=1` prints the time of the read and of the index.

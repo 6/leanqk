@@ -21,13 +21,20 @@ fn ld(w: &[u8; WIN], p: usize) -> u64 {
     u64::from_le_bytes(w[p..p + 8].try_into().expect("8 bytes"))
 }
 
-/// Where the records go.
+/// Lines [`exprs`] reads at most at a time.
+pub(super) const BATCH: u64 = 128;
+
+/// Where the records go: at most [`BATCH`] between flushes.
 pub(super) trait Records {
     /// Application `id`; false to refuse it (and end the run).
     fn app(&mut self, id: u64, f: u64, a: u64) -> bool;
 
     /// Binder `id`; as [`Records::app`].
     fn binder(&mut self, id: u64, pi: bool, bi: BinderInfo, name: u64, ty: u64, body: u64) -> bool;
+
+    /// After each [`exprs`] (which makes no calls, so that the loop keeps
+    /// its state in registers), with the ids it took.
+    fn flush(&mut self, ids: std::ops::Range<u64>);
 }
 
 /// The constants of the loop, loaded from memory rather than built in
@@ -131,6 +138,40 @@ fn nat(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(u64, usize)> {
     Some((d, p + (n8 / 8) as usize))
 }
 
+/// The number at `p` (of at most 8 digits) and where it ends.
+#[inline(always)]
+fn nat8(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(u64, usize)> {
+    let v = ld(w, p);
+    let x = v ^ 0x3030_3030_3030_3030;
+    let t = (x | x.wrapping_add(k.below_ten)) & 0x8080_8080_8080_8080;
+    let n8 = t.trailing_zeros() & !7;
+    if n8 == 0 || (n8 > 8 && v as u8 == b'0') {
+        return None;
+    }
+    let d = x << (64 - n8);
+    let d = d.wrapping_mul(k.ten).wrapping_add(d >> 8) & 0x00FF_00FF_00FF_00FF;
+    let d = d.wrapping_mul(k.hundred).wrapping_add(d >> 16) & 0x0000_FFFF_0000_FFFF;
+    let d = d.wrapping_mul(k.join) >> 32;
+    Some((d, p + (n8 / 8) as usize))
+}
+
+/// The number at `p` (of at most 9 digits), which the text `word`
+/// (under `mask`, starting with a non-digit) follows: the number and
+/// where the text starts. A ninth digit is only looked for if the text
+/// is not after the eighth, so most numbers cost no more than 8 digits.
+#[inline(always)]
+fn nat_to(w: &[u8; WIN], p: usize, k: &Consts, word: u64, mask: u64) -> Option<(u64, usize)> {
+    let (d, q) = nat8(w, p, k)?;
+    if ld(w, q) & mask == word {
+        return Some((d, q));
+    }
+    let c = w[q.min(WIN - 1)].wrapping_sub(b'0');
+    if q != p + 8 || c > 9 || ld(w, q + 1) & mask != word {
+        return None;
+    }
+    Some((d * 10 + c as u64, q + 1))
+}
+
 /// The number of digits of `e`, and the first number with more.
 pub(super) fn digits(e: u64) -> (u32, u64) {
     let (mut len, mut next) = (1, 10);
@@ -139,6 +180,85 @@ pub(super) fn digits(e: u64) -> (u32, u64) {
         next *= 10;
     }
     (len, next)
+}
+
+/// The ids [`exprs`] expects: their length, the first id with more
+/// digits, and an id `e` with (if it has at most 8 digits) its text, as
+/// the bytes of a word (the first digit in the low byte).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Ids {
+    len: u32,
+    next: u64,
+    e: u64,
+    txt: u64,
+}
+
+impl Default for Ids {
+    fn default() -> Self {
+        Ids::at(0)
+    }
+}
+
+impl Ids {
+    fn at(e: u64) -> Ids {
+        let (len, next) = digits(e);
+        Ids {
+            len,
+            next,
+            e,
+            txt: text(e, len),
+        }
+    }
+
+    /// Move to `e`: by counting up from a little before it.
+    #[inline(always)]
+    fn seek(&mut self, e: u64) {
+        if e >= self.next || e < self.e || e - self.e > 16 {
+            *self = Ids::at(e);
+        }
+        while self.e < e {
+            self.txt = next_text(self.txt, self.len);
+            self.e += 1;
+        }
+    }
+}
+
+/// The text of `e` (of `len` digits) in the top bytes of a word (the
+/// last digit in the top byte; as a word read from the text and shifted
+/// up), or 0 if it has more than 8.
+fn text(e: u64, len: u32) -> u64 {
+    if len > 8 {
+        return 0;
+    }
+    let (mut t, mut x) = (0, e);
+    for i in (0..len).rev() {
+        t |= (b'0' as u64 + x % 10) << (8 * i);
+        x /= 10;
+    }
+    t << (64 - 8 * len)
+}
+
+/// The text after `t` (of `len` digits, up to 8; the next number is to
+/// have as many).
+#[inline(always)]
+fn next_text(t: u64, len: u32) -> u64 {
+    if len > 8 {
+        return t;
+    }
+    carry(t + (1 << 56), len)
+}
+
+/// `t` with its last digit just incremented: a digit past `9` (which
+/// reads `:`) becomes `0` and increments the one before it.
+#[inline(always)]
+fn carry(mut t: u64, len: u32) -> u64 {
+    let mut at = 56;
+    while (t >> at) as u8 == b':' && at > 64 - 8 * len.min(8) {
+        t -= 10 << at;
+        at -= 8;
+        t += 1 << at;
+    }
+    t
 }
 
 /// Whether the id at `p` is `e` (of `len` digits): where it ends. Its
@@ -163,10 +283,16 @@ fn id_at(w: &[u8; WIN], p: usize, e: u64, len: u32, k: &Consts) -> Option<usize>
     (d == e).then_some(p + len as usize)
 }
 
-/// A binder's fields from `p` (its binder info's text): binder info,
-/// body, name, type, and where they end.
+/// A binder's fields from `p` (its binder info's text), which the text
+/// `word` (under `mask`) follows: binder info, body, name, type, and
+/// where they end.
 #[inline(always)]
-fn binder(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(BinderInfo, u64, u64, u64, usize)> {
+fn binder(
+    w: &[u8; WIN],
+    p: usize,
+    k: &Consts,
+    (word, mask): (u64, u64),
+) -> Option<(BinderInfo, u64, u64, u64, usize)> {
     let x = ld(w, p);
     // The binder info and its closing quote.
     let (bi, q) = if x == k.default {
@@ -183,16 +309,26 @@ fn binder(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(BinderInfo, u64, u64, 
     if ld(w, q) != k.body {
         return None;
     }
-    let (body, q) = nat(w, q + 8, k)?;
-    if ld(w, q) != k.name {
-        return None;
-    }
-    let (name, q) = nat(w, q + 8, k)?;
-    if ld(w, q) != k.ty {
-        return None;
-    }
-    let (ty, q) = nat(w, q + 8, k)?;
+    let (body, q) = nat_to(w, q + 8, k, k.name, u64::MAX)?;
+    let (name, q) = nat_to(w, q + 8, k, k.ty, u64::MAX)?;
+    let (ty, q) = nat_to(w, q + 8, k, word, mask)?;
     Some((bi, body, name, ty, q))
+}
+
+/// Whether the id at `p` is `e` (of `len` digits, with text `txt` if
+/// they are at most 8, `shift` being `64 - 8 * len`): where it ends.
+#[inline(always)]
+fn id_is(
+    w: &[u8; WIN],
+    p: usize,
+    (e, len, txt, shift): (u64, u32, u64, u32),
+    k: &Consts,
+) -> Option<usize> {
+    if len <= 8 {
+        (ld(w, p) << shift == txt).then_some(p + len as usize)
+    } else {
+        id_at(w, p, e, len, k)
+    }
 }
 
 /// The application and binder lines at the start of `s` while their ids
@@ -203,10 +339,14 @@ pub(super) fn exprs(
     s: &[u8],
     e: u64,
     (len, limit): (u32, u64),
+    mut txt: u64,
     out: &mut impl Records,
-) -> (usize, u64) {
+) -> (usize, u64, u64) {
     let k = std::hint::black_box(&CONSTS);
     let (mut pos, mut e2) = (0, e);
+    // Ids of up to 8 digits are compared as text; `txt` is `e2`'s.
+    let shift = 64 - 8 * len.min(8);
+
     while e2 < limit
         && let Some(w) = s.get(pos..pos + WIN)
     {
@@ -216,17 +356,13 @@ pub(super) fn exprs(
             if ld(w, 8) & MASK6 != k.head1 {
                 break;
             }
-            let Some((a, q)) = nat(w, 14, k) else { break };
-            if ld(w, q) & MASK6 != k.fn_ {
-                break;
-            }
-            let Some((f, q)) = nat(w, q + 6, k) else {
+            let Some((a, q)) = nat_to(w, 14, k, k.fn_, MASK6) else {
                 break;
             };
-            if ld(w, q) & MASK7 != k.ie {
+            let Some((f, q)) = nat_to(w, q + 6, k, k.ie, MASK7) else {
                 break;
-            }
-            let Some(q) = id_at(w, q + 7, e2, len, k) else {
+            };
+            let Some(q) = id_is(w, q + 7, (e2, len, txt, shift), k) else {
                 break;
             };
             if ld(w, q) & MASK2 != k.end || !out.app(e2, f, a) {
@@ -240,13 +376,10 @@ pub(super) fn exprs(
             {
                 break;
             }
-            let Some((bi, body, name, ty, q)) = binder(w, 26, k) else {
+            let Some((bi, body, name, ty, q)) = binder(w, 26, k, (k.ie, MASK7)) else {
                 break;
             };
-            if ld(w, q) & MASK7 != k.ie {
-                break;
-            }
-            let Some(q) = id_at(w, q + 7, e2, len, k) else {
+            let Some(q) = id_is(w, q + 7, (e2, len, txt, shift), k) else {
                 break;
             };
             if ld(w, q) & MASK2 != k.end || !out.binder(e2, true, bi, name, ty, body) {
@@ -255,17 +388,17 @@ pub(super) fn exprs(
             q + 2
         } else if head & MASK6 == k.ie_head {
             // `{"ie":`, an id, then (for a lambda) `,"lam":{"binderInfo":"`.
-            let Some(q) = id_at(w, 6, e2, len, k) else {
+            let Some(q) = id_is(w, 6, (e2, len, txt, shift), k) else {
                 break;
             };
             if ld(w, q) != k.lam[0] || ld(w, q + 8) != k.lam[1] || ld(w, q + 16) & MASK6 != k.lam[2]
             {
                 break;
             }
-            let Some((bi, body, name, ty, q)) = binder(w, q + 22, k) else {
+            let Some((bi, body, name, ty, q)) = binder(w, q + 22, k, (k.lam_end, MASK3)) else {
                 break;
             };
-            if ld(w, q) & MASK3 != k.lam_end || !out.binder(e2, false, bi, name, ty, body) {
+            if !out.binder(e2, false, bi, name, ty, body) {
                 break;
             }
             q + 3
@@ -274,29 +407,30 @@ pub(super) fn exprs(
         };
         pos += end;
         e2 += 1;
+        // (Ids of more than 8 digits leave it unused.)
+        txt = txt.wrapping_add(1 << 56);
+        if (txt >> 56) as u8 == b':' {
+            txt = carry(txt, len);
+        }
     }
-    (pos, e2 - e)
+    (pos, e2 - e, txt)
 }
 
-/// [`exprs`] for any ids: from `e`, across their lengths. `digits` is
-/// the length and limit of the ids at or after `e`'s length (updated).
+/// [`exprs`] for any ids, a batch at a time: from `e`, across their
+/// lengths. `ids` is where the last call left off (updated).
 #[inline(always)]
-pub(super) fn all_exprs(
-    s: &[u8],
-    e: u64,
-    digits_of: &mut (u32, u64),
-    out: &mut impl Records,
-) -> (usize, u64) {
+pub(super) fn all_exprs(s: &[u8], e: u64, ids: &mut Ids, out: &mut impl Records) -> (usize, u64) {
     let (mut pos, mut e2) = (0, e);
     loop {
-        if e2 >= digits_of.1 {
-            *digits_of = digits(e2);
-        }
-        let (n, m) = exprs(&s[pos..], e2, *digits_of, out);
+        ids.seek(e2);
+        let limit = ids.next.min(e2 + BATCH);
+        let (n, m, txt) = exprs(&s[pos..], e2, (ids.len, limit), ids.txt, out);
+        out.flush(e2..e2 + m);
         pos += n;
         e2 += m;
-        // Stopped before the next length.
-        if e2 != digits_of.1 {
+        (ids.e, ids.txt) = (e2, txt);
+        // Stopped before the limit.
+        if e2 != limit {
             return (pos, e2 - e);
         }
     }
@@ -327,13 +461,15 @@ mod tests {
             self.0.push((id, format!("{pi} {bi:?} {name} {ty} {body}")));
             !self.1
         }
+
+        fn flush(&mut self, _: std::ops::Range<u64>) {}
     }
 
     fn run(text: &str, e: u64) -> (Vec<(u64, String)>, usize, u64) {
         let pad = " ".repeat(WIN);
         let text = format!("{text}{pad}");
         let mut got = Got::default();
-        let (n, k) = all_exprs(text.as_bytes(), e, &mut (1, 10), &mut got);
+        let (n, k) = all_exprs(text.as_bytes(), e, &mut Ids::default(), &mut got);
         (got.0, n, k)
     }
 
@@ -372,9 +508,23 @@ mod tests {
     }
 
     #[test]
+    fn texts_of_ids() {
+        let mut ids = Ids::default();
+        for e in (0..200_000).chain(99_999_990..100_000_010) {
+            ids.seek(e);
+            let (len, _) = digits(e);
+            assert_eq!(ids.txt, text(e, len), "{e}");
+            if len <= 8 {
+                let t = ids.txt.to_le_bytes();
+                assert_eq!(&t[8 - len as usize..], e.to_string().as_bytes());
+            }
+        }
+    }
+
+    #[test]
     fn runs_of_records() {
         let text = "{\"app\":{\"arg\":3,\"fn\":7},\"ie\":8}\n\
-             {\"app\":{\"arg\":123456789,\"fn\":0},\"ie\":9}\n\
+             {\"app\":{\"arg\":123456789,\"fn\":12345678},\"ie\":9}\n\
              {\"forallE\":{\"binderInfo\":\"default\",\"body\":0,\"name\":2,\"type\":1},\"ie\":10}\n\
              {\"ie\":11,\"lam\":{\"binderInfo\":\"implicit\",\"body\":123456789,\"name\":20,\"type\":4}}\n\
              {\"ie\":12,\"lam\":{\"binderInfo\":\"instImplicit\",\"body\":5,\"name\":6,\"type\":7}}\n\
@@ -382,7 +532,7 @@ mod tests {
         let (got, n, k) = run(text, 8);
         let want = [
             (8, "app 7 3"),
-            (9, "app 0 123456789"),
+            (9, "app 12345678 123456789"),
             (10, "true Default 2 1 0"),
             (11, "false Implicit 20 4 123456789"),
             (12, "false InstImplicit 6 7 5"),
@@ -403,6 +553,8 @@ mod tests {
             ("{\"app\":{\"arg\":3,\"fn\":7},\"ie\":8 }\n", 8),
             ("{\"app\":{\"arg\":1234567890,\"fn\":7},\"ie\":8}\n", 8),
             ("{\"app\":{\"arg\":01,\"fn\":7},\"ie\":8}\n", 8),
+            ("{\"app\":{\"arg\":012345678,\"fn\":7},\"ie\":8}\n", 8),
+            ("{\"app\":{\"arg\":12345678,\"fn\":7}, \"ie\":8}\n", 8),
             ("{\"app\":{\"arg\":3,\"fn\":7},\"ie\":80}\n", 8),
             (
                 "{\"ie\":8,\"lam\":{\"binderInfo\":\"implicitx\",\"body\":5,\"name\":6,\"type\":7}}\n",
@@ -439,7 +591,7 @@ mod tests {
             " ".repeat(WIN)
         );
         assert_eq!(
-            all_exprs(line.as_bytes(), 8, &mut (1, 10), &mut got),
+            all_exprs(line.as_bytes(), 8, &mut Ids::default(), &mut got),
             (0, 0)
         );
     }

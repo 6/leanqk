@@ -29,6 +29,7 @@ mod obj;
 mod par;
 
 pub use file::LEAN_VERSION;
+pub(crate) use file::Mapped;
 
 use decode::{Decoder, Tape};
 use file::OleanFile;

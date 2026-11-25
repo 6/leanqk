@@ -620,10 +620,8 @@ fn finish(
     let id_map_bytes =
         st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
     // The id maps are done with: free them before the lazy values are
-    // put together. The dense table of expression ids is working space
-    // for the index.
-    let mut scratch = std::mem::replace(&mut st.expr_ids, IdMap::new(0)).into_buffer();
-    for m in [&mut st.name_ids, &mut st.level_ids] {
+    // put together.
+    for m in [&mut st.name_ids, &mut st.level_ids, &mut st.expr_ids] {
         *m = IdMap::new(0);
     }
     if let Some(b) = st.lazy.take() {
@@ -635,14 +633,9 @@ fn finish(
     let mut dup = None;
     if let Some(threads) = st.index_threads {
         let t = std::time::Instant::now();
-        dup = match st.env.names.index(threads, &mut scratch) {
+        dup = match st.env.names.index(threads) {
             Err((a, b)) => Some((a.0, b.0)),
-            Ok(()) => st
-                .env
-                .exprs
-                .index(threads, &mut scratch)
-                .err()
-                .map(|(a, b)| (a.0, b.0)),
+            Ok(()) => st.env.exprs.index(threads).err().map(|(a, b)| (a.0, b.0)),
         };
         INDEX_NS.store(
             t.elapsed().as_nanos() as u64,
@@ -661,6 +654,9 @@ fn finish(
 fn read_single(f: &File, st: State) -> Result<Done, ReadError> {
     use std::os::unix::fs::FileExt;
     const BLOCK: usize = 1 << 20;
+    if let Some(m) = crate::olean::Mapped::new(f) {
+        return finish(st, |st| map_lines(st, &m));
+    }
     finish(st, |st| {
         let mut lines = Lines::default();
         let mut buf = vec![0u8; BLOCK];
@@ -698,6 +694,36 @@ fn read_single(f: &File, st: State) -> Result<Done, ReadError> {
             }
         }
     })
+}
+
+/// Apply the lines of a mapped file, a step of whole lines at a time; the
+/// pages of each step go back after it.
+fn map_lines(st: &mut State, m: &crate::olean::Mapped) -> Result<ReadStats, ReadError> {
+    const STEP: usize = 16 << 20;
+    let b = m.bytes();
+    let mut lines = Lines::default();
+    let mut pos = 0;
+    while b.len() - pos > STEP {
+        // The whole lines that start in the step (a line longer than the
+        // step goes with them).
+        let end = match memchr_from(b, pos + STEP) {
+            Some(p) => p + 1,
+            None => break,
+        };
+        st.lines(&mut lines, &b[pos..end])?;
+        // The step's last page may hold the start of the next one: it is
+        // read back from the page cache.
+        m.release(pos, end);
+        pos = end;
+    }
+    st.lines(&mut lines, &b[pos..])?;
+    m.release(pos, b.len());
+    st.end_lines(lines)
+}
+
+/// The first newline at or after `from`.
+fn memchr_from(b: &[u8], from: usize) -> Option<usize> {
+    b[from..].iter().position(|&c| c == b'\n').map(|p| from + p)
 }
 
 /// Time the index at the end of a read took (for
@@ -2215,6 +2241,29 @@ mod tests {
         let fast = describe(&b, item);
         assert_eq!(general(line), Ok(Some(fast)), "line: {line}");
         true
+    }
+
+    /// Strings of every length, with an escape, a control character or a
+    /// non-ASCII character at every place: the scanner (which reads
+    /// eight bytes at a time) takes them or not as the general parser
+    /// reads them.
+    #[test]
+    fn scanned_strings_agree_with_general_path() {
+        for n in 0..40 {
+            let plain = "a".repeat(n);
+            assert!(scanned_as_general(&format!(
+                r#"{{"in":1,"str":{{"pre":0,"str":"{plain}"}}}}"#
+            )));
+            for i in 0..=n {
+                for odd in ["\\\"", "\\n", "\u{1}", "\u{1f}", "é", "\u{7f}"] {
+                    let text = format!("{}{odd}{}", &plain[..i], &plain[i..]);
+                    let line = format!(r#"{{"in":1,"str":{{"pre":0,"str":"{text}"}}}}"#);
+                    let took = scanned_as_general(&line);
+                    let plain_enough = !odd.starts_with('\\') && odd.as_bytes()[0] >= 0x20;
+                    assert_eq!(took, plain_enough, "{line:?}");
+                }
+            }
+        }
     }
 
     #[test]

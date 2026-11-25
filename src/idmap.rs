@@ -54,6 +54,11 @@ impl IdMap {
         self.sparse.get(&id).copied()
     }
 
+    /// While the map is the identity: the ids it maps (to themselves).
+    pub fn identity_len(&self) -> Option<u64> {
+        (!self.dense_mode).then_some(self.identity)
+    }
+
     #[inline(always)]
     pub fn bind(&mut self, id: u64, target: u32) -> Result<(), BindError> {
         // The common cases: the next id of an identity map, or of a dense
@@ -123,12 +128,6 @@ impl IdMap {
             return Err(BindError::Duplicate);
         }
         Ok(())
-    }
-
-    /// The dense table's buffer (for reuse as working space), leaving the
-    /// map empty.
-    pub fn into_buffer(self) -> Vec<u32> {
-        self.dense
     }
 
     /// Make room for ids up to `n` without copying the table as it grows.
