@@ -178,6 +178,18 @@ theorem ev_arr_eq_wrong : decide (ev_arr 20 = (List.range 20).toArray) = true :=
 def ev_arr_fns : Array (Nat → Nat) := #[(· + 1), (· * 2)] |>.push (· + 10)
 theorem ev_arr_fn : ev_arr_fns[2]! 5 + ev_arr_fns[1]! 4 = 23 := sorry
 theorem ev_arr_fn_wrong : ev_arr_fns[2]! 5 + ev_arr_fns[1]! 4 = 24 := sorry
+theorem ev_arr_vers :
+    (let a := ev_arr 10; let b := a.set! 2 7; let c := b.push 5; let d := a.set! 2 8
+     a[2]! + b[2]! + c[10]! + d[2]! + c.size + a.size + b[2]! + a[2]!) = 56 := sorry
+theorem ev_arr_vers_wrong :
+    (let a := ev_arr 10; let b := a.set! 2 7; let c := b.push 5; let d := a.set! 2 8
+     a[2]! + b[2]! + c[10]! + d[2]! + c.size + a.size + b[2]! + a[2]!) = 57 := sorry
+def ev_arr_hist : List (Array Nat) :=
+  (List.range 20).foldl (fun vs i => match vs with
+    | v :: _ => (if i % 3 == 0 then v.push i else v.set! (i % 7) (i + 100)) :: vs
+    | [] => []) [ev_arr 7]
+theorem ev_arr_hist_ok : (ev_arr_hist.map (fun v => v.foldl (· + ·) 0 + v.size)).sum = 12068 := sorry
+theorem ev_arr_hist_wrong : (ev_arr_hist.map (fun v => v.foldl (· + ·) 0 + v.size)).sum = 12067 := sorry
 
 -- `List` operations with fast paths.
 theorem ev_lists :

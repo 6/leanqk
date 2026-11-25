@@ -210,6 +210,10 @@ eval-arr-eq	eval	accept	accept	decidable equality of an array built by push and 
 eval-arr-eq-wrong	eval	reject	reject	the same, different arrays
 eval-arr-fn	eval	accept	accept	an array of functions, elements applied
 eval-arr-fn-wrong	eval	reject	reject	the same, wrong sum
+eval-arr-vers	eval	accept	accept	old versions of an array read after set! and push on them
+eval-arr-vers-wrong	eval	reject	reject	the same, off by one
+eval-arr-hist	eval	accept	accept	twenty versions of an array, each made from the last, all read
+eval-arr-hist-wrong	eval	reject	reject	the same, off by one
 eval-list	eval	accept	accept	List.any, all, filter, getLast?, foldl, reverse, elem and eraseDups on numbers
 eval-list-wrong	eval	reject	reject	the same fold, off by one
 eval-list-filter-lazy	eval	accept	accept	the head of a filter, whose later tests would divide by zero

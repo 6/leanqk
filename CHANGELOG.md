@@ -14,7 +14,8 @@
   for `Nat`, `Int`, `Array` and `List` operations, the core `DecidableEq`
   instances, class methods such as `+` at a known instance and `casesOn`
   (so `match`), enabled on the definitions of known Lean versions
-  (`docs/kernel-compute.md`).
+  (`docs/kernel-compute.md`). Arrays are persistent, so `set` and `push`
+  take constant time even while an old version is still referenced.
 
 ## 0.1.0-alpha.1
 

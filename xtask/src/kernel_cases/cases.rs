@@ -2546,6 +2546,38 @@ fn eval_cases(v: &mut Cases) {
     );
     eval(
         v,
+        "eval-arr-vers",
+        "K.ev_arr_vers",
+        "accept",
+        "old versions of an array read after set! and push on them",
+        &[],
+    );
+    eval(
+        v,
+        "eval-arr-vers-wrong",
+        "K.ev_arr_vers_wrong",
+        "reject",
+        "the same, off by one",
+        &[],
+    );
+    eval(
+        v,
+        "eval-arr-hist",
+        "K.ev_arr_hist_ok",
+        "accept",
+        "twenty versions of an array, each made from the last, all read",
+        &[],
+    );
+    eval(
+        v,
+        "eval-arr-hist-wrong",
+        "K.ev_arr_hist_wrong",
+        "reject",
+        "the same, off by one",
+        &[],
+    );
+    eval(
+        v,
         "eval-list",
         "K.ev_lists",
         "accept",

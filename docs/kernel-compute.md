@@ -199,8 +199,8 @@ vectors and runs four operations on them directly:
 |---|---|---|
 | `Array.size a` | `a.toList.length` | its length |
 | `Array.getInternal a i h` | `a.toList.get ⟨i, h⟩` | element `i` |
-| `Array.set xs i v h` | `⟨xs.toList.set i v⟩` | a copy with element `i` replaced |
-| `Array.push a v` | `⟨a.toList.concat v⟩` | a copy with `v` appended |
+| `Array.set xs i v h` | `⟨xs.toList.set i v⟩` | a new version with element `i` replaced |
+| `Array.push a v` | `⟨a.toList.concat v⟩` | a new version with `v` appended |
 
 These are not kernel rules, so each one is enabled only if the operation's
 definition, and everything it depends on (`List.length`, `List.get`,
@@ -215,7 +215,18 @@ its spine evaluates to the end (forcing its cells, not its elements). An
 index that is not a literal below the length, or an array that is not a
 value, makes the operation unfold to its definition. A vector meeting a
 projection or a recursor is turned back into the constructor application it
-stands for. `set` and `push` copy the vector only if it is shared.
+stands for.
+
+The vectors are persistent arrays (Baker's rerooting). One version of an
+array holds the vector; each other version is one change (an element
+replaced, one added at the end, or the last one removed) to a neighbouring
+version. `set` and `push` change the vector in place and record the
+change, so they take constant time and memory even while the old version
+is still referenced, as it usually is in a lazy machine: an environment or a
+pending thunk keeps it. Reading a version first undoes and redoes the
+changes between it and the one holding the vector. A checker that uses
+its arrays linearly, such as LRAT-Catcher's assignment array, therefore
+pays one step per `set` instead of a copy of the whole array.
 
 ## Lists and decidable equality
 
@@ -398,7 +409,7 @@ out of memory.
 
 ## Tests
 
-`xtask/src/kernel_cases/cases.rs` has 77 `eval*` cases. Each is a claim proved by
+`xtask/src/kernel_cases/cases.rs` has 82 `eval*` cases. Each is a claim proved by
 `Eq.refl`, so only reduction decides it, and nearly every one has a false
 twin. The 27 `eval434-*` cases are exported from Lean v4.34.0, where the
 `DecidableEq` fast paths apply. They cover:
@@ -412,7 +423,8 @@ twin. The 27 `eval434-*` cases are exported from Lean v4.34.0, where the
 - `Nat.rec` on a literal, and big literals;
 - shared lets and closures;
 - arrays: `get!` and `getD` in and out of range, `set!`, `push`, array
-  equality, and arrays of functions;
+  equality, arrays of functions, and old versions read after
+  `set!` and `push` on them;
 - erased proofs that are needed after all: a cast over a theorem applied to
   a variable, `And.rec` on a constructed proof, an answer that holds a
   proof;

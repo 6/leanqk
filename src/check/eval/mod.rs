@@ -1518,26 +1518,19 @@ impl<'a, 'e> Machine<'a, 'e> {
         let r = match self.array_arg(c, &args[1])? {
             None => None,
             Some(a) => match op {
-                ArrayOp::Size => Some(Rc::new(Val::Nat(Nat::Small(a.elems.len() as u64)))),
-                ArrayOp::Push => {
-                    let mut a = a;
-                    Rc::make_mut(&mut a).elems.push(args[2].clone());
-                    Some(Rc::new(Val::Arr(a)))
-                }
+                ArrayOp::Size => Some(Rc::new(Val::Nat(Nat::Small(ArrVal::len(&a) as u64)))),
+                ArrayOp::Push => Some(Rc::new(Val::Arr(ArrVal::push(&a, args[2].clone())))),
                 ArrayOp::Get | ArrayOp::Set => {
                     let i = self.force(&args[2])?;
                     match self.nat_of(&i) {
-                        Some(Nat::Small(i)) if (i as usize) < a.elems.len() => {
-                            let i = i as usize;
-                            if op == ArrayOp::Get {
-                                let t = a.elems[i].clone();
-                                Some(self.force(&t)?)
-                            } else {
-                                let mut a = a;
-                                Rc::make_mut(&mut a).elems[i] = args[3].clone();
-                                Some(Rc::new(Val::Arr(a)))
+                        Some(Nat::Small(i)) if op == ArrayOp::Get => {
+                            match ArrVal::get(&a, i as usize) {
+                                Some(t) => Some(self.force(&t)?),
+                                None => None,
                             }
                         }
+                        Some(Nat::Small(i)) => ArrVal::set(&a, i as usize, args[3].clone())
+                            .map(|b| Rc::new(Val::Arr(b))),
                         _ => None,
                     }
                 }
@@ -1581,13 +1574,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 _ => return Ok(None),
             }
         }
-        Ok(Some(Rc::new(ArrVal {
-            mk,
-            cons,
-            nil,
-            ty,
-            elems,
-        })))
+        Ok(Some(ArrVal::new(mk, cons, nil, ty, elems)))
     }
 
     fn is_array_mk(&mut self, v: &V) -> bool {
@@ -1627,7 +1614,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     }
 
     /// The vector `a` as the constructor application it stands for.
-    fn array_ctor(&mut self, a: &ArrVal) -> ER<V> {
+    fn array_ctor(&mut self, a: &Rc<ArrVal>) -> ER<V> {
         let nil_info = self.ctor_info(a.nil)?;
         let cons_info = self.ctor_info(a.cons)?;
         let mk_info = self.ctor_info(a.mk)?;
@@ -1636,7 +1623,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             info: nil_info,
             args: vec![a.ty.clone()],
         });
-        for e in a.elems.iter().rev() {
+        for e in ArrVal::with(a, |v| v.to_vec()).iter().rev() {
             l = Rc::new(Val::Ctor {
                 c: a.cons,
                 info: cons_info.clone(),
