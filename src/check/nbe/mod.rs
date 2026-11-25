@@ -135,6 +135,8 @@ pub struct Nbe<'e> {
     /// `prune` by environment and holes (direct-mapped): (environment,
     /// holes, pruned environment).
     prunes: Vec<[u32; 3]>,
+    /// `surely_not_proof` by constant and number of arguments.
+    not_proof: IdMap<(NameId, u32), bool>,
     /// Terms added to `st` for names: they do not count towards its size
     /// for keeping it between declarations.
     name_exprs: usize,
@@ -265,6 +267,7 @@ impl<'e> Nbe<'e> {
             names: IdMap::default(),
             name_eq: IdMap::default(),
             prunes: vec![[val::NONE; 3]; PRUNES],
+            not_proof: IdMap::default(),
             name_exprs: 0,
             checked_closed: IdMap::default(),
             lparams_key: None,

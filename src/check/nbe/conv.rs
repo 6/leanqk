@@ -471,12 +471,68 @@ impl Nbe<'_> {
     }
 
     fn is_def_eq_proof_irrel(&mut self, t: V, s: V) -> R<Option<bool>> {
+        if self.surely_not_proof(t) {
+            return Ok(None);
+        }
         let tt = self.infer_value(t)?;
         if !self.is_prop(tt)? {
             return Ok(None);
         }
         let ts = self.infer_value(s)?;
         Ok(Some(self.is_def_eq(tt, ts)?))
+    }
+
+    /// Whether `t` is no proof by its head constant's declared type alone:
+    /// past its arguments that type ends in a sort, or in an application
+    /// of a constant whose type ends in a sort that is never `Prop`.
+    fn surely_not_proof(&mut self, t: V) -> bool {
+        if !NOT_PROOF {
+            return false;
+        }
+        let Val::Const(c, _, sp) = self.a.get(t) else {
+            return false;
+        };
+        if self.a.sp_has_proj(sp) {
+            return false;
+        }
+        let k = self.a.sp_len(sp);
+        if let Some(&r) = self.not_proof.get(&(c, k)) {
+            return r;
+        }
+        let r = self.not_proof_by_type(c, k);
+        self.not_proof.insert((c, k), r);
+        r
+    }
+
+    fn not_proof_by_type(&self, c: crate::name::NameId, k: u32) -> bool {
+        let Some(d) = self.find(c) else {
+            return false;
+        };
+        let mut e = d.ty;
+        let mut binders = 0;
+        while let ExprNode::Pi(_, _, _, b) = self.st.node(e) {
+            e = b;
+            binders += 1;
+        }
+        if binders < k {
+            return false;
+        }
+        while let ExprNode::App(f, _) = self.st.node(e) {
+            e = f;
+        }
+        let head = match self.st.node(e) {
+            ExprNode::Sort(_) => return true,
+            ExprNode::Const(h, _) => h,
+            _ => return false,
+        };
+        let Some(hd) = self.find(head) else {
+            return false;
+        };
+        let mut e = hd.ty;
+        while let ExprNode::Pi(_, _, _, b) = self.st.node(e) {
+            e = b;
+        }
+        matches!(self.st.node(e), ExprNode::Sort(l) if univ::is_not_zero(&self.st, l))
     }
 
     /// Lean's `try_unfold_proj_app`: a neutral headed by a projection.
@@ -914,6 +970,9 @@ impl Nbe<'_> {
         Ok(r)
     }
 }
+
+/// Whether proof irrelevance first asks `surely_not_proof`.
+const NOT_PROOF: bool = true;
 
 /// Lazy delta steps after which a declaration counts as heavy, and
 /// definitional equality also goes by names (`is_def_eq`).
