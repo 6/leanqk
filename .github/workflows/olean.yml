@@ -2,7 +2,9 @@ name: Olean
 
 # Loads Lean v4.36.0's own .olean files (Init and Std, from the toolchain)
 # and checks that they give the same environment as Lean's NDJSON export,
-# then runs the reader's tests against the real files.
+# runs the reader's tests against the real files, and checks Init and Std
+# from their .olean files, with theorem values read when checked (the
+# default) and at load time.
 
 on:
   push:
@@ -56,6 +58,17 @@ jobs:
         run: |
           prefix=$(elan run "$LEAN_TOOLCHAIN" lean --print-prefix)
           NITROLEAN_LEAN_LIB="$prefix/lib/lean" cargo test --release --locked olean
+
+      - name: Init and Std check from their .olean files
+        run: |
+          lib="$(elan run "$LEAN_TOOLCHAIN" lean --print-prefix)/lib/lean"
+          cargo build --release --locked
+          for lazy in 1 0; do
+            for m in Init Std; do
+              echo "$m, NITROLEAN_LAZY_PROOFS=$lazy"
+              NITROLEAN_LAZY_PROOFS=$lazy target/release/nitrolean check --olean "$m" --search-path "$lib"
+            done
+          done
 
       - name: Init matches the export
         run: cargo xtask olean-equivalence Init "$RUNNER_TEMP/eq"
