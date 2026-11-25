@@ -61,6 +61,10 @@ const NAMES_KEEP: usize = 1 << 18;
 /// Values an arena may hold before it is dropped between declarations.
 const KEEP_VALUES: usize = 1 << 16;
 
+/// Closed terms remembered as checked (`checked_closed`) before they are
+/// forgotten.
+const CHECKED_KEEP: usize = 1 << 20;
+
 /// Terms read from `.olean` files the store may hold between declarations.
 const READ_KEEP: usize = 1 << 20;
 
@@ -120,6 +124,14 @@ pub struct Nbe<'e> {
     /// Terms added to `st` for names: they do not count towards its size
     /// for keeping it between declarations.
     name_exprs: usize,
+    /// Closed terms of the environment checked in an earlier declaration,
+    /// with (the id of) the universe parameters they were checked under:
+    /// they stay well-typed as the environment grows.
+    checked_closed: IdMap<(ExprId, u64), ()>,
+    /// `checked_closed`'s key for `lparams`, or `None` until computed.
+    lparams_key: Option<u64>,
+    /// Ids of lists of universe parameters, from 1.
+    lparams_ids: std::collections::HashMap<Vec<NameId>, u64>,
     /// Work done, in steps of evaluation and reduction (`tick`).
     ticks: u64,
     /// The step past which the current attempt stops (`attempt`), or
@@ -232,6 +244,9 @@ impl<'e> Nbe<'e> {
             names: IdMap::default(),
             name_eq: IdMap::default(),
             name_exprs: 0,
+            checked_closed: IdMap::default(),
+            lparams_key: None,
+            lparams_ids: Default::default(),
             ticks: 0,
             stop: u64::MAX,
             stopped: false,
@@ -261,6 +276,7 @@ impl<'e> Nbe<'e> {
         }
         self.limit = limit;
         self.lparams.clear();
+        self.lparams_key = None;
         self.eager = false;
         if self.ev_used {
             // What the evaluator keeps is per declaration, as in `Tc`.
@@ -276,6 +292,17 @@ impl<'e> Nbe<'e> {
             self.a.clear_checked(v);
         }
         self.fresh = self.a.is_empty();
+    }
+
+    /// The id of the declaration's list of universe parameters.
+    pub(super) fn lparams_key(&mut self) -> u64 {
+        if let Some(k) = self.lparams_key {
+            return k;
+        }
+        let n = self.lparams_ids.len() as u64 + 1;
+        let k = *self.lparams_ids.entry(self.lparams.clone()).or_insert(n);
+        self.lparams_key = Some(k);
+        k
     }
 
     /// Count a step of work; inside an attempt that has used its steps,
@@ -313,6 +340,11 @@ impl<'e> Nbe<'e> {
     /// Forget everything.
     pub fn reset(&mut self, limit: u32) {
         self.limit = limit;
+        self.lparams_key = None;
+        if self.checked_closed.len() > CHECKED_KEEP {
+            self.checked_closed = IdMap::default();
+            self.lparams_ids = Default::default();
+        }
         self.decl_steps = 0;
         // Names hold free variables by index, and those go now.
         if !self.names.is_empty() {
