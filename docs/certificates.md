@@ -156,4 +156,32 @@ exercise exactly what a kernel evaluator needs to be good at for numeric certifi
 
 ## Matrix certificates (`bench/certificates/`)
 
-See `bench/certificates/README.md`.
+The first format beyond SAT: `A * B ≡ C (mod m)` for explicit integer matrices, checked
+by the kernel. The package is `bench/certificates/` (its README has the details):
+
+- the statement `MulEqMod m r k c A B C` (`m = 0`: equality over `Int`), and on top of it
+  `InvertibleMod p n A` (an inverse modulo `p` exists) and `Nonsingular n A`
+  (`A * B = d • 1` with `d ≠ 0`, so `A` is invertible over ℚ);
+- the checker `check : Int → Nat → Nat → Nat → Mat → Mat → Mat → Bool` on
+  `List (List Int)`, computing each row of `A * B` as a combination of the rows of `B`;
+- `check_sound`, proved in core Lean (axioms `propext`, `Quot.sound`);
+- `gen.py`, which makes seeded synthetic certificates of any size: inverses modulo
+  65521 (machine-word arithmetic) and adjugates with their determinants (big integers);
+- `make-exports.sh`, which states them with the `mat_cert` command and exports them.
+
+Why this one first. Checking a product costs `n³` multiply-adds and needs no search;
+finding the witness (elimination) costs the same order outside Lean, so the certificate
+is as large as the work it saves only when the witness is hard to find, which is the case
+for the statements built on it: nonsingularity and rank lower bounds (an invertible
+`r × r` submatrix modulo a prime proves rank `≥ r` over ℚ), and the linear-algebra steps
+of LP and SOS certificates, which are matrix identities of the same shape. A determinant
+alone is not certified by this format (`A * adj A = d • 1` holds for `d = 0` too); with
+Mathlib, `Matrix.det` would follow from an LU factorisation checked the same way.
+
+### Results
+
+RESULTS
+
+### What the evaluator spends its time on
+
+PROFILE
