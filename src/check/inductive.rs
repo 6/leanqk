@@ -1512,7 +1512,9 @@ fn alpha_rec(tc: &Tc<'_>, a: ExprId, b: ExprId, seen: &mut IdSet<(ExprId, ExprId
         (ExprNode::Proj(s1, i1, x1), ExprNode::Proj(s2, i2, x2)) => {
             s1 == s2 && i1 == i2 && alpha_rec(tc, x1, x2, seen)
         }
-        _ => false,
+        // Leaves by their contents, so that nothing here needs equal terms
+        // to have one id.
+        (x, y) => x == y,
     }
 }
 
