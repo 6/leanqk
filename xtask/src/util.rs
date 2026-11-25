@@ -525,14 +525,6 @@ fn trim_zeros(s: &str) -> &str {
     }
 }
 
-/// Writes `text` to `path`, creating its directory.
-pub fn write_file(path: &Path, text: impl AsRef<[u8]>) -> Result<()> {
-    if let Some(d) = path.parent() {
-        fs::create_dir_all(d)?;
-    }
-    fs::write(path, text).with_context(|| format!("{}: cannot write", path.display()))
-}
-
 /// The size of a file in bytes.
 pub fn file_size(path: &Path) -> Result<u64> {
     Ok(fs::metadata(path)
