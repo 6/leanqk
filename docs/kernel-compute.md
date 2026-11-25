@@ -235,6 +235,34 @@ Lean's verdict on each is recorded in `cases.tsv`. The arena's `perf` tests in
 `corpus/` exercise the evaluator on larger computations. Every corpus and
 kernel test gives the same verdict with the evaluator on and off.
 
+## Results
+
+`bench/kernel-compute/` builds the benchmarks from public inputs and
+measures four checkers within 60 s and 4 GiB of resident memory; its README
+has every number. In short, the largest kernel-only LRAT proof checked
+within that budget:
+
+| | GBD instances | pigeonhole PHP(n+1, n) |
+|---|---:|---:|
+| nitrolean | 696 KB (45 s, 1.5 GiB) | 796 KB (47 s, 1.5 GiB) |
+| Lean's `leanchecker` | 1.9 KB | 1.7 KB |
+| gruszka, nano-lean | 31 KB | 9.6 KB |
+
+The next sizes (1.8 MB and 4.5 MB) run out of 4 GiB after 2 to 5 minutes.
+The planar-graph result (doi:10.5281/zenodo.24467489, its own declarations
+and their closure) takes 26.6 s and 248 MiB. `leanchecker` needs 524 s and
+7.5 GiB, and nano-lean 26.9 s and 1.9 GiB.
+
+Steps on the way, on that result and on the 278 KB LRAT proof (lrat06):
+
+| | planar-graph result | LRAT, 278 KB |
+|---|---|---|
+| without the evaluator | 211 s, 2.0 GiB | out of memory after 35 s |
+| evaluator with the built-in operations of v4.36.0 only | out of memory | not measured |
+| … of v4.36.0, v4.34.0 and v4.30.0 | 54 s, 457 MiB | not measured |
+| adaptive memoization, before erasing proofs | 32.9 s, 270 MiB | 18.4 s, 875 MiB |
+| proofs erased, decisions read back without their proofs | 26.6 s, 248 MiB | 15.8 s, 458 MiB |
+
 ## Not done
 
 - A hook in definitional equality (comparing two closed terms by evaluating
@@ -243,4 +271,6 @@ kernel test gives the same verdict with the evaluator on and off.
 - Compiling hot definitions to closures. The machine interprets the term DAG,
   at about 60 ns per step.
 - Fast paths for `ByteArray`, `List` operations and derived `DecidableEq`
-  instances, which dominate what is left of the LRAT checker's time.
+  instances, which dominate what is left of the LRAT checker's time. Its
+  steps grow a little faster than the proof (about 1,400 steps per LRAT
+  byte at 700 KB), and memory about linearly once proofs are erased.
