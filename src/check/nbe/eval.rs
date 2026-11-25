@@ -12,6 +12,12 @@ use super::{BOTTOM, Nbe};
 /// evaluated through before the rest is left as thunks (see `thunk`).
 const EAGER_DEPTH: u32 = 16;
 
+/// Whether `thunk` evaluates every application, projection and `let` now
+/// (within `EAGER_DEPTH`), not only first-order applications: their values
+/// are almost always asked for, and a value made now is found by its
+/// contents where a thunk is found only by its term and environment.
+const EAGER_ALL: bool = true;
+
 impl Nbe<'_> {
     /// The value of `e` with its loose bound variables given by `env` and
     /// its universe parameters substituted by `ls`. The result is a head
@@ -96,9 +102,9 @@ impl Nbe<'_> {
             | ExprNode::NatBig(_)
             | ExprNode::Str(_)
             | ExprNode::FVar(_) => self.eval(e, env, ls),
-            // A first-order application evaluates to a neutral without
-            // reducing anything: build it now, so that the same term reached
-            // in different environments is the same value.
+            // Evaluated now (see `EAGER_ALL`); a first-order application
+            // evaluates to a neutral without reducing anything, so that the
+            // same term reached in different environments is the same value.
             _ => {
                 let t = self.thunk_value(e, env, ls);
                 let f = self.a.r(t).forced;
@@ -106,8 +112,9 @@ impl Nbe<'_> {
                     return V(f);
                 }
                 if self.eager_depth < EAGER_DEPTH
-                    && matches!(self.st.node(e), ExprNode::App(..))
-                    && self.neutral_head(e, env)
+                    && (EAGER_ALL
+                        || matches!(self.st.node(e), ExprNode::App(..))
+                            && self.neutral_head(e, env))
                 {
                     // Memoized through the thunk: terms are DAGs. Only so
                     // deep, so that a long first-order term rebuilt in many
