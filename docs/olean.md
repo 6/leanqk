@@ -133,9 +133,12 @@ the default for `check`; `src/reader/lazy.rs`):
 - An export lists each term once, so expressions are added without
   hash-consing, and their cached data (`ExprData`) is filled in one pass
   over the arena before the index. The index is built at the end, on all
-  threads: entries are bucketed by hash into a scratch buffer (the
-  expression id map's, without lazy proofs), each bucket is sorted, and the table
-  is filled in order. If two terms are equal after all (an export that
-  repeats one), the file is read again with hash-consing.
+  threads. On one, entries are bucketed by hash, each bucket is sorted,
+  and the table is filled in order. The buckets are kept in eight
+  groups, each in a memory map of its own that goes back to the system
+  once the group is in the table, and the table's slots are written
+  only as the buckets reach them, so the two are never all in memory
+  at once. If two terms are equal after all (an export that repeats
+  one), the file is read again with hash-consing.
 
 `NITROLEAN_READ_PROFILE=1` prints the time of the read and of the index.

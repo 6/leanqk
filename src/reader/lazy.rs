@@ -210,7 +210,7 @@ impl Builder {
         // record (3 words) per 8 of them; the space is only reserved, so
         // a smaller file costs nothing.
         b.recs.reserve((size / 56).min(MAX_IDS) as usize);
-        b.side.reserve((size / 150).min(u32::MAX as u64) as usize);
+        b.side.reserve((size / 120).min(u32::MAX as u64) as usize);
         b
     }
 
