@@ -11,6 +11,7 @@ mod limited;
 mod matcert;
 mod mathlib;
 mod oracle;
+mod pgo;
 mod proc;
 mod public_check;
 mod selfcheck;
@@ -67,6 +68,8 @@ enum Cmd {
     Oracle(oracle::Cmd),
     /// Differential fuzzing against Lean's checker (tests/fuzz).
     Difffuzz(difffuzz::Args),
+    /// A profile-guided release build, trained on exports.
+    Pgo(pgo::Args),
 }
 
 fn main() {
@@ -93,6 +96,7 @@ fn main() {
         Cmd::Arena(c) => arena::main(c),
         Cmd::Oracle(c) => oracle::main(c),
         Cmd::Difffuzz(a) => difffuzz::main(a),
+        Cmd::Pgo(a) => pgo::main(a),
     };
     if let Err(e) = r {
         match e.downcast_ref::<util::Exit>() {
