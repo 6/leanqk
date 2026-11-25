@@ -95,18 +95,7 @@ impl Nbe<'_> {
             // reducing anything: build it now, so that the same term reached
             // in different environments is the same value.
             _ => {
-                let (slot, hit) = self.a.thunk_slot(e, env, ls);
-                let t = match hit {
-                    Some(t) => t,
-                    None => {
-                        let d = self.st.data(e);
-                        let env2 = self.trim(env, d.loose_bvar_range());
-                        let ls2 = if d.has_level_param() { ls } else { Ls::ID };
-                        let t = self.a.mk(Val::Thunk(e, env2, ls2));
-                        self.a.set_thunk_slot(slot, e, env, ls, t);
-                        t
-                    }
-                };
+                let t = self.thunk_value(e, env, ls);
                 let f = self.a.r(t).forced;
                 if f != super::val::NONE {
                     return V(f);
@@ -123,6 +112,23 @@ impl Nbe<'_> {
                     self.eager_depth -= 1;
                     return v;
                 }
+                t
+            }
+        }
+    }
+
+    /// The thunk of `e` in `env` (trimmed to what `e` may use) under `ls`.
+    #[inline]
+    pub fn thunk_value(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        let (slot, hit) = self.a.thunk_slot(e, env, ls);
+        match hit {
+            Some(t) => t,
+            None => {
+                let d = self.st.data(e);
+                let env2 = self.trim(env, d.loose_bvar_range());
+                let ls2 = if d.has_level_param() { ls } else { Ls::ID };
+                let t = self.a.mk(Val::Thunk(e, env2, ls2));
+                self.a.set_thunk_slot(slot, e, env, ls, t);
                 t
             }
         }
