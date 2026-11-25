@@ -192,12 +192,17 @@ pub(super) struct Builder {
     /// Per lazy value, its root's export id.
     roots: Vec<u32>,
     stack: Vec<u32>,
+    /// For [`Builder::exprs`] (see `run`).
+    digits: (u32, u64),
 }
 
 impl Builder {
     /// A builder for an export of about `size` bytes.
     pub(super) fn with_capacity(size: u64) -> Self {
-        let mut b = Builder::default();
+        let mut b = Builder {
+            digits: (1, 10),
+            ..Builder::default()
+        };
         // About one expression per 56 bytes of a real export, and a side
         // record (3 words) per 8 of them; the space is only reserved, so
         // a smaller file costs nothing.
@@ -245,7 +250,7 @@ impl Builder {
             side: std::mem::take(&mut self.side),
             names,
         };
-        let r = super::run::exprs(s, e, &mut out);
+        let r = super::run::all_exprs(s, e, &mut self.digits, &mut out);
         self.recs = out.recs;
         self.side = out.side;
         r
