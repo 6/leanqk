@@ -19,7 +19,6 @@ permissions:
   contents: read
 
 env:
-  MISE_ENV: corpus
   ELAN_VERSION: v4.4.0
   ELAN_SHA256: 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2
   LEAN_TOOLCHAIN: leanprover/lean4:v4.36.0
