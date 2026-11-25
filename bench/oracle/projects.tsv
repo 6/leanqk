@@ -2,7 +2,7 @@
 # tab-separated; adding a project is adding a line. Columns:
 #   id         short name, used for out/<id>/ and in RESULTS.md
 #   tier       1 runs by default (small, minutes in all); 2 and 3 are opt-in with --tier
-#   toolchain  the project's lean-toolchain at that commit (build.sh checks it)
+#   toolchain  the project's lean-toolchain at that commit (`cargo xtask oracle build` checks it)
 #   url        public git repository
 #   commit     full commit SHA
 #   subdir     the Lake project's directory in the repository (. for the top)

@@ -1,6 +1,6 @@
 # Corpus oracle results
 
-Written by `bench/oracle/run.py` (2026-11-25;
+Written by `cargo xtask oracle run` (2026-11-25;
 nitrolean 0.1.0-alpha.1, 12 cores). How the verdicts are
 obtained is in `README.md`. Times are wall-clock seconds and memory is peak resident MiB,
 of the first run on the whole export (`check --threads 0` for nitrolean,

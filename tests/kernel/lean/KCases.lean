@@ -1,6 +1,6 @@
 /-
-Source for the base exports used by `gen.py`. Every declaration here is valid;
-`gen.py` exports the closure of a few of them and applies one mutation per case.
+Source for the base exports of `cargo xtask kernel-cases`. Every declaration is
+valid; it exports the closure of a few of them and applies one mutation per case.
 Statements proved by `sorry` are only there to give a well-typed statement; the
 generator replaces the proof.
 -/

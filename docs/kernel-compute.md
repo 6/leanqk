@@ -287,7 +287,7 @@ out of memory.
 
 ## Tests
 
-`tests/kernel/cases.py` has 65 `eval*` cases. Each is a claim proved by
+`xtask/src/kernel_cases/cases.rs` has 65 `eval*` cases. Each is a claim proved by
 `Eq.refl`, so only reduction decides it, and nearly every one has a false
 twin. The 23 `eval434-*` cases are exported from Lean v4.34.0, where the
 `DecidableEq` fast paths apply. They cover:

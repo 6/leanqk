@@ -2,8 +2,8 @@
 
 nitrolean is meant to give the same verdict as the kernel of Lean v4.36.0
 (`leanchecker --from-export`, recorded in `expected-lean-v4.36.0.tsv`) on every
-test of the corpus. This file lists the exceptions. `scripts/lean-verdicts.sh`
-reads the table below to write `expected-nitrolean.tsv`; `scripts/selfcheck.sh`
+test of the corpus. This file lists the exceptions. `cargo xtask lean-verdicts`
+reads the table below to write `expected-nitrolean.tsv`; `cargo xtask selfcheck`
 checks that every row names a test of the corpus on which Lean's verdict really
 differs.
 

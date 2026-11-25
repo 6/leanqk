@@ -1,6 +1,6 @@
 # Sources of the test corpus
 
-`scripts/fetch-corpus.sh` fetches each source below at the commit given here,
+`cargo xtask fetch-corpus` fetches each source below at the commit given here,
 checks the SHA-256 of the files it uses, and exports the tests with the
 `leanexport` of Lean v4.36.0 (`leanprover/lean4:v4.36.0`, commit
 611c117bfaf7b7ae1cfcf246ce6fba31e8f509e9). The exports are not in git; their
