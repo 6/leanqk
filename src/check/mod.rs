@@ -76,10 +76,13 @@ pub fn check_env(env: &Env) -> Result<Report, Failure> {
     check_env_jobs(env, default_jobs())
 }
 
-/// While the process holds more than this, a thread starts a new block
-/// only if no other is checking one (`NITROLEAN_MEM_BUDGET_MIB`; default
-/// 1 GiB). Some blocks take gigabytes (huge literals, long computations);
+/// While the process holds more than this beyond what it held when
+/// checking started (the environment), a thread starts a new block only if
+/// no other is checking one (`NITROLEAN_MEM_BUDGET_MIB`; default 1 GiB). Some blocks take gigabytes (huge literals, long computations);
 /// this keeps several of them from running at once.
+/// How many blocks a thread starts between looks at the process's size.
+const POLL_EVERY: u32 = 16;
+
 fn mem_budget() -> u64 {
     std::env::var("NITROLEAN_MEM_BUDGET_MIB")
         .ok()
@@ -135,7 +138,7 @@ pub fn check_env_jobs(env: &Env, jobs: usize) -> Result<Report, Failure> {
         failures: Mutex::new(Vec::new()),
         times,
         busy: AtomicUsize::new(0),
-        budget: mem_budget(),
+        budget: crate::stats::rss_bytes().unwrap_or(0) + mem_budget(),
     };
     let jobs = jobs.clamp(1, env.blocks.len().max(1));
     std::thread::scope(|s| {
@@ -187,9 +190,13 @@ struct Shared<'e> {
 impl Shared<'_> {
     /// Wait until this thread may start a block: the process is under the
     /// memory budget, or no other thread is busy. Then count it busy.
-    fn enter(&self, jobs: usize) {
+    fn enter(&self, jobs: usize, polls: &mut u32) {
         let over = || crate::stats::rss_bytes().is_some_and(|b| b > self.budget);
-        if jobs > 1 && over() {
+        // Reading the process's size costs a system call: look every few
+        // blocks, and at every block while over.
+        *polls = polls.wrapping_add(1);
+        if jobs > 1 && polls.is_multiple_of(POLL_EVERY) && over() {
+            *polls = POLL_EVERY - 1;
             let mut waited = 0u64;
             loop {
                 // Alone: go on whatever the memory.
@@ -213,6 +220,7 @@ fn worker(sh: &Shared<'_>, jobs: usize) {
     let mut nb = Nbe::new(Store::new(env), sh.ext);
     let mut i = 0;
     let mut end = 0;
+    let mut polls = 0;
     loop {
         // Runs of consecutive blocks, so that one worker's caches see
         // neighbouring declarations.
@@ -225,7 +233,7 @@ fn worker(sh: &Shared<'_>, jobs: usize) {
             return;
         }
         let b = &env.blocks[i];
-        sh.enter(jobs);
+        sh.enter(jobs, &mut polls);
         let decls = env.block_decls(b);
         let first = decls.first().map(|d| d.name);
         let t0 = std::time::Instant::now();
