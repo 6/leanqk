@@ -170,6 +170,27 @@ impl<T> Chunked<T> {
         self.len += 1;
     }
 
+    /// Push copies of `v` until there are `n` elements.
+    pub fn fill_to(&mut self, n: usize, v: T)
+    where
+        T: Clone,
+    {
+        while self.len < n {
+            let room = match self.chunks.last() {
+                Some(c) if c.len() < CHUNK => CHUNK - c.len(),
+                _ => {
+                    let cap = if self.chunks.is_empty() { 0 } else { CHUNK };
+                    self.chunks.push(Vec::with_capacity(cap));
+                    CHUNK
+                }
+            };
+            let k = room.min(n - self.len);
+            let c = self.chunks.last_mut().expect("a chunk");
+            c.resize(c.len() + k, v.clone());
+            self.len += k;
+        }
+    }
+
     #[cold]
     #[inline(never)]
     fn push_chunk(&mut self, v: T) {

@@ -347,8 +347,8 @@ impl Exprs {
                 | ExprNode::Proj(..)
         ));
         let id = self.arena.push_unindexed(node)?;
-        // Set at `index`, from the children's.
-        self.data.push(ExprData(0));
+        // Set at `index`, from the children's (until then, the data
+        // stops short of it, or holds a placeholder).
         self.data_from = self.data_from.min(id);
         Ok(ExprId(id))
     }
@@ -373,6 +373,7 @@ impl Exprs {
         if from == u32::MAX as usize {
             return;
         }
+        self.data.fill_to(self.arena.len(), ExprData(0));
         let (lets, data) = (&self.lets, &mut self.data);
         for (c, chunk) in self.arena.nodes().chunks().iter().enumerate() {
             let start = c * CHUNK;
@@ -418,7 +419,6 @@ impl Exprs {
         };
         if fresh && unindexed && self.compound(node) {
             // Set at `index` (see `append_compound`).
-            self.data.push(ExprData(0));
             self.data_from = self.data_from.min(id);
         } else if fresh {
             let d = match node {
@@ -441,6 +441,8 @@ impl Exprs {
                 ExprNode::Proj(_, _, e) => self.data(e),
                 ExprNode::FVar(_) => ExprData::FVAR,
             };
+            // Placeholders for the compound nodes before it.
+            self.data.fill_to(id as usize, ExprData(0));
             self.data.push(d);
         }
         Ok((ExprId(id), fresh))
