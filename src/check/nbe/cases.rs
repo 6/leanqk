@@ -15,7 +15,7 @@ use crate::expr::{ExprId, ExprNode};
 use crate::name::NameId;
 
 use super::super::shape::{self, CasesInfo, Head, Heads, Minor, RecInfo, Src, Tree, TreeInfo};
-use super::super::store::Store;
+use super::super::store::{IdMap, Store, is_local};
 use super::super::tc::R;
 use super::Nbe;
 use super::val::{Env, Ls, Sp, V, Val};
@@ -31,6 +31,44 @@ pub enum CaseShape {
     Rec(Rc<RecInfo>),
     Ctor(u32),
     Other,
+}
+
+/// The shapes found, per constant.
+#[derive(Default)]
+pub struct CaseShapes {
+    /// Constants of one of the shapes, recursors and constructors. Their
+    /// terms may be the store's, so they go with it (`forget_terms`).
+    known: IdMap<NameId, CaseShape>,
+    /// Bit `n` for the environment's constant `n` of none of the shapes.
+    /// That holds whatever the store, so it stays.
+    none: Vec<u64>,
+}
+
+impl CaseShapes {
+    pub fn forget_terms(&mut self) {
+        self.known = IdMap::default();
+    }
+
+    #[inline]
+    fn is_none(&self, n: NameId) -> bool {
+        let i = n.0 as usize;
+        !is_local(n.0)
+            && self
+                .none
+                .get(i / 64)
+                .is_some_and(|w| w >> (i % 64) & 1 != 0)
+    }
+
+    fn set_none(&mut self, n: NameId) {
+        if is_local(n.0) {
+            return;
+        }
+        let i = n.0 as usize;
+        if self.none.len() <= i / 64 {
+            self.none.resize(i / 64 + 1, 0);
+        }
+        self.none[i / 64] |= 1 << (i % 64);
+    }
 }
 
 impl Heads for Nbe<'_> {
@@ -54,14 +92,28 @@ impl Heads for Nbe<'_> {
 impl Nbe<'_> {
     /// What the constant `n` is, computed once.
     pub fn case_shape(&mut self, n: NameId) -> CaseShape {
-        if let Some(s) = self.case_shapes.get(&n) {
+        if self.case_shapes.is_none(n) {
+            return CaseShape::Other;
+        }
+        if let Some(s) = self.case_shapes.known.get(&n) {
             return s.clone();
         }
         // A definition met again while its own shape is computed is not
         // one of these shapes.
-        self.case_shapes.insert(n, CaseShape::Other);
+        self.case_shapes.known.insert(n, CaseShape::Other);
         let s = self.compute_case_shape(n);
-        self.case_shapes.insert(n, s.clone());
+        match &s {
+            CaseShape::Other => {
+                self.case_shapes.known.remove(&n);
+                // Not recorded for a constant not visible (yet).
+                if self.find(n).is_some() {
+                    self.case_shapes.set_none(n);
+                }
+            }
+            _ => {
+                self.case_shapes.known.insert(n, s.clone());
+            }
+        }
         s
     }
 
@@ -143,7 +195,7 @@ impl Nbe<'_> {
         let Val::Const(n, ls, sp) = self.a.get(v) else {
             return Ok(None);
         };
-        if sp == Sp::NIL {
+        if sp == Sp::NIL || self.case_shapes.is_none(n) {
             return Ok(None);
         }
         let s = self.case_shape(n);

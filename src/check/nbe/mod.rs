@@ -164,7 +164,7 @@ pub struct Nbe<'e> {
     /// The shape of the value of a definition (`abbrev_shape`).
     shapes: IdMap<NameId, u8>,
     /// What constants are for `cases_direct` (`cases.rs`).
-    case_shapes: IdMap<NameId, cases::CaseShape>,
+    case_shapes: cases::CaseShapes,
     /// Terms the store holds for values read from `.olean` files.
     read_exprs: usize,
     /// The loose bound variables each term uses (`used_bvars`).
@@ -286,7 +286,7 @@ impl<'e> Nbe<'e> {
             stop: u64::MAX,
             stopped: false,
             shapes: IdMap::default(),
-            case_shapes: IdMap::default(),
+            case_shapes: Default::default(),
             read_exprs: 0,
             bvar_use: IdMap::default(),
             key_envs: IdMap::default(),
@@ -406,7 +406,7 @@ impl<'e> Nbe<'e> {
             self.name_exprs = 0;
             self.read_exprs = 0;
             shrink(&mut self.lazy_values);
-            self.case_shapes = IdMap::default();
+            self.case_shapes.forget_terms();
             // Local terms go: forget what was found about them.
             self.bvar_use.retain(|e, _| !super::store::is_local(e.0));
         }
