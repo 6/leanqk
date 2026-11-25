@@ -139,7 +139,6 @@ pub struct LsNode {
 /// A value with what is known about it.
 #[derive(Clone, Copy)]
 pub struct Rec {
-    pub val: Val,
     flags: u8,
     /// What a thunk evaluates to, or `NONE`; likewise the memos below.
     pub forced: u32,
@@ -172,7 +171,10 @@ fn out_of_room() -> ! {
 
 /// The arena of one worker.
 pub struct Arena {
-    vals: Vec<Rec>,
+    /// The values; what is known about them is in `recs`, apart, so that
+    /// probing `vtable` reads only values.
+    vals: Vec<Val>,
+    recs: Vec<Rec>,
     vtable: HashTable<(u32, u32)>,
 
     /// Spines, each a header (its length and `HAS_FVAR_BIT`,
@@ -217,6 +219,7 @@ impl Arena {
     pub fn new() -> Self {
         Arena {
             vals: Vec::new(),
+            recs: Vec::new(),
             vtable: HashTable::new(),
             sps: vec![0],
             sptable: HashTable::new(),
@@ -257,6 +260,7 @@ impl Arena {
             return;
         }
         self.vals.clear();
+        self.recs.clear();
         self.vtable.clear();
         self.sps.truncate(1);
         self.sp_buf.clear();
@@ -276,7 +280,8 @@ impl Arena {
 
     /// Bytes held, roughly.
     pub fn heap_bytes(&self) -> usize {
-        self.vals.capacity() * size_of::<Rec>()
+        self.vals.capacity() * size_of::<Val>()
+            + self.recs.capacity() * size_of::<Rec>()
             + self.vtable.capacity() * 9
             + self.sps.capacity() * 4
             + self.sptable.capacity() * 9
@@ -290,38 +295,38 @@ impl Arena {
 
     #[inline]
     pub fn get(&self, v: V) -> Val {
-        self.vals[v.0 as usize].val
+        self.vals[v.0 as usize]
     }
 
     /// What is known about `v`.
     #[inline]
     pub fn r(&self, v: V) -> &Rec {
-        &self.vals[v.0 as usize]
+        &self.recs[v.0 as usize]
     }
 
     #[inline]
     pub fn rm(&mut self, v: V) -> &mut Rec {
-        &mut self.vals[v.0 as usize]
+        &mut self.recs[v.0 as usize]
     }
 
     #[inline]
     pub fn has_fvar(&self, v: V) -> bool {
-        self.vals[v.0 as usize].flags & HAS_FVAR != 0
+        self.recs[v.0 as usize].flags & HAS_FVAR != 0
     }
 
     #[inline]
     pub fn checked(&self, v: V) -> bool {
-        self.vals[v.0 as usize].flags & CHECKED != 0
+        self.recs[v.0 as usize].flags & CHECKED != 0
     }
 
     #[inline]
     pub fn set_checked(&mut self, v: V) {
-        self.vals[v.0 as usize].flags |= CHECKED;
+        self.recs[v.0 as usize].flags |= CHECKED;
     }
 
     #[inline]
     pub fn clear_checked(&mut self, v: V) {
-        self.vals[v.0 as usize].flags &= !CHECKED;
+        self.recs[v.0 as usize].flags &= !CHECKED;
     }
 
     /// `mk(Val::Const(n, l, Sp::NIL))`.
@@ -368,7 +373,7 @@ impl Arena {
         let h = val.hash();
         let Self { vals, vtable, .. } = self;
         if let Some(&(id, _)) =
-            vtable.find(spread(h), |&(id, k)| k == h && vals[id as usize].val == val)
+            vtable.find(spread(h), |&(id, k)| k == h && vals[id as usize] == val)
         {
             return V(id);
         }
@@ -376,8 +381,8 @@ impl Arena {
         if id >= LIMIT {
             out_of_room();
         }
-        vals.push(Rec {
-            val,
+        vals.push(val);
+        self.recs.push(Rec {
             flags: 0,
             forced: NONE,
             whnf_core: NONE,
@@ -395,7 +400,7 @@ impl Arena {
             Val::FVar(..) => true,
         };
         if fv {
-            self.vals[id as usize].flags = HAS_FVAR;
+            self.recs[id as usize].flags = HAS_FVAR;
         }
 
         V(id)
@@ -494,7 +499,7 @@ impl Arena {
         } = self;
         let found = nutable.find(spread(h), |&(id, k2)| {
             k2 == h && {
-                let (same, sp) = match (vals[id as usize].val, head) {
+                let (same, sp) = match (vals[id as usize], head) {
                     (Val::Const(n2, l2, sp), Val::Const(n1, l1, _)) => (n1 == n2 && l1 == l2, sp),
                     (Val::FVar(k2, sp), Val::FVar(k1, _)) => (k1 == k2, sp),
                     _ => (false, Sp::NIL),
