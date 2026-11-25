@@ -33,8 +33,8 @@ pub(super) trait Records {
     fn binder(&mut self, id: u64, pi: bool, bi: BinderInfo, name: u64, ty: u64, body: u64) -> bool;
 
     /// After each [`exprs`] (which makes no calls, so that the loop keeps
-    /// its state in registers).
-    fn flush(&mut self);
+    /// its state in registers), with the ids it took.
+    fn flush(&mut self, ids: std::ops::Range<u64>);
 }
 
 /// The constants of the loop, loaded from memory rather than built in
@@ -182,6 +182,85 @@ pub(super) fn digits(e: u64) -> (u32, u64) {
     (len, next)
 }
 
+/// The ids [`exprs`] expects: their length, the first id with more
+/// digits, and an id `e` with (if it has at most 8 digits) its text, as
+/// the bytes of a word (the first digit in the low byte).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Ids {
+    len: u32,
+    next: u64,
+    e: u64,
+    txt: u64,
+}
+
+impl Default for Ids {
+    fn default() -> Self {
+        Ids::at(0)
+    }
+}
+
+impl Ids {
+    fn at(e: u64) -> Ids {
+        let (len, next) = digits(e);
+        Ids {
+            len,
+            next,
+            e,
+            txt: text(e, len),
+        }
+    }
+
+    /// Move to `e`: by counting up from a little before it.
+    #[inline(always)]
+    fn seek(&mut self, e: u64) {
+        if e >= self.next || e < self.e || e - self.e > 16 {
+            *self = Ids::at(e);
+        }
+        while self.e < e {
+            self.txt = next_text(self.txt, self.len);
+            self.e += 1;
+        }
+    }
+}
+
+/// The text of `e` (of `len` digits) in the top bytes of a word (the
+/// last digit in the top byte; as a word read from the text and shifted
+/// up), or 0 if it has more than 8.
+fn text(e: u64, len: u32) -> u64 {
+    if len > 8 {
+        return 0;
+    }
+    let (mut t, mut x) = (0, e);
+    for i in (0..len).rev() {
+        t |= (b'0' as u64 + x % 10) << (8 * i);
+        x /= 10;
+    }
+    t << (64 - 8 * len)
+}
+
+/// The text after `t` (of `len` digits, up to 8; the next number is to
+/// have as many).
+#[inline(always)]
+fn next_text(t: u64, len: u32) -> u64 {
+    if len > 8 {
+        return t;
+    }
+    carry(t + (1 << 56), len)
+}
+
+/// `t` with its last digit just incremented: a digit past `9` (which
+/// reads `:`) becomes `0` and increments the one before it.
+#[inline(always)]
+fn carry(mut t: u64, len: u32) -> u64 {
+    let mut at = 56;
+    while (t >> at) as u8 == b':' && at > 64 - 8 * len.min(8) {
+        t -= 10 << at;
+        at -= 8;
+        t += 1 << at;
+    }
+    t
+}
+
 /// Whether the id at `p` is `e` (of `len` digits): where it ends. Its
 /// length is known, so this reads exactly that many digits (and the
 /// value then also rules out a leading zero).
@@ -236,6 +315,22 @@ fn binder(
     Some((bi, body, name, ty, q))
 }
 
+/// Whether the id at `p` is `e` (of `len` digits, with text `txt` if
+/// they are at most 8, `shift` being `64 - 8 * len`): where it ends.
+#[inline(always)]
+fn id_is(
+    w: &[u8; WIN],
+    p: usize,
+    (e, len, txt, shift): (u64, u32, u64, u32),
+    k: &Consts,
+) -> Option<usize> {
+    if len <= 8 {
+        (ld(w, p) << shift == txt).then_some(p + len as usize)
+    } else {
+        id_at(w, p, e, len, k)
+    }
+}
+
 /// The application and binder lines at the start of `s` while their ids
 /// are `e`, `e + 1`, ... (below `limit`, all of `len` digits): each goes
 /// to `out`, until it refuses one. How many bytes and lines it took.
@@ -244,10 +339,14 @@ pub(super) fn exprs(
     s: &[u8],
     e: u64,
     (len, limit): (u32, u64),
+    mut txt: u64,
     out: &mut impl Records,
-) -> (usize, u64) {
+) -> (usize, u64, u64) {
     let k = std::hint::black_box(&CONSTS);
     let (mut pos, mut e2) = (0, e);
+    // Ids of up to 8 digits are compared as text; `txt` is `e2`'s.
+    let shift = 64 - 8 * len.min(8);
+
     while e2 < limit
         && let Some(w) = s.get(pos..pos + WIN)
     {
@@ -263,7 +362,7 @@ pub(super) fn exprs(
             let Some((f, q)) = nat_to(w, q + 6, k, k.ie, MASK7) else {
                 break;
             };
-            let Some(q) = id_at(w, q + 7, e2, len, k) else {
+            let Some(q) = id_is(w, q + 7, (e2, len, txt, shift), k) else {
                 break;
             };
             if ld(w, q) & MASK2 != k.end || !out.app(e2, f, a) {
@@ -280,7 +379,7 @@ pub(super) fn exprs(
             let Some((bi, body, name, ty, q)) = binder(w, 26, k, (k.ie, MASK7)) else {
                 break;
             };
-            let Some(q) = id_at(w, q + 7, e2, len, k) else {
+            let Some(q) = id_is(w, q + 7, (e2, len, txt, shift), k) else {
                 break;
             };
             if ld(w, q) & MASK2 != k.end || !out.binder(e2, true, bi, name, ty, body) {
@@ -289,7 +388,7 @@ pub(super) fn exprs(
             q + 2
         } else if head & MASK6 == k.ie_head {
             // `{"ie":`, an id, then (for a lambda) `,"lam":{"binderInfo":"`.
-            let Some(q) = id_at(w, 6, e2, len, k) else {
+            let Some(q) = id_is(w, 6, (e2, len, txt, shift), k) else {
                 break;
             };
             if ld(w, q) != k.lam[0] || ld(w, q + 8) != k.lam[1] || ld(w, q + 16) & MASK6 != k.lam[2]
@@ -308,30 +407,28 @@ pub(super) fn exprs(
         };
         pos += end;
         e2 += 1;
+        // (Ids of more than 8 digits leave it unused.)
+        txt = txt.wrapping_add(1 << 56);
+        if (txt >> 56) as u8 == b':' {
+            txt = carry(txt, len);
+        }
     }
-    (pos, e2 - e)
+    (pos, e2 - e, txt)
 }
 
 /// [`exprs`] for any ids, a batch at a time: from `e`, across their
-/// lengths. `digits` is
-/// the length and limit of the ids at or after `e`'s length (updated).
+/// lengths. `ids` is where the last call left off (updated).
 #[inline(always)]
-pub(super) fn all_exprs(
-    s: &[u8],
-    e: u64,
-    digits_of: &mut (u32, u64),
-    out: &mut impl Records,
-) -> (usize, u64) {
+pub(super) fn all_exprs(s: &[u8], e: u64, ids: &mut Ids, out: &mut impl Records) -> (usize, u64) {
     let (mut pos, mut e2) = (0, e);
     loop {
-        if e2 >= digits_of.1 {
-            *digits_of = digits(e2);
-        }
-        let limit = digits_of.1.min(e2 + BATCH);
-        let (n, m) = exprs(&s[pos..], e2, (digits_of.0, limit), out);
-        out.flush();
+        ids.seek(e2);
+        let limit = ids.next.min(e2 + BATCH);
+        let (n, m, txt) = exprs(&s[pos..], e2, (ids.len, limit), ids.txt, out);
+        out.flush(e2..e2 + m);
         pos += n;
         e2 += m;
+        (ids.e, ids.txt) = (e2, txt);
         // Stopped before the limit.
         if e2 != limit {
             return (pos, e2 - e);
@@ -365,14 +462,14 @@ mod tests {
             !self.1
         }
 
-        fn flush(&mut self) {}
+        fn flush(&mut self, _: std::ops::Range<u64>) {}
     }
 
     fn run(text: &str, e: u64) -> (Vec<(u64, String)>, usize, u64) {
         let pad = " ".repeat(WIN);
         let text = format!("{text}{pad}");
         let mut got = Got::default();
-        let (n, k) = all_exprs(text.as_bytes(), e, &mut (1, 10), &mut got);
+        let (n, k) = all_exprs(text.as_bytes(), e, &mut Ids::default(), &mut got);
         (got.0, n, k)
     }
 
@@ -406,6 +503,20 @@ mod tests {
                 // As the caller does: the id, then `}`.
                 let got = id_at(w, 0, e, len, &CONSTS).filter(|&q| w[q] == b'}');
                 assert_eq!(got.is_some(), ok, "{text}");
+            }
+        }
+    }
+
+    #[test]
+    fn texts_of_ids() {
+        let mut ids = Ids::default();
+        for e in (0..200_000).chain(99_999_990..100_000_010) {
+            ids.seek(e);
+            let (len, _) = digits(e);
+            assert_eq!(ids.txt, text(e, len), "{e}");
+            if len <= 8 {
+                let t = ids.txt.to_le_bytes();
+                assert_eq!(&t[8 - len as usize..], e.to_string().as_bytes());
             }
         }
     }
@@ -480,7 +591,7 @@ mod tests {
             " ".repeat(WIN)
         );
         assert_eq!(
-            all_exprs(line.as_bytes(), 8, &mut (1, 10), &mut got),
+            all_exprs(line.as_bytes(), 8, &mut Ids::default(), &mut got),
             (0, 0)
         );
     }

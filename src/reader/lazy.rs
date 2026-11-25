@@ -193,7 +193,7 @@ pub(super) struct Builder {
     roots: Vec<u32>,
     stack: Vec<u32>,
     /// For [`Builder::exprs`] (see `run`).
-    digits: (u32, u64),
+    ids: super::run::Ids,
     /// Its batches of records and side records.
     batch: Vec<u64>,
     side_batch: Vec<u32>,
@@ -202,10 +202,7 @@ pub(super) struct Builder {
 impl Builder {
     /// A builder for an export of about `size` bytes.
     pub(super) fn with_capacity(size: u64) -> Self {
-        let mut b = Builder {
-            digits: (1, 10),
-            ..Builder::default()
-        };
+        let mut b = Builder::default();
         // About one expression per 56 bytes of a real export, and a side
         // record (3 words) per 8 of them; the space is only reserved, so
         // a smaller file costs nothing.
@@ -254,14 +251,13 @@ impl Builder {
         let mut out = Out {
             batch: (&mut self.batch[..]).try_into().expect("a batch"),
             side_batch: (&mut self.side_batch[..]).try_into().expect("a batch"),
-            n: 0,
             sn: 0,
             o: self.side.len(),
             recs: &mut self.recs,
             side: &mut self.side,
-            names,
+            names: names.identity_len().unwrap_or(0).min(u32::MAX as u64),
         };
-        super::run::all_exprs(s, e, &mut self.digits, &mut out)
+        super::run::all_exprs(s, e, &mut self.ids, &mut out)
     }
 
     /// Push a side record of `fields` with tag `t` and `flags`.
@@ -581,16 +577,18 @@ const BATCH: usize = super::run::BATCH as usize;
 /// Where [`Builder::exprs`] puts records: a batch at a time, to `recs`
 /// and `side`.
 struct Out<'a> {
+    /// Records by id (modulo the batch's length).
     batch: &'a mut [u64; BATCH],
     side_batch: &'a mut [u32; 3 * BATCH],
-    /// Records and side words in the batch.
-    n: usize,
+    /// Side records in the batch.
     sn: usize,
     /// The side table's length with the batch.
     o: usize,
     recs: &'a mut Vec<u64>,
     side: &'a mut Vec<u32>,
-    names: &'a IdMap,
+    /// The names that map to themselves; binders with other names (in an
+    /// export whose names are not so) take the slow way.
+    names: u64,
 }
 
 impl super::run::Records for Out<'_> {
@@ -599,36 +597,33 @@ impl super::run::Records for Out<'_> {
         if f >= id || a >= id {
             return false;
         }
-        // At most a batch between flushes.
-        self.batch[self.n % BATCH] = T_APP << TAG | f << ID_BITS | a;
-        self.n += 1;
+        self.batch[id as usize % BATCH] = T_APP << TAG | f << ID_BITS | a;
         true
     }
 
     #[inline(always)]
     fn binder(&mut self, id: u64, pi: bool, bi: BinderInfo, name: u64, ty: u64, body: u64) -> bool {
-        // A sparse name takes the slow way.
-        let Some(name) = self.names.get_near(name) else {
-            return false;
-        };
         let o = self.o;
-        if ty >= id || body >= id || o > u32::MAX as usize - 4 {
+        if name >= self.names || ty >= id || body >= id || o > u32::MAX as usize - 4 {
             return false;
         }
-        let at = self.sn % BATCH;
-        self.side_batch[3 * at..3 * at + 3].copy_from_slice(&[name, ty as u32, body as u32]);
+        let side = &mut self.side_batch.as_chunks_mut::<3>().0[self.sn % BATCH];
+        *side = [name as u32, ty as u32, body as u32];
         self.sn += 1;
         self.o = o + 3;
         let t = if pi { T_PI } else { T_LAM };
-        self.batch[self.n % BATCH] = t << TAG | bi_bits(bi) << 32 | o as u64;
-        self.n += 1;
+        self.batch[id as usize % BATCH] = t << TAG | bi_bits(bi) << 32 | o as u64;
         true
     }
 
-    fn flush(&mut self) {
-        self.recs.extend_from_slice(&self.batch[..self.n]);
+    fn flush(&mut self, ids: std::ops::Range<u64>) {
+        // At most a batch, from `ids.start` on (modulo its length).
+        let (from, n) = (ids.start as usize % BATCH, (ids.end - ids.start) as usize);
+        let first = n.min(BATCH - from);
+        self.recs.extend_from_slice(&self.batch[from..from + first]);
+        self.recs.extend_from_slice(&self.batch[..n - first]);
         self.side.extend_from_slice(&self.side_batch[..3 * self.sn]);
-        (self.n, self.sn) = (0, 0);
+        self.sn = 0;
     }
 }
 

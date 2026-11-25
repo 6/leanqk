@@ -54,14 +54,9 @@ impl IdMap {
         self.sparse.get(&id).copied()
     }
 
-    /// [`IdMap::get`] without the sparse entries: `None` for those too.
-    /// No call, for hot loops (which then take the slow way).
-    #[inline(always)]
-    pub fn get_near(&self, id: u64) -> Option<u32> {
-        if !self.dense_mode {
-            return (id < self.identity).then_some(id as u32);
-        }
-        self.dense.get(id as usize).copied().filter(|&v| v != NONE)
+    /// While the map is the identity: the ids it maps (to themselves).
+    pub fn identity_len(&self) -> Option<u64> {
+        (!self.dense_mode).then_some(self.identity)
     }
 
     #[inline(always)]
