@@ -372,16 +372,29 @@ impl C<'_> {
     #[inline(always)]
     fn string(&mut self) -> Option<(u32, u32)> {
         let start = self.p;
+        // Eight bytes at a time: the first that is a quote, a backslash or
+        // a control character (the lowest byte each test flags is exact,
+        // as a test only flags a byte wrongly above one it flags rightly).
+        const ONES: u64 = 0x0101_0101_0101_0101;
+        const HIGH: u64 = 0x8080_8080_8080_8080;
+        let zero = |x: u64| x.wrapping_sub(ONES) & !x & HIGH;
         loop {
             if self.p >= MASK {
                 return None;
             }
-            match self.at(0) {
-                b'"' => break,
-                b'\\' => return None,
-                c if c < 0x20 => return None,
-                _ => self.p += 1,
+            let x = self.word(0);
+            let t = (x.wrapping_sub(0x20 * ONES) & !x & HIGH)
+                | zero(x ^ (b'"' as u64 * ONES))
+                | zero(x ^ (b'\\' as u64 * ONES));
+            if t == 0 {
+                self.p += 8;
+                continue;
             }
+            self.p += (t.trailing_zeros() / 8) as usize;
+            if self.at(0) != b'"' {
+                return None;
+            }
+            break;
         }
         let end = self.p;
         self.p += 1;
