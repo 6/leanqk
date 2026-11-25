@@ -1,0 +1,1081 @@
+checker	test	group	expected	status	correctness	exit_code	wall_s	cpu_s	max_rss_mib	ginstructions	timeout_s	note
+nitrolean	bugs/closure-level-subst	bugs	reject	rejected	correct	1	0.005	0.005	4.8			nitrolean: rejected: declaration 'lower': declaration type mismatch, value has type Family.{1} but is expected to have type Family.{0}
+nitrolean	bugs/constlevels	bugs	reject	rejected	correct	1	0.004	0.004	4.8			nitrolean: rejected: declaration '_test': type mismatch at let 'x': value has type Sort 1 but is expected to have type Nat
+nitrolean	bugs/ctor-num-fields	bugs	reject	rejected	correct	1	0.004	0.004	5.0			nitrolean: rejected: declaration '_private.Test.0.S': '_private.Test.0.S.mk' does not match the declaration derived from its inductive type (induct, cidx, numPa
+nitrolean	bugs/eta-ctor-alias	bugs	reject	rejected	correct	1	0.004	0.004	4.8			nitrolean: rejected: declaration 'etaCtorAlias': declaration type mismatch, value has type ((a : BoxFn) → (Eq.{1} BoxFn a a)) but is expected to have type ((f :
+nitrolean	bugs/k-rec-conv	bugs	reject	rejected	correct	1	0.004	0.004	4.9			nitrolean: rejected: declaration 'bad': declaration type mismatch, value has type (Eq.{1} T t1 t1) but is expected to have type (Eq.{1} T t1 t2)
+nitrolean	bugs/large-elim-param	bugs	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'MyBool': 'MyBool.rec' does not match the declaration derived from its inductive type (universe parameters)
+nitrolean	bugs/large-elim-prop-bool	bugs	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'NewBool': 'NewBool.rec' does not match the declaration derived from its inductive type (universe parameters)
+nitrolean	bugs/level-imax-leq	bugs	reject	rejected	correct	1	0.002	0.002	4.8			nitrolean: rejected: declaration 'False': 'False.rec' does not match the declaration derived from its inductive type (numParams, numIndices, numMotives, numMino
+nitrolean	bugs/level-imax-normalization	bugs	reject	rejected	correct	1	0.003	0.003	6.9			nitrolean: rejected: declaration 'down': declaration type mismatch, value has type ((x : Sort (imax 0 v)+1) → Sort (imax 0 v)+1) but is expected to have type ((
+nitrolean	bugs/loose-bvar-value	bugs	reject	rejected	correct	1	0.003	0.003	6.8			nitrolean: rejected: declaration 'f': type checker does not support loose bound variables
+nitrolean	bugs/nat-rec-k-lie	bugs	reject	rejected	correct	1	0.003	0.003	5.0			nitrolean: rejected: declaration 'Nat': 'Nat.rec' does not match the declaration derived from its inductive type (numParams, numIndices, numMotives, numMinors, 
+nitrolean	bugs/nat-rec-rules	bugs	reject	rejected	correct	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'False': 'False.rec' does not match the declaration derived from its inductive type (numParams, numIndices, numMotives, numMino
+nitrolean	bugs/nat-shift-huge	bugs	accept	accepted	correct	0	0.010	0.010	5.1			
+nitrolean	bugs/nested-name-capture	bugs	reject	rejected	correct	1	0.003	0.003	5.0			nitrolean: rejected: declaration 'Shadow': 'Shadow.rec' does not match the declaration derived from its inductive type (rule right-hand side)
+nitrolean	bugs/nested-rec-rule-nfields	bugs	reject	rejected	correct	1	0.004	0.004	5.0			nitrolean: rejected: declaration 'T': 'T.rec' does not match the declaration derived from its inductive type (rule constructor or field count)
+nitrolean	bugs/nested-unused-param	bugs	reject	rejected	correct	1	0.004	0.004	5.0			nitrolean: rejected: declaration 'E': invalid projection w.C#1
+nitrolean	bugs/open-term-cache-context	bugs	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'openDagContextLeakFalse': application type mismatch: argument y has type ((P : Prop) → ((p : P) → P)) but is expected to have 
+nitrolean	bugs/orphan-rec	bugs	reject	rejected	correct	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'False': the inductive block declares 'rogue', which is not derived from its types
+nitrolean	bugs/pi-closure-context	bugs	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'bad': declaration type mismatch, value has type (([anonymous] : TrueTy) → Prop) but is expected to have type (([anonymous] : T
+nitrolean	bugs/proj-non-structure	bugs	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'bad': invalid projection (Bad.mk2 True.intro).Bad#1
+nitrolean	bugs/proj-of-imax-prop	bugs	reject	rejected	correct	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'imaxProjBool': invalid projection p.ImaxProp#1
+nitrolean	bugs/proj-of-stuck-prop	bugs	reject	rejected	correct	1	0.006	0.006	4.9			nitrolean: rejected: declaration 'Native64ResultSortOwner': type expected, got (Native64ResultSortGate.rec.{2} x (fun (index : Bool) => (fun (index : Bool) => (
+nitrolean	bugs/proj-of-subst-prop	bugs	reject	rejected	correct	1	0.008	0.008	4.9			nitrolean: rejected: declaration 'PR14806Subst.observe': type expected, got (PR14806Subst.gate PR14806Subst.witness)
+nitrolean	bugs/quot-bad-type	bugs	reject	rejected	correct	1	0.004	0.004	4.7			nitrolean: rejected: declaration 'Quot': unexpected quotient declaration
+nitrolean	bugs/rec-k-lie	bugs	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'MyBool': 'MyBool.rec' does not match the declaration derived from its inductive type (numParams, numIndices, numMotives, numMi
+nitrolean	bugs/rec-missing-ih	bugs	reject	rejected	correct	1	0.009	0.009	5.2			nitrolean: rejected: declaration 'Native64TwoHashOwner': arg #3 of 'Native64TwoHashOwner.step' contains a non valid occurrence of the datatypes being declared
+nitrolean	bugs/rec-of-subst-prop	bugs	reject	rejected	correct	1	0.008	0.008	6.9			nitrolean: rejected: declaration 'Issue.forallFalse': function expected, got (Issue.identityType Empty (Issue.Owner.rec Issue.gateWitness (fun (major : Issue.pr
+nitrolean	bugs/rec-rule-proof-irrel	bugs	reject	rejected	correct	1	0.004	0.004	4.8			nitrolean: rejected: declaration 'J': 'J.rec' does not match the declaration derived from its inductive type (rule right-hand side)
+nitrolean	bugs/rec-rule-proof-irrel-nested	bugs	reject	rejected	correct	1	0.004	0.004	4.8			nitrolean: rejected: declaration 'N': 'N.rec_1' does not match the declaration derived from its inductive type (rule right-hand side)
+nitrolean	bugs/rec-rule-wrong-arg	bugs	reject	rejected	correct	1	0.004	0.004	4.8			nitrolean: rejected: declaration 'W': 'W.rec' does not match the declaration derived from its inductive type (rule right-hand side)
+nitrolean	bugs/rec-type-proof-irrel	bugs	reject	rejected	correct	1	0.004	0.004	4.8			nitrolean: rejected: declaration 'Q': 'Q.rec' does not match the declaration derived from its inductive type (type)
+nitrolean	bugs/str-lit-utf8	bugs	accept	accepted	correct	0	0.010	0.010	5.4			
+nitrolean	bugs/str-lit-utf8-bad	bugs	reject	rejected	correct	1	0.021	0.022	5.6			nitrolean: rejected: declaration 'strLitUtf8Bad': declaration type mismatch, value has type (Eq.{1} String "é" "é") but is expected to have type (Eq.{1} String 
+nitrolean	bugs/unit-rec-rule	bugs	reject	rejected	correct	1	0.003	0.003	5.0			nitrolean: rejected: declaration 'PUnit': 'PUnit.rec' does not match the declaration derived from its inductive type (rule right-hand side)
+nitrolean	corner-cases/alg-conv-trans-acc	corner-cases	either	rejected	either	1	0.004	0.004	5.0			nitrolean: rejected: declaration 'trans': declaration type mismatch, value has type ((a : (Acc.{1} Nat (fun (x1._@.Test.#._hygCtx._hyg.6 : Nat) => (fun
+nitrolean	corner-cases/alg-conv-trans-acc-left	corner-cases	either	accepted	either	0	0.004	0.004	5.0			
+nitrolean	corner-cases/alg-conv-trans-acc-right	corner-cases	either	accepted	either	0	0.004	0.004	4.8			
+nitrolean	corner-cases/alg-conv-trans-quot	corner-cases	either	rejected	either	1	0.003	0.003	5.0			nitrolean: rejected: declaration 'trans': declaration type mismatch, value has type ((P : Prop) → ((r : ((a._@._internal._hyg.0 : P) → ((a._@._internal._hyg.0 :
+nitrolean	corner-cases/alg-conv-trans-quot-left	corner-cases	either	rejected	either	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'left': declaration type mismatch, value has type ((P : Prop) → ((r : ((a._@._internal._hyg.0 : P) → ((a._@._internal._hyg.0 : 
+nitrolean	corner-cases/alg-conv-trans-quot-left-def	corner-cases	either	accepted	either	0	0.003	0.003	5.0			
+nitrolean	corner-cases/alg-conv-trans-quot-right	corner-cases	either	accepted	either	0	0.003	0.003	4.8			
+nitrolean	corner-cases/eta-ctor	corner-cases	either	rejected	either	1	0.003	0.003	6.8			nitrolean: rejected: declaration 'etaCtor': declaration type mismatch, value has type ((a : ((proof : True) → T)) → (Eq.{1} ((proof : True) → T) a a)) but is ex
+nitrolean	corner-cases/eta-rec-struct	corner-cases	either	rejected	either	1	0.003	0.003	5.1			nitrolean: rejected: declaration 'etaRecStruct': declaration type mismatch, value has type ((a : ((a._@._internal._hyg.0 : (Prod.{0, 0} Bool Bool)) → Bool)) → (
+nitrolean	corner-cases/eta-rule-k	corner-cases	either	rejected	either	1	0.003	0.003	6.8			nitrolean: rejected: declaration 'etaRuleK': declaration type mismatch, value has type ((a : ((a._@._internal._hyg.0 : (Eq.{1} Bool Bool.true Bool.true)) → Bool
+nitrolean	corner-cases/eta-struct-major-and	corner-cases	either	accepted	either	0	0.004	0.004	5.1			
+nitrolean	corner-cases/eta-struct-major-and-no-whnf	corner-cases	either	accepted	either	0	0.003	0.003	4.8		120	
+nitrolean	corner-cases/eta-struct-major-no-whnf	corner-cases	either	accepted	either	0	0.003	0.003	5.0		120	
+nitrolean	corner-cases/eta-unit-like-nested	corner-cases	either	rejected	either	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'unitLikeNested': declaration type mismatch, value has type ((p : (Mixed Nat ((a._@._internal._hyg.0 : Bool) → UnitField))) → (
+nitrolean	corner-cases/eta-unit-like-pi	corner-cases	either	rejected	either	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'unitLikePi': declaration type mismatch, value has type ((α : Sort 1) → ((p : ((a._@._internal._hyg.0 : α) → Unit)) → ((q : ((a
+nitrolean	corner-cases/eta-unit-like-proof-field	corner-cases	either	rejected	either	1	0.004	0.004	5.0			nitrolean: rejected: declaration 'unitLikeProofField': declaration type mismatch, value has type ((p : ProofField) → ((a : ProofField) → (Eq.{1} ProofField a a)
+nitrolean	corner-cases/eta-unit-like-struct	corner-cases	either	rejected	either	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'unitLikeStruct': declaration type mismatch, value has type ((p : UnitField) → ((a : UnitField) → (Eq.{1} UnitField a a))) but 
+nitrolean	corner-cases/imax-nested-absorption	corner-cases	either	rejected	either	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'imaxAbsorbRight': declaration type mismatch, value has type Sort (imax u v)+1 but is expected to have type Sort (imax (imax u 
+nitrolean	corner-cases/imax-right-successor	corner-cases	either	rejected	either	1	0.003	0.003	5.1			nitrolean: rejected: declaration 'imaxRightOne': declaration type mismatch, value has type Sort (imax u 1)+1 but is expected to have type Sort (max u 1)+1
+nitrolean	corner-cases/large-elim-maybe-prop	corner-cases	either	rejected	either	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'MaybePropBox': 'MaybePropBox.rec' does not match the declaration derived from its inductive type (universe parameters)
+nitrolean	corner-cases/let-value-type-mismatch	corner-cases	either	rejected	either	1	0.002	0.002	4.8			nitrolean: rejected: declaration 'EcosystemCase': type mismatch at let 'u': value has type Sort 2 but is expected to have type Sort 1
+nitrolean	corner-cases/nested-nonuniform-param	corner-cases	either	rejected	either	1	0.004	0.004	4.8			nitrolean: rejected: declaration 'E': invalid occurrence of datatype 'E' being declared in 'E.mk': it must be applied to the parameters and universe levels of t
+nitrolean	corner-cases/nested-redex-aux	corner-cases	either	accepted	either	0	0.004	0.004	5.0			
+nitrolean	corner-cases/positivity-whnf	corner-cases	either	rejected	either	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'LALReduciblePositivity': arg #1 of 'LALReduciblePositivity.mk' has a non positive occurrence of the datatypes being declared
+nitrolean	corner-cases/proj-maybe-prop	corner-cases	either	accepted	either	0	0.003	0.003	4.8			
+nitrolean	corner-cases/proj-maybe-prop-past	corner-cases	either	accepted	either	0	0.003	0.003	4.8			
+nitrolean	corner-cases/proof-param-ok	corner-cases	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	corner-cases/proof-param-swap	corner-cases	either	rejected	either	1	0.003	0.003	5.0			nitrolean: rejected: declaration 'LALProofParameterSwap': invalid occurrence of datatype 'LALProofParameterSwap' being declared in 'LALProofParameterSwap.mk': i
+nitrolean	corner-cases/subject-reduction-redex	corner-cases	either	accepted	either	0	0.005	0.005	4.8			
+nitrolean	corner-cases/subject-reduction-reduct	corner-cases	either	rejected	either	1	0.005	0.005	4.9			nitrolean: rejected: declaration 'reduct': application type mismatch: argument x0 has type (D (f (OfNat.ofNat.{0} Nat 1 (instOfNatNat 1)) a)) but is expected to
+nitrolean	corner-cases/vanishing-occurrence	corner-cases	either	accepted	either	0	0.004	0.004	5.1			
+nitrolean	init-prelude	real-world	accept	accepted	correct	0	0.044	0.048	9.3		80	
+nitrolean	other/extra-rec	other	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'False': the inductive block declares 'rogue', which is not derived from its types
+nitrolean	other/inductive-undeclared-universe	other	reject	rejected	correct	1	0.004	0.004	4.8			nitrolean: rejected: declaration 'U': invalid reference to undefined universe level parameter 'u'
+nitrolean	other/level-index-out-of-order	other	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	other/nat-lit-add	other	accept	accepted	correct	0	0.004	0.004	4.9			
+nitrolean	other/nat-lit-add-bad	other	reject	rejected	correct	1	0.003	0.004	4.8			nitrolean: rejected: declaration 'natAddLitBad': declaration type mismatch, value has type (Eq.{1} Nat (Nat.add (OfNat.ofNat.{0} Nat # (instOfNatNat 123
+nitrolean	other/nat-lit-ble	other	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	other/nat-lit-sub	other	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	other/orphan-ctor	other	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'False': constructor 'rogue' does not belong to any type of its inductive block
+nitrolean	other/proj-of-prop	other	reject	rejected	correct	1	0.003	0.003	5.0			nitrolean: rejected: declaration 'badFalse': application type mismatch: argument True.intro has type True but is expected to have type False
+nitrolean	other/sparse-name-index	other	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	perf/app-lam	perf	accept	accepted	correct	0	5.705	5.706	1102.5		140	
+nitrolean	perf/args-before-unfold	perf	accept	accepted	correct	0	0.006	0.006	5.1		80	
+nitrolean	perf/beta-ladder	perf	accept	accepted	correct	0	1.230	1.230	319.1		80	
+nitrolean	perf/church-numerals	perf	accept	accepted	correct	0	0.010	0.010	10.9		80	
+nitrolean	perf/discarded-argument	perf	accept	accepted	correct	0	0.045	0.045	4.8		80	
+nitrolean	perf/discarded-argument-match	perf	accept	accepted	correct	0	0.046	0.045	4.8		80	
+nitrolean	perf/folded-constant-first	perf	accept	accepted	correct	0	0.007	0.007	5.3		80	
+nitrolean	perf/folded-constant-last	perf	accept	accepted	correct	0	0.008	0.008	5.3		80	
+nitrolean	perf/fueled-chain	perf	accept	accepted	correct	0	0.026	0.026	7.9		80	
+nitrolean	perf/grind-ring-5	perf	accept	accepted	correct	0	0.547	0.559	60.0		100	
+nitrolean	perf/identical-nesting	perf	accept	accepted	correct	0	0.004	0.004	4.8		80	
+nitrolean	perf/irrelevance-before-evaluation	perf	accept	accepted	correct	0	0.004	0.004	4.9		80	
+nitrolean	perf/irrelevance-refutes	perf	accept	accepted	correct	0	0.003	0.003	5.0		80	
+nitrolean	perf/ite-taken-branch	perf	accept	accepted	correct	0	9.166	9.171	385.5		460	
+nitrolean	perf/ite-taken-branch-bad	perf	reject	rejected	correct	1	3.087	3.090	386.7		220	nitrolean: rejected: declaration 'ite_taken_branch_bad': declaration type mismatch, value has type (Eq.{1} (Array.{0} Nat) piA piA) but is expected to have type
+nitrolean	perf/let-fold	perf	accept	accepted	correct	0	0.010	0.010	5.1		80	
+nitrolean	perf/let-ladder	perf	accept	accepted	correct	0	0.540	0.540	166.3		80	
+nitrolean	perf/loop-unfolded-once	perf	accept	accepted	correct	0	0.087	0.089	10.5		80	
+nitrolean	perf/loop-unfolded-once-bad	perf	reject	rejected	correct	1	0.682	0.684	9.7		240	nitrolean: rejected: declaration 'loop_unfolded_once_bad': declaration type mismatch, value has type ((w : Nat) → ((g : ((a._@._internal._hyg.0 : Nat) → ((x._@.
+nitrolean	perf/magma-list-deep-n21	perf	accept	accepted	correct	0	1.320	1.321	152.7		140	
+nitrolean	perf/magma-list-deep-n36	perf	accept	accepted	correct	0	33.333	33.332	1397.4		720	
+nitrolean	perf/magma-list-pair-n21	perf	accept	accepted	correct	0	16.740	16.739	2286.6		480	
+nitrolean	perf/magma-list-pair-n7	perf	accept	accepted	correct	0	0.963	0.963	191.9		120	
+nitrolean	perf/magma-string-n4	perf	accept	accepted	correct	0	0.723	0.744	29.9		140	
+nitrolean	perf/magma-string-pair-n9	perf	accept	accepted	correct	0	3.113	3.134	302.9		240	
+nitrolean	perf/proj-app-lazy-delta	perf	accept	accepted	correct	0	1.460	1.460	307.1		120	
+nitrolean	perf/proj-applied-struct	perf	accept	accepted	correct	0	8.368	8.367	531.4		460	
+nitrolean	perf/proj-applied-struct-arg-bad	perf	reject	rejected	correct	1	2.747	2.747	512.9		240	nitrolean: rejected: declaration 'proj_applied_struct_arg_bad_1': declaration type mismatch, value has type ((c : Nat) → ((x : Nat) → (Eq.{1} Nat (S.fn (gC' slo
+nitrolean	perf/proj-applied-struct-bad	perf	reject	rejected	correct	1	2.759	2.758	512.4		260	nitrolean: rejected: declaration 'proj_applied_struct_bad': declaration type mismatch, value has type ((c : Nat) → ((x : Nat) → (Eq.{1} Nat (HAdd.hAdd.{0, 0, 0}
+nitrolean	perf/proj-cheap-struct	perf	accept	accepted	correct	0	0.005	0.005	4.8		80	
+nitrolean	perf/proj-lazy-struct	perf	accept	accepted	correct	0	0.004	0.004	4.8		80	
+nitrolean	perf/proj-stuck-struct	perf	accept	accepted	correct	0	0.004	0.004	4.9		80	
+nitrolean	perf/prop-struct-projections	perf	accept	accepted	correct	0	0.020	0.020	5.3		80	
+nitrolean	perf/refute-cheap-first	perf	reject	rejected	correct	1	0.004	0.004	4.8		80	nitrolean: rejected: declaration 'kernel_refute_cheap_first': declaration type mismatch, value has type (Eq.{1} (Prod.{0, 0} Bool N) (Prod.mk.{0, 0} Bool N Bool
+nitrolean	perf/refute-cheap-last	perf	reject	rejected	correct	1	0.047	0.046	4.9		80	nitrolean: rejected: declaration 'kernel_refute_cheap_last': declaration type mismatch, value has type (Eq.{1} (Prod.{0, 0} N Bool) (Prod.mk.{0, 0} N Bool (coun
+nitrolean	perf/repeated-subproblem	perf	accept	accepted	correct	0	0.004	0.004	4.8		80	
+nitrolean	perf/shared-subterm	perf	accept	accepted	correct	0	0.010	0.010	5.6		80	
+nitrolean	perf/shift-cascade	perf	accept	accepted	correct	0	0.005	0.005	4.9		80	
+nitrolean	perf/short-circuit-and	perf	accept	accepted	correct	0	7.883	7.887	359.8		440	
+nitrolean	perf/short-circuit-and-bad	perf	reject	rejected	correct	1	2.646	2.650	359.9		240	nitrolean: rejected: declaration 'short_circuit_and_bad': declaration type mismatch, value has type ((p : Nat) → ((q : Nat) → (Eq.{1} Bool (Bool.and Bool.true (
+nitrolean	perf/unfold-before-literal	perf	accept	accepted	correct	0	8.113	8.111	531.5		480	
+nitrolean	perf/unfold-before-literal-bad	perf	reject	rejected	correct	1	2.794	2.793	511.1		260	nitrolean: rejected: declaration 'unfold_before_literal_bad': declaration type mismatch, value has type (Eq.{1} Nat (HAdd.hAdd.{0, 0, 0} Nat Nat Nat (instHAdd.{
+nitrolean	perf/unfold-before-literal-fallback	perf	accept	accepted	correct	0	8.080	8.078	531.8		540	
+nitrolean	perf/unroll-versus-evaluate	perf	accept	accepted	correct	0	0.004	0.004	5.0		80	
+nitrolean	tutorial/001_basicDef	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/002_badDef	tutorial	reject	rejected	correct	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'badDef': declaration type mismatch, value has type Sort 2 but is expected to have type Prop
+nitrolean	tutorial/003_arrowType	tutorial	accept	accepted	correct	0	0.003	0.002	4.8			
+nitrolean	tutorial/004_dependentType	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/005_constType	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/006_betaReduction	tutorial	accept	accepted	correct	0	0.003	0.003	5.0			
+nitrolean	tutorial/007_betaReduction2	tutorial	accept	accepted	correct	0	0.002	0.002	4.8			
+nitrolean	tutorial/008_forallSortWhnf	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/009_forallSortBad	tutorial	reject	rejected	correct	1	0.003	0.003	5.0			nitrolean: rejected: declaration 'forallSortBad': type expected, got x
+nitrolean	tutorial/010_nonTypeType	tutorial	reject	rejected	correct	1	0.004	0.004	4.8			nitrolean: rejected: declaration 'nonTypeType': type expected, got ((a._@._internal._hyg.0 : Sort 1) → ((a._@._internal._hyg.0 : Sort 1) → Sort 1))
+nitrolean	tutorial/011_nonTypeAxiom	tutorial	reject	rejected	correct	1	0.004	0.004	4.8			nitrolean: rejected: declaration 'nonTypeAxiom': type expected, got ((a._@._internal._hyg.0 : Sort 1) → ((a._@._internal._hyg.0 : Sort 1) → Sort 1))
+nitrolean	tutorial/012_nonPropThm	tutorial	reject	rejected	correct	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'nonPropThm': theorem type is not Prop: Prop
+nitrolean	tutorial/013_thmProof	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/014_selfProof	tutorial	reject	rejected	correct	1	0.002	0.002	6.8			nitrolean: rejected: declaration 'selfProof': unknown constant 'selfProof'
+nitrolean	tutorial/015_levelComp1	tutorial	accept	accepted	correct	0	0.004	0.004	7.1			
+nitrolean	tutorial/016_levelComp2	tutorial	accept	accepted	correct	0	0.003	0.004	5.1			
+nitrolean	tutorial/017_levelComp3	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/018_levelParams	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/019_tut06_bad01	tutorial	reject	rejected	correct	1	0.004	0.004	4.7			nitrolean: rejected: declaration 'tut06_bad01': failed to add declaration to environment, duplicate universe level parameter: 'u'
+nitrolean	tutorial/020_levelComp4	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/021_levelComp5	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/022_imax1	tutorial	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	tutorial/023_imax2	tutorial	accept	accepted	correct	0	0.002	0.002	4.8			
+nitrolean	tutorial/024_levelMaxComm	tutorial	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	tutorial/025_levelMaxAssoc	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/026_levelMaxIdem	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/027_levelMaxAbsorb	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/028_inferVar	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/029_defEqLambda	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/030_peano1	tutorial	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	tutorial/031_peano2	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/032_peano3	tutorial	accept	accepted	correct	0	0.003	0.003	5.0			
+nitrolean	tutorial/033_letType	tutorial	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	tutorial/034_letTypeDep	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/035_letRed	tutorial	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	tutorial/036_empty	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/037_boolType	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/038_twoBool	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/039_andType	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/040_prodType	tutorial	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	tutorial/041_pprodType	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/042_pUnitType	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/043_eqType	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/044_natDef	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/045_rbTreeDef	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/046_inductBadNonSort	tutorial	reject	rejected	correct	1	0.002	0.002	4.8			nitrolean: rejected: declaration 'inductBadNonSort': missing recursor 'inductBadNonSort.rec'
+nitrolean	tutorial/047_inductBadNonSort2	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'inductBadNonSort2': missing recursor 'inductBadNonSort2.rec'
+nitrolean	tutorial/048_inductLevelParam	tutorial	reject	rejected	correct	1	0.002	0.003	4.8			nitrolean: rejected: declaration 'inductLevelParam': missing recursor 'inductLevelParam.rec'
+nitrolean	tutorial/049_inductTooFewParams	tutorial	reject	rejected	correct	1	0.003	0.003	6.9			nitrolean: rejected: declaration 'inductTooFewParams': missing recursor 'inductTooFewParams.rec'
+nitrolean	tutorial/050_inductWrongCtorParams	tutorial	reject	rejected	correct	1	0.002	0.002	4.8			nitrolean: rejected: declaration 'inductWrongCtorParams': invalid occurrence of datatype 'inductWrongCtorParams' being declared in 'inductWrongCtorParams.mk': i
+nitrolean	tutorial/051_inductWrongCtorResParams	tutorial	reject	rejected	correct	1	0.004	0.004	4.8			nitrolean: rejected: declaration 'inductWrongCtorResParams': invalid occurrence of datatype 'inductWrongCtorResParams' being declared in 'inductWrongCtorResPara
+nitrolean	tutorial/052_inductWrongCtorResLevel	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'inductWrongCtorResLevel': invalid occurrence of datatype 'inductWrongCtorResLevel' being declared in 'inductWrongCtorResLevel.
+nitrolean	tutorial/053_inductInIndex	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'inductInIndex': invalid return type for 'inductInIndex.mk'
+nitrolean	tutorial/054_indNeg	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'indNeg': arg #1 of 'indNeg.mk' has a non positive occurrence of the datatypes being declared
+nitrolean	tutorial/055_reduceCtorParam.mk	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/056_reduceCtorType.mk	tutorial	reject	rejected	correct	1	0.002	0.002	4.8			nitrolean: rejected: declaration 'reduceCtorType': invalid return type for 'reduceCtorType.mk'
+nitrolean	tutorial/057_indNegReducible	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'indNegReducible': arg #1 of 'indNegReducible.mk' has a non positive occurrence of the datatypes being declared
+nitrolean	tutorial/058_predWithTypeField	tutorial	accept	accepted	correct	0	0.004	0.004	4.9			
+nitrolean	tutorial/059_typeWithTypeField	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/060_typeWithTypeFieldPoly	tutorial	accept	accepted	correct	0	0.003	0.003	5.1			
+nitrolean	tutorial/061_typeWithTooHighTypeField.mk	tutorial	reject	rejected	correct	1	0.002	0.002	4.8			nitrolean: rejected: declaration 'typeWithTooHighTypeField': universe level of type_of(arg #1) of 'typeWithTooHighTypeField.mk' is too big for the corresponding
+nitrolean	tutorial/062_emptyRec	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/063_boolRec	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/064_twoBoolRec	tutorial	accept	accepted	correct	0	0.003	0.003	5.0			
+nitrolean	tutorial/065_andRec	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/066_prodRec	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/067_pprodRec	tutorial	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	tutorial/068_punitRec	tutorial	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	tutorial/069_eqRec	tutorial	accept	accepted	correct	0	0.004	0.004	4.9			
+nitrolean	tutorial/070_nRec	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/071_rbTreeRef	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/072_boolPropRec	tutorial	accept	accepted	correct	0	0.004	0.004	7.0			
+nitrolean	tutorial/073_BogusRecursor	tutorial	reject	rejected	correct	1	0.004	0.004	5.0			nitrolean: rejected: declaration 'BogusRecursor': the recursor's universe parameters do not match the derived ones (large elimination)
+nitrolean	tutorial/074_existsRec	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/075_typeSingletonRecReduction	tutorial	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	tutorial/076_sortElimPropRec	tutorial	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	tutorial/077_sortElimProp2Rec	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/078_boolRecEqns	tutorial	accept	accepted	correct	0	0.003	0.003	5.1			
+nitrolean	tutorial/079_prodRecEqns	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/080_nRecReduction	tutorial	accept	accepted	correct	0	0.004	0.003	4.8			
+nitrolean	tutorial/081_listRecReduction	tutorial	accept	accepted	correct	0	0.004	0.003	4.8			
+nitrolean	tutorial/082_RBTree.id_spec	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/083_And.right	tutorial	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	tutorial/084_Prod.snd	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/085_PProd.snd	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/086_PSigma.snd	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/087_projOutOfRange	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'projOutOfRange': invalid projection z.And#3
+nitrolean	tutorial/088_projNotStruct	tutorial	reject	rejected	correct	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'projNotStruct': invalid projection x.N#1
+nitrolean	tutorial/089_projProp1	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/090_projProp2	tutorial	reject	rejected	correct	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'projProp2': invalid projection x.PropStructure#2
+nitrolean	tutorial/091_projProp3	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/092_projProp4	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'projProp4': invalid projection x.PropStructure#4
+nitrolean	tutorial/093_projProp5	tutorial	reject	rejected	correct	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'projProp5': invalid projection x.PropStructure#4
+nitrolean	tutorial/094_projProp6	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'projProp6': invalid projection x.PropStructure#6
+nitrolean	tutorial/095_projDataIndexRec	tutorial	accept	accepted	correct	0	0.004	0.004	5.0			
+nitrolean	tutorial/096_projIndexData	tutorial	reject	rejected	correct	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'projIndexData': invalid projection x.PropStructure#1
+nitrolean	tutorial/097_projIndexData2	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'projIndexData2': invalid projection x.PropStructure#2
+nitrolean	tutorial/098_projRed	tutorial	accept	accepted	correct	0	0.004	0.004	4.8			
+nitrolean	tutorial/099_ruleK	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/100_ruleKbad	tutorial	reject	rejected	correct	1	0.003	0.003	6.8			nitrolean: rejected: declaration 'ruleKbad': declaration type mismatch, value has type ((x._@.Tutorial.#._hygCtx._hyg.27 : (Eq.{1} Bool Bool.true Bool.
+nitrolean	tutorial/101_ruleKAcc	tutorial	reject	rejected	correct	1	0.002	0.002	4.8			nitrolean: rejected: declaration 'ruleKAcc': declaration type mismatch, value has type ((α : Sort u) → ((p : ((a._@._internal._hyg.0 : α) → ((a._@._internal._hy
+nitrolean	tutorial/102_aNatLit	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/103_natLitEq	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/104_proofIrrelevance	tutorial	accept	accepted	correct	0	0.002	0.002	4.8			
+nitrolean	tutorial/105_proofIrrelevanceBad	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'proofIrrelevanceBad': declaration type mismatch, value has type ((p : Sort 1) → ((h1 : p) → ((h2 : p) → (Eq.{1} p h1 h1)))) bu
+nitrolean	tutorial/106_proofIrrelevanceWhnf	tutorial	accept	accepted	correct	0	0.002	0.002	5.0			
+nitrolean	tutorial/107_proofIrrelevanceUnderBinder	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/108_unitEta1	tutorial	accept	accepted	correct	0	0.003	0.002	4.8			
+nitrolean	tutorial/109_unitEta2	tutorial	accept	accepted	correct	0	0.002	0.002	4.8			
+nitrolean	tutorial/110_unitEta3	tutorial	accept	accepted	correct	0	0.002	0.002	4.8			
+nitrolean	tutorial/111_indexedUnitEta	tutorial	reject	rejected	correct	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'indexedUnitEta': declaration type mismatch, value has type ((x : (IndexedUnit Bool.true)) → ((y : (IndexedUnit Bool.true)) → (
+nitrolean	tutorial/112_structEta	tutorial	accept	accepted	correct	0	0.003	0.003	4.9			
+nitrolean	tutorial/113_indexedStructEta	tutorial	reject	rejected	correct	1	0.003	0.003	5.0			nitrolean: rejected: declaration 'indexedStructEta': declaration type mismatch, value has type ((a : (IndexedSingleton Bool.true)) → (Eq.{1} (IndexedSingleton B
+nitrolean	tutorial/114_funEta	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/115_funEtaDep	tutorial	accept	accepted	correct	0	0.002	0.002	4.8			
+nitrolean	tutorial/116_funEtaBad	tutorial	reject	rejected	correct	1	0.003	0.002	4.8			nitrolean: rejected: declaration 'funEtaBad': declaration type mismatch, value has type ((x._@.Tutorial.#._hygCtx._hyg.28 : Sort 1) → ((x._@.Tutorial.4
+nitrolean	tutorial/117_reflOccLeft	tutorial	reject	rejected	correct	1	0.002	0.002	4.8			nitrolean: rejected: declaration 'reflOccLeft': arg #1 of 'reflOccLeft.mk' has a non positive occurrence of the datatypes being declared
+nitrolean	tutorial/118_reflOccInIndex	tutorial	reject	rejected	correct	1	0.004	0.004	4.8			nitrolean: rejected: declaration 'reflOccInIndex': application type mismatch: argument x has type Nat but is expected to have type Sort 1
+nitrolean	tutorial/119_reduceCtorParamRefl.mk	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/120_reduceCtorParamRefl2.mk	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/121_rTreeRec	tutorial	accept	accepted	correct	0	0.003	0.003	5.0			
+nitrolean	tutorial/122_rtreeRecReduction	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/123_accRecType	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/124_accRecReduction	tutorial	accept	accepted	correct	0	0.002	0.002	4.9			
+nitrolean	tutorial/125_accRecNoEta	tutorial	reject	rejected	correct	1	0.003	0.002	5.1			nitrolean: rejected: declaration 'accRecNoEta': declaration type mismatch, value has type ((α : Sort 1) → ((r : ((a._@._internal._hyg.0 : α) → ((a._@._internal.
+nitrolean	tutorial/126_quotMkType	tutorial	accept	accepted	correct	0	0.003	0.003	5.1			
+nitrolean	tutorial/127_quotIndType	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/128_quotLiftType	tutorial	accept	accepted	correct	0	0.003	0.002	4.9			
+nitrolean	tutorial/129_quotSoundType	tutorial	accept	accepted	correct	0	0.002	0.002	4.8			
+nitrolean	tutorial/130_quotLiftReduction	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/131_quotIndReduction	tutorial	accept	accepted	correct	0	0.003	0.003	4.8			
+nitrolean	tutorial/132_dup_defs	tutorial	reject	rejected	correct	1	0.003	0.003	6.8			nitrolean: rejected: $IN: line 7: constant dup_defs is decla
+nitrolean	tutorial/133_dup_ind_def	tutorial	reject	rejected	correct	1	0.002	0.002	4.8			nitrolean: rejected: $IN: line 27: constant dup_ind_def i
+nitrolean	tutorial/134_dup_ctor_def	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: $IN: line 27: constant dup_ctor_def
+nitrolean	tutorial/135_dup_rec_def	tutorial	reject	rejected	correct	1	0.003	0.002	4.8			nitrolean: rejected: $IN: line 27: constant dup_rec_def.r
+nitrolean	tutorial/136_misnamed_rec_user	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'misnamed_rec': missing recursor 'misnamed_rec.rec'
+nitrolean	tutorial/137_dup_rec_def2	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: declaration 'dup_rec_def2': the recursor's universe parameters do not match the derived ones (large elimination)
+nitrolean	tutorial/138_dup_ctor_rec	tutorial	reject	rejected	correct	1	0.003	0.003	4.8			nitrolean: rejected: $IN: line 24: constant dup_ctor_rec
+nitrolean	tutorial/139_DupConCon	tutorial	reject	rejected	correct	1	0.004	0.003	4.8			nitrolean: rejected: $IN: line 34: constant dup_ind_con_con
+nitrolean	tutorial/140_falseFromUnsafe	tutorial	reject	rejected	correct	1	0.002	0.002	4.8			nitrolean: rejected: declaration 'falseFromUnsafe': invalid declaration, it uses unsafe declaration 'unsafeLoop'
+nitrolean	tutorial/141_falseFromPartial	tutorial	reject	rejected	correct	1	0.003	0.003	4.9			nitrolean: rejected: declaration 'falseFromPartial': invalid declaration, safe declaration must not contain partial declaration 'partialLoop'
+official	bugs/closure-level-subst	bugs	reject	rejected	correct	1	0.044	0.044	110.1			
+official	bugs/constlevels	bugs	reject	rejected	correct	1	0.043	0.042	108.9			
+official	bugs/ctor-num-fields	bugs	reject	rejected	correct	1	0.047	0.047	110.5			
+official	bugs/eta-ctor-alias	bugs	reject	rejected	correct	1	0.042	0.042	110.5			
+official	bugs/k-rec-conv	bugs	reject	rejected	correct	1	0.042	0.042	109.9			
+official	bugs/large-elim-param	bugs	reject	rejected	correct	1	0.043	0.043	108.9			
+official	bugs/large-elim-prop-bool	bugs	reject	rejected	correct	1	0.030	0.030	108.9			
+official	bugs/level-imax-leq	bugs	reject	rejected	correct	1	0.030	0.030	109.7			
+official	bugs/level-imax-normalization	bugs	reject	rejected	correct	1	0.042	0.042	111.3			
+official	bugs/loose-bvar-value	bugs	reject	rejected	correct	1	0.041	0.041	109.1			
+official	bugs/nat-rec-k-lie	bugs	reject	rejected	correct	1	0.032	0.032	110.3			
+official	bugs/nat-rec-rules	bugs	reject	rejected	correct	1	0.033	0.033	110.7			
+official	bugs/nat-shift-huge	bugs	accept	accepted	correct	0	0.067	0.067	110.5			
+official	bugs/nested-name-capture	bugs	reject	rejected	correct	1	0.043	0.043	110.3			
+official	bugs/nested-rec-rule-nfields	bugs	reject	rejected	correct	1	0.045	0.045	110.5			
+official	bugs/nested-unused-param	bugs	reject	rejected	correct	1	0.033	0.033	111.8			
+official	bugs/open-term-cache-context	bugs	reject	rejected	correct	1	0.042	0.042	110.1			
+official	bugs/orphan-rec	bugs	reject	rejected	correct	1	0.042	0.042	109.0			
+official	bugs/pi-closure-context	bugs	reject	rejected	correct	1	0.043	0.043	110.2			
+official	bugs/proj-non-structure	bugs	reject	rejected	correct	1	0.031	0.031	110.1			
+official	bugs/proj-of-imax-prop	bugs	reject	rejected	correct	1	0.044	0.044	110.1			
+official	bugs/proj-of-stuck-prop	bugs	reject	rejected	correct	1	0.042	0.042	110.4			
+official	bugs/proj-of-subst-prop	bugs	reject	rejected	correct	1	0.063	0.063	110.3			
+official	bugs/quot-bad-type	bugs	reject	rejected	correct	1	0.043	0.043	110.1			
+official	bugs/rec-k-lie	bugs	reject	rejected	correct	1	0.043	0.043	110.1			
+official	bugs/rec-missing-ih	bugs	reject	rejected	correct	1	0.054	0.054	110.8			
+official	bugs/rec-of-subst-prop	bugs	reject	rejected	correct	1	0.063	0.063	110.1			
+official	bugs/rec-rule-proof-irrel	bugs	reject	rejected	correct	1	0.044	0.044	110.5			
+official	bugs/rec-rule-proof-irrel-nested	bugs	reject	rejected	correct	1	0.033	0.033	110.5			
+official	bugs/rec-rule-wrong-arg	bugs	reject	rejected	correct	1	0.044	0.044	112.4			
+official	bugs/rec-type-proof-irrel	bugs	reject	rejected	correct	1	0.033	0.033	110.4			
+official	bugs/str-lit-utf8	bugs	accept	accepted	correct	0	0.075	0.074	112.6			
+official	bugs/str-lit-utf8-bad	bugs	reject	rejected	correct	1	0.091	0.091	114.3			
+official	bugs/unit-rec-rule	bugs	reject	rejected	correct	1	0.043	0.042	110.3			
+official	corner-cases/alg-conv-trans-acc	corner-cases	either	rejected	either	1	0.037	0.037	110.5			
+official	corner-cases/alg-conv-trans-acc-left	corner-cases	either	accepted	either	0	0.033	0.032	108.6			
+official	corner-cases/alg-conv-trans-acc-right	corner-cases	either	accepted	either	0	0.036	0.036	108.6			
+official	corner-cases/alg-conv-trans-quot	corner-cases	either	rejected	either	1	0.031	0.031	110.5			
+official	corner-cases/alg-conv-trans-quot-left	corner-cases	either	rejected	either	1	0.043	0.042	110.3			
+official	corner-cases/alg-conv-trans-quot-left-def	corner-cases	either	accepted	either	0	0.030	0.030	110.6			
+official	corner-cases/alg-conv-trans-quot-right	corner-cases	either	accepted	either	0	0.041	0.040	108.6			
+official	corner-cases/eta-ctor	corner-cases	either	rejected	either	1	0.043	0.043	110.3			
+official	corner-cases/eta-rec-struct	corner-cases	either	rejected	either	1	0.044	0.043	110.4			
+official	corner-cases/eta-rule-k	corner-cases	either	rejected	either	1	0.032	0.031	110.5			
+official	corner-cases/eta-struct-major-and	corner-cases	either	rejected	either	1	0.043	0.043	110.1			
+official	corner-cases/eta-struct-major-and-no-whnf	corner-cases	either	timeout	error	-9	120.002	0.001	19.9		120	
+official	corner-cases/eta-struct-major-no-whnf	corner-cases	either	timeout	error	-9	120.002	0.001	21.9		120	
+official	corner-cases/eta-unit-like-nested	corner-cases	either	rejected	either	1	0.043	0.043	110.3			
+official	corner-cases/eta-unit-like-pi	corner-cases	either	rejected	either	1	0.044	0.044	110.5			
+official	corner-cases/eta-unit-like-proof-field	corner-cases	either	rejected	either	1	0.032	0.032	110.3			
+official	corner-cases/eta-unit-like-struct	corner-cases	either	rejected	either	1	0.031	0.031	112.2			
+official	corner-cases/imax-nested-absorption	corner-cases	either	rejected	either	1	0.031	0.031	109.5			
+official	corner-cases/imax-right-successor	corner-cases	either	rejected	either	1	0.031	0.031	109.5			
+official	corner-cases/large-elim-maybe-prop	corner-cases	either	rejected	either	1	0.030	0.030	108.9			
+official	corner-cases/let-value-type-mismatch	corner-cases	either	rejected	either	1	0.030	0.030	108.8			
+official	corner-cases/nested-nonuniform-param	corner-cases	either	rejected	either	1	0.041	0.041	109.2			
+official	corner-cases/nested-redex-aux	corner-cases	either	accepted	either	0	0.046	0.046	108.6			
+official	corner-cases/positivity-whnf	corner-cases	either	rejected	either	1	0.030	0.030	108.9			
+official	corner-cases/proj-maybe-prop	corner-cases	either	accepted	either	0	0.030	0.030	108.6			
+official	corner-cases/proj-maybe-prop-past	corner-cases	either	accepted	either	0	0.042	0.042	108.6			
+official	corner-cases/proof-param-ok	corner-cases	accept	accepted	correct	0	0.043	0.043	108.6			
+official	corner-cases/proof-param-swap	corner-cases	either	rejected	either	1	0.043	0.043	108.6			
+official	corner-cases/subject-reduction-redex	corner-cases	either	accepted	either	0	0.037	0.037	108.6			
+official	corner-cases/subject-reduction-reduct	corner-cases	either	rejected	either	1	0.047	0.047	110.3			
+official	corner-cases/vanishing-occurrence	corner-cases	either	accepted	either	0	0.044	0.044	108.6			
+official	init-prelude	real-world	accept	accepted	correct	0	0.209	0.209	116.7		80	
+official	other/extra-rec	other	reject	rejected	correct	1	0.030	0.030	109.0			
+official	other/inductive-undeclared-universe	other	reject	rejected	correct	1	0.042	0.041	108.8			
+official	other/level-index-out-of-order	other	accept	accepted	correct	0	0.030	0.030	108.4			
+official	other/nat-lit-add	other	accept	accepted	correct	0	0.032	0.032	108.6			
+official	other/nat-lit-add-bad	other	reject	rejected	correct	1	0.045	0.044	110.5			
+official	other/nat-lit-ble	other	accept	accepted	correct	0	0.044	0.044	108.8			
+official	other/nat-lit-sub	other	accept	accepted	correct	0	0.033	0.033	108.6			
+official	other/orphan-ctor	other	reject	rejected	correct	1	0.040	0.040	109.0			
+official	other/proj-of-prop	other	reject	rejected	correct	1	0.030	0.030	112.2			
+official	other/sparse-name-index	other	accept	accepted	correct	0	0.043	0.043	108.4			
+official	perf/app-lam	perf	accept	accepted	correct	0	2.475	2.474	1474.1		140	
+official	perf/args-before-unfold	perf	accept	accepted	correct	0	0.049	0.049	109.0		80	
+official	perf/beta-ladder	perf	accept	accepted	correct	0	0.822	0.821	542.9		80	
+official	perf/church-numerals	perf	accept	accepted	correct	0	0.059	0.058	121.5		80	
+official	perf/discarded-argument	perf	accept	accepted	correct	0	0.080	0.079	108.6		80	
+official	perf/discarded-argument-match	perf	accept	accepted	correct	0	0.090	0.090	110.7		80	
+official	perf/folded-constant-first	perf	accept	accepted	correct	0	0.053	0.053	111.7		80	
+official	perf/folded-constant-last	perf	accept	accepted	correct	0	0.042	0.041	113.6		80	
+official	perf/fueled-chain	perf	accept	accepted	correct	0	0.102	0.101	118.4		80	
+official	perf/grind-ring-5	perf	accept	accepted	correct	0	1.249	1.249	270.7		100	
+official	perf/identical-nesting	perf	accept	accepted	correct	0	0.030	0.030	108.6		80	
+official	perf/irrelevance-before-evaluation	perf	accept	accepted	correct	0	0.042	0.042	108.6		80	
+official	perf/irrelevance-refutes	perf	accept	accepted	correct	0	0.031	0.031	108.6		80	
+official	perf/ite-taken-branch	perf	accept	accepted	correct	0	14.048	14.042	1721.3		460	
+official	perf/ite-taken-branch-bad	perf	reject	rejected	correct	1	4.864	4.863	1708.6		220	
+official	perf/let-fold	perf	accept	accepted	correct	0	0.070	0.070	110.6		80	
+official	perf/let-ladder	perf	accept	accepted	correct	0	0.515	0.515	346.7		80	
+official	perf/loop-unfolded-once	perf	accept	accepted	correct	0	0.283	0.283	120.5		80	
+official	perf/loop-unfolded-once-bad	perf	reject	rejected	correct	1	6.398	6.396	118.4		240	
+official	perf/magma-list-deep-n21	perf	accept	accepted	correct	0	1.783	1.783	704.8		140	
+official	perf/magma-list-deep-n36	perf	accept	accepted	correct	0	34.606	34.595	7996.7		720	
+official	perf/magma-list-pair-n21	perf	accept	accepted	correct	0	15.909	15.905	4079.0		480	
+official	perf/magma-list-pair-n7	perf	accept	accepted	correct	0	1.327	1.317	470.7		120	
+official	perf/magma-string-n4	perf	accept	accepted	correct	0	1.837	1.836	164.3		140	
+official	perf/magma-string-pair-n9	perf	accept	accepted	correct	0	4.986	4.983	1024.9		240	
+official	perf/proj-app-lazy-delta	perf	accept	accepted	correct	0	2.041	2.040	622.5		120	
+official	perf/proj-applied-struct	perf	accept	accepted	correct	0	15.732	15.728	1436.4		460	
+official	perf/proj-applied-struct-arg-bad	perf	reject	rejected	correct	1	5.337	5.336	1437.1		240	
+official	perf/proj-applied-struct-bad	perf	reject	rejected	correct	1	5.604	5.602	1438.9		260	
+official	perf/proj-cheap-struct	perf	accept	accepted	correct	0	0.048	0.047	108.6		80	
+official	perf/proj-lazy-struct	perf	accept	accepted	correct	0	0.045	0.045	108.6		80	
+official	perf/proj-stuck-struct	perf	accept	accepted	correct	0	0.034	0.034	108.6		80	
+official	perf/prop-struct-projections	perf	accept	accepted	correct	0	0.086	0.086	112.6		80	
+official	perf/refute-cheap-first	perf	reject	rejected	correct	1	0.052	0.052	110.5		80	
+official	perf/refute-cheap-last	perf	reject	rejected	correct	1	0.119	0.119	110.5		80	
+official	perf/repeated-subproblem	perf	accept	accepted	correct	0	0.046	0.046	108.6		80	
+official	perf/shared-subterm	perf	accept	accepted	correct	0	0.058	0.058	115.8		80	
+official	perf/shift-cascade	perf	accept	accepted	correct	0	0.058	0.058	110.6		80	
+official	perf/short-circuit-and	perf	accept	accepted	correct	0	13.995	13.989	1582.8		440	
+official	perf/short-circuit-and-bad	perf	reject	rejected	correct	1	4.688	4.686	1585.0		240	
+official	perf/unfold-before-literal	perf	accept	accepted	correct	0	16.316	16.311	1436.8		480	
+official	perf/unfold-before-literal-bad	perf	reject	rejected	correct	1	5.607	5.606	1436.8		260	
+official	perf/unfold-before-literal-fallback	perf	accept	accepted	correct	0	16.579	16.575	1436.4		540	
+official	perf/unroll-versus-evaluate	perf	accept	accepted	correct	0	0.034	0.034	108.9		80	
+official	tutorial/001_basicDef	tutorial	accept	accepted	correct	0	0.031	0.031	108.4			
+official	tutorial/002_badDef	tutorial	reject	rejected	correct	1	0.031	0.031	109.5			
+official	tutorial/003_arrowType	tutorial	accept	accepted	correct	0	0.041	0.041	108.5			
+official	tutorial/004_dependentType	tutorial	accept	accepted	correct	0	0.044	0.043	108.6			
+official	tutorial/005_constType	tutorial	accept	accepted	correct	0	0.042	0.042	108.6			
+official	tutorial/006_betaReduction	tutorial	accept	accepted	correct	0	0.044	0.044	108.6			
+official	tutorial/007_betaReduction2	tutorial	accept	accepted	correct	0	0.042	0.042	108.6			
+official	tutorial/008_forallSortWhnf	tutorial	accept	accepted	correct	0	0.030	0.030	108.6			
+official	tutorial/009_forallSortBad	tutorial	reject	rejected	correct	1	0.042	0.042	111.5			
+official	tutorial/010_nonTypeType	tutorial	reject	rejected	correct	1	0.043	0.042	110.1			
+official	tutorial/011_nonTypeAxiom	tutorial	reject	rejected	correct	1	0.043	0.043	110.1			
+official	tutorial/012_nonPropThm	tutorial	reject	rejected	correct	1	0.042	0.042	109.5			
+official	tutorial/013_thmProof	tutorial	accept	accepted	correct	0	0.041	0.041	108.4			
+official	tutorial/014_selfProof	tutorial	reject	rejected	correct	1	0.031	0.031	109.0			
+official	tutorial/015_levelComp1	tutorial	accept	accepted	correct	0	0.043	0.043	108.3			
+official	tutorial/016_levelComp2	tutorial	accept	accepted	correct	0	0.044	0.044	108.4			
+official	tutorial/017_levelComp3	tutorial	accept	accepted	correct	0	0.031	0.031	108.4			
+official	tutorial/018_levelParams	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/019_tut06_bad01	tutorial	reject	rejected	correct	1	0.043	0.043	108.6			
+official	tutorial/020_levelComp4	tutorial	accept	accepted	correct	0	0.031	0.031	108.4			
+official	tutorial/021_levelComp5	tutorial	accept	accepted	correct	0	0.043	0.043	108.2			
+official	tutorial/022_imax1	tutorial	accept	accepted	correct	0	0.044	0.044	108.5			
+official	tutorial/023_imax2	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/024_levelMaxComm	tutorial	accept	accepted	correct	0	0.031	0.031	108.4			
+official	tutorial/025_levelMaxAssoc	tutorial	accept	accepted	correct	0	0.042	0.042	108.2			
+official	tutorial/026_levelMaxIdem	tutorial	accept	accepted	correct	0	0.031	0.031	108.4			
+official	tutorial/027_levelMaxAbsorb	tutorial	accept	accepted	correct	0	0.043	0.043	108.3			
+official	tutorial/028_inferVar	tutorial	accept	accepted	correct	0	0.043	0.043	108.6			
+official	tutorial/029_defEqLambda	tutorial	accept	accepted	correct	0	0.044	0.043	108.6			
+official	tutorial/030_peano1	tutorial	accept	accepted	correct	0	0.032	0.032	108.6			
+official	tutorial/031_peano2	tutorial	accept	accepted	correct	0	0.044	0.044	108.7			
+official	tutorial/032_peano3	tutorial	accept	accepted	correct	0	0.044	0.043	108.6			
+official	tutorial/033_letType	tutorial	accept	accepted	correct	0	0.032	0.032	108.6			
+official	tutorial/034_letTypeDep	tutorial	accept	accepted	correct	0	0.044	0.044	108.6			
+official	tutorial/035_letRed	tutorial	accept	accepted	correct	0	0.041	0.041	108.6			
+official	tutorial/036_empty	tutorial	accept	accepted	correct	0	0.044	0.044	108.6			
+official	tutorial/037_boolType	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/038_twoBool	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/039_andType	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/040_prodType	tutorial	accept	accepted	correct	0	0.044	0.044	108.6			
+official	tutorial/041_pprodType	tutorial	accept	accepted	correct	0	0.044	0.044	108.6			
+official	tutorial/042_pUnitType	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/043_eqType	tutorial	accept	accepted	correct	0	0.043	0.043	108.2			
+official	tutorial/044_natDef	tutorial	accept	accepted	correct	0	0.044	0.044	108.6			
+official	tutorial/045_rbTreeDef	tutorial	accept	accepted	correct	0	0.045	0.045	108.6			
+official	tutorial/046_inductBadNonSort	tutorial	reject	rejected	correct	1	0.045	0.044	109.7			
+official	tutorial/047_inductBadNonSort2	tutorial	reject	rejected	correct	1	0.045	0.045	110.1			
+official	tutorial/048_inductLevelParam	tutorial	reject	rejected	correct	1	0.032	0.032	109.0			
+official	tutorial/049_inductTooFewParams	tutorial	reject	rejected	correct	1	0.043	0.043	108.9			
+official	tutorial/050_inductWrongCtorParams	tutorial	reject	rejected	correct	1	0.044	0.044	109.0			
+official	tutorial/051_inductWrongCtorResParams	tutorial	reject	rejected	correct	1	0.044	0.044	108.6			
+official	tutorial/052_inductWrongCtorResLevel	tutorial	reject	rejected	correct	1	0.041	0.041	108.8			
+official	tutorial/053_inductInIndex	tutorial	reject	rejected	correct	1	0.044	0.044	109.0			
+official	tutorial/054_indNeg	tutorial	reject	rejected	correct	1	0.043	0.043	108.8			
+official	tutorial/055_reduceCtorParam.mk	tutorial	accept	accepted	correct	0	0.043	0.042	108.6			
+official	tutorial/056_reduceCtorType.mk	tutorial	reject	rejected	correct	1	0.043	0.043	108.9			
+official	tutorial/057_indNegReducible	tutorial	reject	rejected	correct	1	0.031	0.031	108.9			
+official	tutorial/058_predWithTypeField	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/059_typeWithTypeField	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/060_typeWithTypeFieldPoly	tutorial	accept	accepted	correct	0	0.030	0.030	108.6			
+official	tutorial/061_typeWithTooHighTypeField.mk	tutorial	reject	rejected	correct	1	0.031	0.031	109.0			
+official	tutorial/062_emptyRec	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/063_boolRec	tutorial	accept	accepted	correct	0	0.031	0.031	108.5			
+official	tutorial/064_twoBoolRec	tutorial	accept	accepted	correct	0	0.043	0.042	108.7			
+official	tutorial/065_andRec	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/066_prodRec	tutorial	accept	accepted	correct	0	0.030	0.030	108.6			
+official	tutorial/067_pprodRec	tutorial	accept	accepted	correct	0	0.044	0.043	108.6			
+official	tutorial/068_punitRec	tutorial	accept	accepted	correct	0	0.044	0.043	110.6			
+official	tutorial/069_eqRec	tutorial	accept	accepted	correct	0	0.044	0.044	108.6			
+official	tutorial/070_nRec	tutorial	accept	accepted	correct	0	0.043	0.043	108.2			
+official	tutorial/071_rbTreeRef	tutorial	accept	accepted	correct	0	0.032	0.032	108.6			
+official	tutorial/072_boolPropRec	tutorial	accept	accepted	correct	0	0.042	0.042	108.6			
+official	tutorial/073_BogusRecursor	tutorial	reject	rejected	correct	1	0.031	0.031	109.0			
+official	tutorial/074_existsRec	tutorial	accept	accepted	correct	0	0.043	0.043	108.4			
+official	tutorial/075_typeSingletonRecReduction	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/076_sortElimPropRec	tutorial	accept	accepted	correct	0	0.043	0.042	108.6			
+official	tutorial/077_sortElimProp2Rec	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/078_boolRecEqns	tutorial	accept	accepted	correct	0	0.043	0.043	108.6			
+official	tutorial/079_prodRecEqns	tutorial	accept	accepted	correct	0	0.043	0.043	110.4			
+official	tutorial/080_nRecReduction	tutorial	accept	accepted	correct	0	0.032	0.031	108.6			
+official	tutorial/081_listRecReduction	tutorial	accept	accepted	correct	0	0.032	0.031	110.5			
+official	tutorial/082_RBTree.id_spec	tutorial	accept	accepted	correct	0	0.046	0.046	108.4			
+official	tutorial/083_And.right	tutorial	accept	accepted	correct	0	0.033	0.032	108.6			
+official	tutorial/084_Prod.snd	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/085_PProd.snd	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/086_PSigma.snd	tutorial	accept	accepted	correct	0	0.043	0.043	108.6			
+official	tutorial/087_projOutOfRange	tutorial	reject	rejected	correct	1	0.046	0.045	109.9			
+official	tutorial/088_projNotStruct	tutorial	reject	rejected	correct	1	0.044	0.043	109.9			
+official	tutorial/089_projProp1	tutorial	accept	accepted	correct	0	0.043	0.042	108.4			
+official	tutorial/090_projProp2	tutorial	reject	rejected	correct	1	0.032	0.032	110.1			
+official	tutorial/091_projProp3	tutorial	accept	accepted	correct	0	0.043	0.043	108.4			
+official	tutorial/092_projProp4	tutorial	reject	rejected	correct	1	0.032	0.032	110.1			
+official	tutorial/093_projProp5	tutorial	reject	rejected	correct	1	0.032	0.032	110.1			
+official	tutorial/094_projProp6	tutorial	reject	rejected	correct	1	0.032	0.032	112.0			
+official	tutorial/095_projDataIndexRec	tutorial	accept	accepted	correct	0	0.043	0.043	108.2			
+official	tutorial/096_projIndexData	tutorial	reject	rejected	correct	1	0.033	0.033	109.9			
+official	tutorial/097_projIndexData2	tutorial	reject	rejected	correct	1	0.044	0.044	110.0			
+official	tutorial/098_projRed	tutorial	accept	accepted	correct	0	0.044	0.043	108.2			
+official	tutorial/099_ruleK	tutorial	accept	accepted	correct	0	0.043	0.043	108.5			
+official	tutorial/100_ruleKbad	tutorial	reject	rejected	correct	1	0.033	0.033	110.5			
+official	tutorial/101_ruleKAcc	tutorial	reject	rejected	correct	1	0.045	0.045	110.5			
+official	tutorial/102_aNatLit	tutorial	accept	accepted	correct	0	0.032	0.032	108.6			
+official	tutorial/103_natLitEq	tutorial	accept	accepted	correct	0	0.043	0.043	108.5			
+official	tutorial/104_proofIrrelevance	tutorial	accept	accepted	correct	0	0.044	0.044	108.5			
+official	tutorial/105_proofIrrelevanceBad	tutorial	reject	rejected	correct	1	0.045	0.044	110.3			
+official	tutorial/106_proofIrrelevanceWhnf	tutorial	accept	accepted	correct	0	0.041	0.041	108.6			
+official	tutorial/107_proofIrrelevanceUnderBinder	tutorial	accept	accepted	correct	0	0.043	0.043	108.6			
+official	tutorial/108_unitEta1	tutorial	accept	accepted	correct	0	0.031	0.031	110.5			
+official	tutorial/109_unitEta2	tutorial	accept	accepted	correct	0	0.044	0.043	108.5			
+official	tutorial/110_unitEta3	tutorial	accept	accepted	correct	0	0.045	0.045	108.6			
+official	tutorial/111_indexedUnitEta	tutorial	reject	rejected	correct	1	0.044	0.044	110.4			
+official	tutorial/112_structEta	tutorial	accept	accepted	correct	0	0.043	0.043	108.6			
+official	tutorial/113_indexedStructEta	tutorial	reject	rejected	correct	1	0.045	0.045	110.5			
+official	tutorial/114_funEta	tutorial	accept	accepted	correct	0	0.042	0.042	108.6			
+official	tutorial/115_funEtaDep	tutorial	accept	accepted	correct	0	0.045	0.044	108.6			
+official	tutorial/116_funEtaBad	tutorial	reject	rejected	correct	1	0.046	0.046	110.3			
+official	tutorial/117_reflOccLeft	tutorial	reject	rejected	correct	1	0.032	0.032	108.9			
+official	tutorial/118_reflOccInIndex	tutorial	reject	rejected	correct	1	0.045	0.045	110.1			
+official	tutorial/119_reduceCtorParamRefl.mk	tutorial	accept	accepted	correct	0	0.043	0.043	108.4			
+official	tutorial/120_reduceCtorParamRefl2.mk	tutorial	accept	accepted	correct	0	0.045	0.045	108.6			
+official	tutorial/121_rTreeRec	tutorial	accept	accepted	correct	0	0.045	0.045	108.6			
+official	tutorial/122_rtreeRecReduction	tutorial	accept	accepted	correct	0	0.043	0.043	108.6			
+official	tutorial/123_accRecType	tutorial	accept	accepted	correct	0	0.044	0.044	108.6			
+official	tutorial/124_accRecReduction	tutorial	accept	accepted	correct	0	0.043	0.043	108.5			
+official	tutorial/125_accRecNoEta	tutorial	reject	rejected	correct	1	0.046	0.046	110.5			
+official	tutorial/126_quotMkType	tutorial	accept	accepted	correct	0	0.044	0.044	110.7			
+official	tutorial/127_quotIndType	tutorial	accept	accepted	correct	0	0.031	0.031	108.6			
+official	tutorial/128_quotLiftType	tutorial	accept	accepted	correct	0	0.041	0.041	108.6			
+official	tutorial/129_quotSoundType	tutorial	accept	accepted	correct	0	0.032	0.032	110.5			
+official	tutorial/130_quotLiftReduction	tutorial	accept	accepted	correct	0	0.043	0.043	108.4			
+official	tutorial/131_quotIndReduction	tutorial	accept	accepted	correct	0	0.032	0.032	108.6			
+official	tutorial/132_dup_defs	tutorial	reject	rejected	correct	1	0.042	0.042	108.2			uncaught exception: Duplicate declaration: dup_defs
+official	tutorial/133_dup_ind_def	tutorial	reject	rejected	correct	1	0.041	0.041	108.2			uncaught exception: Duplicate declaration: dup_ind_def
+official	tutorial/134_dup_ctor_def	tutorial	reject	rejected	correct	1	0.030	0.030	108.4			uncaught exception: Duplicate declaration: dup_ctor_def.mk
+official	tutorial/135_dup_rec_def	tutorial	reject	rejected	correct	1	0.043	0.043	108.4			uncaught exception: Duplicate declaration: dup_rec_def.rec
+official	tutorial/136_misnamed_rec_user	tutorial	reject	rejected	correct	1	0.032	0.031	108.9			
+official	tutorial/137_dup_rec_def2	tutorial	reject	rejected	correct	1	0.043	0.043	109.7			
+official	tutorial/138_dup_ctor_rec	tutorial	reject	rejected	correct	1	0.030	0.030	108.4			uncaught exception: Duplicate declaration: dup_ctor_rec.rec
+official	tutorial/139_DupConCon	tutorial	reject	rejected	correct	1	0.043	0.043	108.2			uncaught exception: Duplicate declaration: dup_ind_con_con.mk
+official	tutorial/140_falseFromUnsafe	tutorial	reject	rejected	correct	1	0.044	0.044	109.0			
+official	tutorial/141_falseFromPartial	tutorial	reject	rejected	correct	1	0.032	0.032	109.0			
+gruszka	bugs/closure-level-subst	bugs	reject	rejected	correct	1	0.019	0.024	81.0			
+gruszka	bugs/constlevels	bugs	reject	rejected	correct	1	0.017	0.023	122.9			
+gruszka	bugs/ctor-num-fields	bugs	reject	rejected	correct	1	0.016	0.022	132.9			
+gruszka	bugs/eta-ctor-alias	bugs	reject	rejected	correct	1	0.017	0.022	107.1			
+gruszka	bugs/k-rec-conv	bugs	reject	rejected	correct	1	0.018	0.022	106.9			
+gruszka	bugs/large-elim-param	bugs	reject	rejected	correct	1	0.015	0.019	87.0			
+gruszka	bugs/large-elim-prop-bool	bugs	reject	rejected	correct	1	0.017	0.022	109.1			
+gruszka	bugs/level-imax-leq	bugs	reject	rejected	correct	1	0.015	0.018	72.8			
+gruszka	bugs/level-imax-normalization	bugs	reject	rejected	correct	1	0.017	0.022	91.1			
+gruszka	bugs/loose-bvar-value	bugs	reject	rejected	correct	1	0.017	0.020	71.1			
+gruszka	bugs/nat-rec-k-lie	bugs	reject	rejected	correct	1	0.021	0.025	81.1			
+gruszka	bugs/nat-rec-rules	bugs	reject	rejected	correct	1	0.016	0.020	76.9			
+gruszka	bugs/nat-shift-huge	bugs	accept	accepted	correct	0	0.017	0.025	147.1			
+gruszka	bugs/nested-name-capture	bugs	reject	rejected	correct	1	0.016	0.021	116.9			
+gruszka	bugs/nested-rec-rule-nfields	bugs	reject	rejected	correct	1	0.019	0.023	114.9			
+gruszka	bugs/nested-unused-param	bugs	reject	rejected	correct	1	0.018	0.023	120.9			
+gruszka	bugs/open-term-cache-context	bugs	reject	rejected	correct	1	0.016	0.019	63.0			
+gruszka	bugs/orphan-rec	bugs	reject	rejected	correct	1	0.017	0.020	61.0			
+gruszka	bugs/pi-closure-context	bugs	reject	rejected	correct	1	0.016	0.019	74.9			
+gruszka	bugs/proj-non-structure	bugs	reject	rejected	correct	1	0.018	0.022	93.0			
+gruszka	bugs/proj-of-imax-prop	bugs	reject	rejected	correct	1	0.017	0.021	100.9			
+gruszka	bugs/proj-of-stuck-prop	bugs	reject	rejected	correct	1	0.020	0.027	156.9			
+gruszka	bugs/proj-of-subst-prop	bugs	reject	rejected	correct	1	0.016	0.024	152.9			
+gruszka	bugs/quot-bad-type	bugs	reject	rejected	correct	1	0.016	0.020	83.0			
+gruszka	bugs/rec-k-lie	bugs	reject	rejected	correct	1	0.017	0.021	85.1			
+gruszka	bugs/rec-missing-ih	bugs	reject	rejected	correct	1	0.017	0.025	155.0			
+gruszka	bugs/rec-of-subst-prop	bugs	reject	rejected	correct	1	0.018	0.026	148.9			
+gruszka	bugs/rec-rule-proof-irrel	bugs	reject	rejected	correct	1	0.017	0.022	120.9			
+gruszka	bugs/rec-rule-proof-irrel-nested	bugs	reject	rejected	correct	1	0.017	0.022	128.9			
+gruszka	bugs/rec-rule-wrong-arg	bugs	reject	rejected	correct	1	0.016	0.022	130.9			
+gruszka	bugs/rec-type-proof-irrel	bugs	reject	rejected	correct	1	0.016	0.021	118.9			
+gruszka	bugs/str-lit-utf8	bugs	accept	accepted	correct	0	0.019	0.030	146.9			
+gruszka	bugs/str-lit-utf8-bad	bugs	reject	rejected	correct	1	0.019	0.030	152.9			
+gruszka	bugs/unit-rec-rule	bugs	reject	rejected	correct	1	0.016	0.020	79.0			
+gruszka	corner-cases/alg-conv-trans-acc	corner-cases	either	rejected	either	1	0.016	0.021	138.8			
+gruszka	corner-cases/alg-conv-trans-acc-left	corner-cases	either	accepted	either	0	0.018	0.024	134.8			
+gruszka	corner-cases/alg-conv-trans-acc-right	corner-cases	either	accepted	either	0	0.018	0.024	134.9			
+gruszka	corner-cases/alg-conv-trans-quot	corner-cases	either	rejected	either	1	0.014	0.018	80.9			
+gruszka	corner-cases/alg-conv-trans-quot-left	corner-cases	either	rejected	either	1	0.017	0.021	82.8			
+gruszka	corner-cases/alg-conv-trans-quot-left-def	corner-cases	either	accepted	either	0	0.017	0.021	88.9			
+gruszka	corner-cases/alg-conv-trans-quot-right	corner-cases	either	accepted	either	0	0.015	0.019	83.1			
+gruszka	corner-cases/eta-ctor	corner-cases	either	rejected	either	1	0.017	0.022	100.9			
+gruszka	corner-cases/eta-rec-struct	corner-cases	either	rejected	either	1	0.016	0.021	96.8			
+gruszka	corner-cases/eta-rule-k	corner-cases	either	rejected	either	1	0.015	0.018	85.1			
+gruszka	corner-cases/eta-struct-major-and	corner-cases	either	accepted	either	0	0.018	0.022	114.9			
+gruszka	corner-cases/eta-struct-major-and-no-whnf	corner-cases	either	accepted	either	0	0.016	0.021	110.8		120	
+gruszka	corner-cases/eta-struct-major-no-whnf	corner-cases	either	accepted	either	0	0.016	0.022	122.9		120	
+gruszka	corner-cases/eta-unit-like-nested	corner-cases	either	rejected	either	1	0.016	0.021	103.1			
+gruszka	corner-cases/eta-unit-like-pi	corner-cases	either	rejected	either	1	0.016	0.019	79.0			
+gruszka	corner-cases/eta-unit-like-proof-field	corner-cases	either	rejected	either	1	0.016	0.020	99.0			
+gruszka	corner-cases/eta-unit-like-struct	corner-cases	either	rejected	either	1	0.016	0.020	95.1			
+gruszka	corner-cases/imax-nested-absorption	corner-cases	either	rejected	either	1	0.014	0.017	61.0			
+gruszka	corner-cases/imax-right-successor	corner-cases	either	rejected	either	1	0.016	0.019	59.0			
+gruszka	corner-cases/large-elim-maybe-prop	corner-cases	either	rejected	either	1	0.015	0.018	72.9			
+gruszka	corner-cases/let-value-type-mismatch	corner-cases	either	rejected	either	1	0.018	0.021	53.0			
+gruszka	corner-cases/nested-nonuniform-param	corner-cases	either	accepted	either	0	0.015	0.019	92.9			
+gruszka	corner-cases/nested-redex-aux	corner-cases	either	accepted	either	0	0.017	0.022	112.9			
+gruszka	corner-cases/positivity-whnf	corner-cases	either	rejected	either	1	0.017	0.020	82.9			
+gruszka	corner-cases/proj-maybe-prop	corner-cases	either	accepted	either	0	0.015	0.019	93.1			
+gruszka	corner-cases/proj-maybe-prop-past	corner-cases	either	accepted	either	0	0.016	0.020	95.0			
+gruszka	corner-cases/proof-param-ok	corner-cases	accept	accepted	correct	0	0.017	0.019	63.0			
+gruszka	corner-cases/proof-param-swap	corner-cases	either	rejected	either	1	0.015	0.018	65.1			
+gruszka	corner-cases/subject-reduction-redex	corner-cases	either	accepted	either	0	0.018	0.024	134.9			
+gruszka	corner-cases/subject-reduction-reduct	corner-cases	either	rejected	either	1	0.017	0.023	132.9			
+gruszka	corner-cases/vanishing-occurrence	corner-cases	either	accepted	either	0	0.017	0.021	87.1			
+gruszka	init-prelude	real-world	accept	accepted	correct	0	0.029	0.054	165.3		80	
+gruszka	other/extra-rec	other	reject	rejected	correct	1	0.020	0.024	63.0			
+gruszka	other/inductive-undeclared-universe	other	reject	rejected	correct	1	0.016	0.019	63.0			
+gruszka	other/level-index-out-of-order	other	accept	accepted	correct	0	0.020	0.022	55.0			
+gruszka	other/nat-lit-add	other	accept	accepted	correct	0	0.017	0.023	122.9			
+gruszka	other/nat-lit-add-bad	other	reject	rejected	correct	1	0.016	0.022	126.9			
+gruszka	other/nat-lit-ble	other	accept	accepted	correct	0	0.018	0.023	126.8			
+gruszka	other/nat-lit-sub	other	accept	accepted	correct	0	0.018	0.022	105.0			
+gruszka	other/orphan-ctor	other	reject	rejected	correct	1	0.017	0.020	60.8			
+gruszka	other/proj-of-prop	other	reject	rejected	correct	1	0.017	0.022	90.9			
+gruszka	other/sparse-name-index	other	accept	accepted	correct	0	0.015	0.017	53.0			
+gruszka	perf/app-lam	perf	accept	accepted	correct	0	0.067	0.074	154.2		140	
+gruszka	perf/args-before-unfold	perf	accept	accepted	correct	0	0.016	0.020	91.5		80	
+gruszka	perf/beta-ladder	perf	accept	accepted	correct	0	0.036	0.042	125.6		80	
+gruszka	perf/church-numerals	perf	accept	accepted	correct	0	0.021	0.026	98.8		80	
+gruszka	perf/discarded-argument	perf	accept	accepted	correct	0	0.016	0.022	103.2		80	
+gruszka	perf/discarded-argument-match	perf	accept	accepted	correct	0	0.015	0.020	121.0		80	
+gruszka	perf/folded-constant-first	perf	accept	accepted	correct	0	0.018	0.022	91.9		80	
+gruszka	perf/folded-constant-last	perf	accept	accepted	correct	0	0.019	0.024	116.3		80	
+gruszka	perf/fueled-chain	perf	accept	accepted	correct	0	0.026	0.035	157.1		80	
+gruszka	perf/grind-ring-5	perf	accept	accepted	correct	0	0.151	0.228	288.5		100	
+gruszka	perf/identical-nesting	perf	accept	accepted	correct	0	0.015	0.019	95.1		80	
+gruszka	perf/irrelevance-before-evaluation	perf	accept	accepted	correct	0	0.017	0.021	95.0		80	
+gruszka	perf/irrelevance-refutes	perf	accept	accepted	correct	0	0.017	0.021	109.0		80	
+gruszka	perf/ite-taken-branch	perf	accept	accepted	correct	0	0.032	0.064	171.3		460	
+gruszka	perf/ite-taken-branch-bad	perf	reject	rejected	correct	1	0.359	0.403	446.8		220	
+gruszka	perf/let-fold	perf	accept	accepted	correct	0	0.018	0.027	146.9		80	
+gruszka	perf/let-ladder	perf	accept	accepted	correct	0	0.020	0.027	125.4		80	
+gruszka	perf/loop-unfolded-once	perf	accept	accepted	correct	0	0.031	0.060	177.5		80	
+gruszka	perf/loop-unfolded-once-bad	perf	reject	rejected	correct	1	0.034	0.071	179.5		240	
+gruszka	perf/magma-list-deep-n21	perf	accept	accepted	correct	0	0.039	0.055	179.2		140	
+gruszka	perf/magma-list-deep-n36	perf	accept	accepted	correct	0	0.320	0.336	331.8		720	
+gruszka	perf/magma-list-pair-n21	perf	accept	accepted	correct	0	2.498	2.525	1027.1		480	
+gruszka	perf/magma-list-pair-n7	perf	accept	accepted	correct	0	0.200	0.212	309.2		120	
+gruszka	perf/magma-string-n4	perf	accept	accepted	correct	0	0.084	0.216	216.6		140	
+gruszka	perf/magma-string-pair-n9	perf	accept	accepted	correct	0	0.309	0.477	406.9		240	
+gruszka	perf/proj-app-lazy-delta	perf	accept	accepted	correct	0	0.019	0.025	142.9		120	
+gruszka	perf/proj-applied-struct	perf	accept	accepted	correct	0	0.018	0.025	144.8		460	
+gruszka	perf/proj-applied-struct-arg-bad	perf	reject	rejected	correct	1	0.828	0.841	667.8		240	
+gruszka	perf/proj-applied-struct-bad	perf	reject	rejected	correct	1	0.770	0.781	661.7		260	
+gruszka	perf/proj-cheap-struct	perf	accept	accepted	correct	0	0.017	0.023	128.9		80	
+gruszka	perf/proj-lazy-struct	perf	accept	accepted	correct	0	0.018	0.025	121.0		80	
+gruszka	perf/proj-stuck-struct	perf	accept	accepted	correct	0	0.018	0.023	118.9		80	
+gruszka	perf/prop-struct-projections	perf	accept	accepted	correct	0	0.017	0.025	128.9		80	
+gruszka	perf/refute-cheap-first	perf	reject	rejected	correct	1	0.017	0.023	107.2		80	
+gruszka	perf/refute-cheap-last	perf	reject	rejected	correct	1	0.016	0.020	105.4		80	
+gruszka	perf/repeated-subproblem	perf	accept	accepted	correct	0	0.017	0.021	90.9		80	
+gruszka	perf/shared-subterm	perf	accept	accepted	correct	0	0.022	0.028	107.8		80	
+gruszka	perf/shift-cascade	perf	accept	accepted	correct	0	0.021	0.023	94.1		80	
+gruszka	perf/short-circuit-and	perf	accept	accepted	correct	0	0.031	0.065	177.5		440	
+gruszka	perf/short-circuit-and-bad	perf	reject	rejected	correct	1	1.733	1.776	535.6		240	
+gruszka	perf/unfold-before-literal	perf	accept	accepted	correct	0	0.018	0.025	123.0		480	
+gruszka	perf/unfold-before-literal-bad	perf	reject	rejected	correct	1	0.770	0.780	649.6		260	
+gruszka	perf/unfold-before-literal-fallback	perf	accept	accepted	correct	0	1.767	2.683	1210.4		540	
+gruszka	perf/unroll-versus-evaluate	perf	accept	accepted	correct	0	0.018	0.022	87.4		80	
+gruszka	tutorial/001_basicDef	tutorial	accept	accepted	correct	0	0.015	0.017	43.1			
+gruszka	tutorial/002_badDef	tutorial	reject	rejected	correct	1	0.014	0.017	55.0			
+gruszka	tutorial/003_arrowType	tutorial	accept	accepted	correct	0	0.020	0.022	57.0			
+gruszka	tutorial/004_dependentType	tutorial	accept	accepted	correct	0	0.020	0.023	59.0			
+gruszka	tutorial/005_constType	tutorial	accept	accepted	correct	0	0.016	0.019	59.0			
+gruszka	tutorial/006_betaReduction	tutorial	accept	accepted	correct	0	0.015	0.019	67.0			
+gruszka	tutorial/007_betaReduction2	tutorial	accept	accepted	correct	0	0.020	0.024	64.9			
+gruszka	tutorial/008_forallSortWhnf	tutorial	accept	accepted	correct	0	0.017	0.020	69.1			
+gruszka	tutorial/009_forallSortBad	tutorial	reject	rejected	correct	1	0.016	0.019	69.0			
+gruszka	tutorial/010_nonTypeType	tutorial	reject	rejected	correct	1	0.016	0.019	59.1			
+gruszka	tutorial/011_nonTypeAxiom	tutorial	reject	rejected	correct	1	0.017	0.020	61.1			
+gruszka	tutorial/012_nonPropThm	tutorial	reject	rejected	correct	1	0.016	0.018	59.0			
+gruszka	tutorial/013_thmProof	tutorial	accept	accepted	correct	0	0.016	0.019	71.2			
+gruszka	tutorial/014_selfProof	tutorial	reject	rejected	correct	1	0.014	0.018	52.8			
+gruszka	tutorial/015_levelComp1	tutorial	accept	accepted	correct	0	0.014	0.016	51.0			
+gruszka	tutorial/016_levelComp2	tutorial	accept	accepted	correct	0	0.014	0.016	49.1			
+gruszka	tutorial/017_levelComp3	tutorial	accept	accepted	correct	0	0.019	0.021	53.0			
+gruszka	tutorial/018_levelParams	tutorial	accept	accepted	correct	0	0.015	0.019	67.0			
+gruszka	tutorial/019_tut06_bad01	tutorial	reject	rejected	correct	1	0.015	0.018	51.0			
+gruszka	tutorial/020_levelComp4	tutorial	accept	accepted	correct	0	0.019	0.027	55.1			
+gruszka	tutorial/021_levelComp5	tutorial	accept	accepted	correct	0	0.014	0.018	57.2			
+gruszka	tutorial/022_imax1	tutorial	accept	accepted	correct	0	0.015	0.018	59.1			
+gruszka	tutorial/023_imax2	tutorial	accept	accepted	correct	0	0.017	0.021	59.0			
+gruszka	tutorial/024_levelMaxComm	tutorial	accept	accepted	correct	0	0.015	0.018	55.1			
+gruszka	tutorial/025_levelMaxAssoc	tutorial	accept	accepted	correct	0	0.017	0.019	57.0			
+gruszka	tutorial/026_levelMaxIdem	tutorial	accept	accepted	correct	0	0.020	0.023	53.1			
+gruszka	tutorial/027_levelMaxAbsorb	tutorial	accept	accepted	correct	0	0.019	0.021	55.0			
+gruszka	tutorial/028_inferVar	tutorial	accept	accepted	correct	0	0.018	0.019	59.0			
+gruszka	tutorial/029_defEqLambda	tutorial	accept	accepted	correct	0	0.016	0.018	63.1			
+gruszka	tutorial/030_peano1	tutorial	accept	accepted	correct	0	0.016	0.020	87.1			
+gruszka	tutorial/031_peano2	tutorial	accept	accepted	correct	0	0.015	0.019	85.0			
+gruszka	tutorial/032_peano3	tutorial	accept	accepted	correct	0	0.016	0.019	87.1			
+gruszka	tutorial/033_letType	tutorial	accept	accepted	correct	0	0.016	0.019	58.9			
+gruszka	tutorial/034_letTypeDep	tutorial	accept	accepted	correct	0	0.016	0.019	78.9			
+gruszka	tutorial/035_letRed	tutorial	accept	accepted	correct	0	0.019	0.022	61.0			
+gruszka	tutorial/036_empty	tutorial	accept	accepted	correct	0	0.022	0.023	63.0			
+gruszka	tutorial/037_boolType	tutorial	accept	accepted	correct	0	0.014	0.017	65.1			
+gruszka	tutorial/038_twoBool	tutorial	accept	accepted	correct	0	0.016	0.018	73.1			
+gruszka	tutorial/039_andType	tutorial	accept	accepted	correct	0	0.015	0.019	69.1			
+gruszka	tutorial/040_prodType	tutorial	accept	accepted	correct	0	0.016	0.019	71.0			
+gruszka	tutorial/041_pprodType	tutorial	accept	accepted	correct	0	0.016	0.020	75.0			
+gruszka	tutorial/042_pUnitType	tutorial	accept	accepted	correct	0	0.014	0.018	69.0			
+gruszka	tutorial/043_eqType	tutorial	accept	accepted	correct	0	0.016	0.020	79.0			
+gruszka	tutorial/044_natDef	tutorial	accept	accepted	correct	0	0.016	0.019	69.0			
+gruszka	tutorial/045_rbTreeDef	tutorial	accept	accepted	correct	0	0.017	0.022	94.8			
+gruszka	tutorial/046_inductBadNonSort	tutorial	reject	rejected	correct	1	0.016	0.019	61.0			
+gruszka	tutorial/047_inductBadNonSort2	tutorial	reject	rejected	correct	1	0.020	0.024	57.0			
+gruszka	tutorial/048_inductLevelParam	tutorial	reject	rejected	correct	1	0.018	0.021	44.8			
+gruszka	tutorial/049_inductTooFewParams	tutorial	reject	rejected	correct	1	0.020	0.022	57.1			
+gruszka	tutorial/050_inductWrongCtorParams	tutorial	reject	rejected	correct	1	0.014	0.018	67.0			
+gruszka	tutorial/051_inductWrongCtorResParams	tutorial	reject	rejected	correct	1	0.015	0.019	61.0			
+gruszka	tutorial/052_inductWrongCtorResLevel	tutorial	reject	rejected	correct	1	0.015	0.018	59.1			
+gruszka	tutorial/053_inductInIndex	tutorial	reject	rejected	correct	1	0.017	0.019	61.1			
+gruszka	tutorial/054_indNeg	tutorial	reject	rejected	correct	1	0.018	0.021	57.1			
+gruszka	tutorial/055_reduceCtorParam.mk	tutorial	accept	accepted	correct	0	0.016	0.020	81.0			
+gruszka	tutorial/056_reduceCtorType.mk	tutorial	reject	rejected	correct	1	0.014	0.017	71.0			
+gruszka	tutorial/057_indNegReducible	tutorial	reject	rejected	correct	1	0.016	0.020	67.1			
+gruszka	tutorial/058_predWithTypeField	tutorial	accept	accepted	correct	0	0.016	0.020	67.1			
+gruszka	tutorial/059_typeWithTypeField	tutorial	accept	accepted	correct	0	0.014	0.017	65.1			
+gruszka	tutorial/060_typeWithTypeFieldPoly	tutorial	accept	accepted	correct	0	0.015	0.017	65.0			
+gruszka	tutorial/061_typeWithTooHighTypeField.mk	tutorial	reject	rejected	correct	1	0.018	0.022	61.0			
+gruszka	tutorial/062_emptyRec	tutorial	accept	accepted	correct	0	0.016	0.019	69.1			
+gruszka	tutorial/063_boolRec	tutorial	accept	accepted	correct	0	0.017	0.020	77.0			
+gruszka	tutorial/064_twoBoolRec	tutorial	accept	accepted	correct	0	0.017	0.021	86.8			
+gruszka	tutorial/065_andRec	tutorial	accept	accepted	correct	0	0.015	0.019	73.1			
+gruszka	tutorial/066_prodRec	tutorial	accept	accepted	correct	0	0.015	0.019	77.0			
+gruszka	tutorial/067_pprodRec	tutorial	accept	accepted	correct	0	0.016	0.020	75.1			
+gruszka	tutorial/068_punitRec	tutorial	accept	accepted	correct	0	0.015	0.018	73.0			
+gruszka	tutorial/069_eqRec	tutorial	accept	accepted	correct	0	0.017	0.021	74.9			
+gruszka	tutorial/070_nRec	tutorial	accept	accepted	correct	0	0.015	0.019	79.0			
+gruszka	tutorial/071_rbTreeRef	tutorial	accept	accepted	correct	0	0.018	0.022	95.0			
+gruszka	tutorial/072_boolPropRec	tutorial	accept	accepted	correct	0	0.015	0.019	73.0			
+gruszka	tutorial/073_BogusRecursor	tutorial	reject	rejected	correct	1	0.020	0.024	75.0			
+gruszka	tutorial/074_existsRec	tutorial	accept	accepted	correct	0	0.015	0.019	73.1			
+gruszka	tutorial/075_typeSingletonRecReduction	tutorial	accept	accepted	correct	0	0.016	0.021	95.0			
+gruszka	tutorial/076_sortElimPropRec	tutorial	accept	accepted	correct	0	0.016	0.020	84.9			
+gruszka	tutorial/077_sortElimProp2Rec	tutorial	accept	accepted	correct	0	0.015	0.020	90.8			
+gruszka	tutorial/078_boolRecEqns	tutorial	accept	accepted	correct	0	0.017	0.022	99.1			
+gruszka	tutorial/079_prodRecEqns	tutorial	accept	accepted	correct	0	0.017	0.022	88.9			
+gruszka	tutorial/080_nRecReduction	tutorial	accept	accepted	correct	0	0.018	0.023	104.9			
+gruszka	tutorial/081_listRecReduction	tutorial	accept	accepted	correct	0	0.018	0.023	109.1			
+gruszka	tutorial/082_RBTree.id_spec	tutorial	accept	accepted	correct	0	0.015	0.021	107.1			
+gruszka	tutorial/083_And.right	tutorial	accept	accepted	correct	0	0.016	0.020	93.0			
+gruszka	tutorial/084_Prod.snd	tutorial	accept	accepted	correct	0	0.016	0.021	86.9			
+gruszka	tutorial/085_PProd.snd	tutorial	accept	accepted	correct	0	0.016	0.019	82.8			
+gruszka	tutorial/086_PSigma.snd	tutorial	accept	accepted	correct	0	0.017	0.021	86.9			
+gruszka	tutorial/087_projOutOfRange	tutorial	reject	rejected	correct	1	0.015	0.019	75.0			
+gruszka	tutorial/088_projNotStruct	tutorial	reject	rejected	correct	1	0.017	0.020	75.0			
+gruszka	tutorial/089_projProp1	tutorial	accept	accepted	correct	0	0.016	0.020	85.1			
+gruszka	tutorial/090_projProp2	tutorial	reject	rejected	correct	1	0.015	0.020	95.1			
+gruszka	tutorial/091_projProp3	tutorial	accept	accepted	correct	0	0.019	0.023	92.9			
+gruszka	tutorial/092_projProp4	tutorial	reject	rejected	correct	1	0.017	0.020	89.1			
+gruszka	tutorial/093_projProp5	tutorial	reject	rejected	correct	1	0.016	0.021	93.1			
+gruszka	tutorial/094_projProp6	tutorial	reject	rejected	correct	1	0.018	0.022	92.8			
+gruszka	tutorial/095_projDataIndexRec	tutorial	accept	accepted	correct	0	0.016	0.021	94.9			
+gruszka	tutorial/096_projIndexData	tutorial	reject	rejected	correct	1	0.018	0.022	95.1			
+gruszka	tutorial/097_projIndexData2	tutorial	reject	rejected	correct	1	0.016	0.021	103.0			
+gruszka	tutorial/098_projRed	tutorial	accept	accepted	correct	0	0.020	0.022	92.9			
+gruszka	tutorial/099_ruleK	tutorial	accept	accepted	correct	0	0.016	0.020	91.0			
+gruszka	tutorial/100_ruleKbad	tutorial	reject	rejected	correct	1	0.016	0.020	88.9			
+gruszka	tutorial/101_ruleKAcc	tutorial	reject	rejected	correct	1	0.015	0.020	98.7			
+gruszka	tutorial/102_aNatLit	tutorial	accept	accepted	correct	0	0.016	0.019	67.0			
+gruszka	tutorial/103_natLitEq	tutorial	accept	accepted	correct	0	0.016	0.020	90.8			
+gruszka	tutorial/104_proofIrrelevance	tutorial	accept	accepted	correct	0	0.015	0.019	82.9			
+gruszka	tutorial/105_proofIrrelevanceBad	tutorial	reject	rejected	correct	1	0.017	0.020	87.1			
+gruszka	tutorial/106_proofIrrelevanceWhnf	tutorial	accept	accepted	correct	0	0.016	0.020	92.9			
+gruszka	tutorial/107_proofIrrelevanceUnderBinder	tutorial	accept	accepted	correct	0	0.016	0.019	71.0			
+gruszka	tutorial/108_unitEta1	tutorial	accept	accepted	correct	0	0.017	0.020	85.1			
+gruszka	tutorial/109_unitEta2	tutorial	accept	accepted	correct	0	0.015	0.020	93.1			
+gruszka	tutorial/110_unitEta3	tutorial	accept	accepted	correct	0	0.015	0.019	93.1			
+gruszka	tutorial/111_indexedUnitEta	tutorial	reject	rejected	correct	1	0.015	0.020	95.1			
+gruszka	tutorial/112_structEta	tutorial	accept	accepted	correct	0	0.016	0.020	93.1			
+gruszka	tutorial/113_indexedStructEta	tutorial	reject	rejected	correct	1	0.017	0.021	102.7			
+gruszka	tutorial/114_funEta	tutorial	accept	accepted	correct	0	0.017	0.020	83.1			
+gruszka	tutorial/115_funEtaDep	tutorial	accept	accepted	correct	0	0.017	0.020	83.0			
+gruszka	tutorial/116_funEtaBad	tutorial	reject	rejected	correct	1	0.015	0.018	81.1			
+gruszka	tutorial/117_reflOccLeft	tutorial	reject	rejected	correct	1	0.015	0.018	71.1			
+gruszka	tutorial/118_reflOccInIndex	tutorial	reject	rejected	correct	1	0.015	0.018	71.1			
+gruszka	tutorial/119_reduceCtorParamRefl.mk	tutorial	accept	accepted	correct	0	0.017	0.021	82.9			
+gruszka	tutorial/120_reduceCtorParamRefl2.mk	tutorial	accept	accepted	correct	0	0.016	0.020	81.1			
+gruszka	tutorial/121_rTreeRec	tutorial	accept	accepted	correct	0	0.017	0.021	84.9			
+gruszka	tutorial/122_rtreeRecReduction	tutorial	accept	accepted	correct	0	0.016	0.020	102.9			
+gruszka	tutorial/123_accRecType	tutorial	accept	accepted	correct	0	0.016	0.019	75.1			
+gruszka	tutorial/124_accRecReduction	tutorial	accept	accepted	correct	0	0.017	0.022	101.1			
+gruszka	tutorial/125_accRecNoEta	tutorial	reject	rejected	correct	1	0.017	0.022	98.7			
+gruszka	tutorial/126_quotMkType	tutorial	accept	accepted	correct	0	0.016	0.019	75.1			
+gruszka	tutorial/127_quotIndType	tutorial	accept	accepted	correct	0	0.015	0.018	74.8			
+gruszka	tutorial/128_quotLiftType	tutorial	accept	accepted	correct	0	0.016	0.019	79.1			
+gruszka	tutorial/129_quotSoundType	tutorial	accept	accepted	correct	0	0.015	0.019	78.9			
+gruszka	tutorial/130_quotLiftReduction	tutorial	accept	accepted	correct	0	0.016	0.020	80.9			
+gruszka	tutorial/131_quotIndReduction	tutorial	accept	accepted	correct	0	0.017	0.020	81.1			
+gruszka	tutorial/132_dup_defs	tutorial	reject	rejected	correct	1	0.011	0.013	20.9			
+gruszka	tutorial/133_dup_ind_def	tutorial	reject	rejected	correct	1	0.011	0.013	18.1			
+gruszka	tutorial/134_dup_ctor_def	tutorial	reject	rejected	correct	1	0.011	0.012	15.8			
+gruszka	tutorial/135_dup_rec_def	tutorial	reject	rejected	correct	1	0.011	0.012	18.6			
+gruszka	tutorial/136_misnamed_rec_user	tutorial	reject	rejected	correct	1	0.015	0.020	59.0			
+gruszka	tutorial/137_dup_rec_def2	tutorial	reject	rejected	correct	1	0.014	0.018	65.1			
+gruszka	tutorial/138_dup_ctor_rec	tutorial	reject	rejected	correct	1	0.011	0.013	20.7			
+gruszka	tutorial/139_DupConCon	tutorial	reject	rejected	correct	1	0.012	0.013	18.7			
+gruszka	tutorial/140_falseFromUnsafe	tutorial	reject	rejected	correct	1	0.016	0.019	65.0			
+gruszka	tutorial/141_falseFromPartial	tutorial	reject	rejected	correct	1	0.020	0.023	63.0			
+nano-lean	bugs/closure-level-subst	bugs	reject	rejected	correct	1	0.006	0.007	24.2			FAIL 14 declarations, 0 cached, 1 failed in 918.80µs
+nano-lean	bugs/constlevels	bugs	reject	rejected	correct	1	0.005	0.006	32.2			FAIL 20 declarations, 0 cached, 1 failed in 903.12µs
+nano-lean	bugs/ctor-num-fields	bugs	reject	rejected	correct	1	0.005	0.008	42.5			FAIL 47 declarations, 0 cached, 1 failed in 1.25ms
+nano-lean	bugs/eta-ctor-alias	bugs	reject	rejected	correct	1	0.005	0.006	26.4			FAIL 12 declarations, 0 cached, 1 failed in 714.29µs
+nano-lean	bugs/k-rec-conv	bugs	reject	rejected	correct	1	0.005	0.007	32.9			FAIL 16 declarations, 0 cached, 1 failed in 1.03ms
+nano-lean	bugs/large-elim-param	bugs	reject	rejected	correct	1	0.005	0.006	26.2			FAIL 11 declarations, 0 cached, 1 failed in 750.13µs
+nano-lean	bugs/large-elim-prop-bool	bugs	reject	rejected	correct	1	0.005	0.007	34.2			FAIL 26 declarations, 0 cached, 1 failed in 1.15ms
+nano-lean	bugs/level-imax-leq	bugs	reject	rejected	correct	1	0.005	0.006	28.1			FAIL 11 declarations, 0 cached, 3 failed in 931.22µs
+nano-lean	bugs/level-imax-normalization	bugs	reject	rejected	correct	1	0.005	0.006	26.3			FAIL 12 declarations, 0 cached, 2 failed in 850.22µs
+nano-lean	bugs/loose-bvar-value	bugs	reject	rejected	correct	1	0.003	0.004	20.1			FAIL 4 declarations, 0 cached, 2 failed in 630.27µs
+nano-lean	bugs/nat-rec-k-lie	bugs	reject	rejected	correct	1	0.004	0.006	28.5			FAIL 12 declarations, 0 cached, 2 failed in 804.91µs
+nano-lean	bugs/nat-rec-rules	bugs	reject	rejected	correct	1	0.005	0.006	26.7			FAIL 15 declarations, 0 cached, 2 failed in 934.14µs
+nano-lean	bugs/nat-shift-huge	bugs	accept	declined	declined	2	11.362	23.866	11641.9			FAIL 212 declarations, 0 cached, 3 failed in 11.22s
+nano-lean	bugs/nested-name-capture	bugs	reject	rejected	correct	1	0.004	0.006	34.8			FAIL 39 declarations, 0 cached, 1 failed in 1.04ms
+nano-lean	bugs/nested-rec-rule-nfields	bugs	reject	rejected	correct	1	0.006	0.009	38.4			FAIL 41 declarations, 0 cached, 1 failed in 1.71ms
+nano-lean	bugs/nested-unused-param	bugs	reject	rejected	correct	1	0.005	0.008	44.7			FAIL 68 declarations, 0 cached, 2 failed in 1.75ms
+nano-lean	bugs/open-term-cache-context	bugs	reject	rejected	correct	1	0.005	0.004	12.2			FAIL 1 declarations, 0 cached, 1 failed in 416.16µs
+nano-lean	bugs/orphan-rec	bugs	reject	rejected	correct	1	0.005	0.005	18.3			FAIL 4 declarations, 0 cached, 1 failed in 608.37µs
+nano-lean	bugs/pi-closure-context	bugs	reject	rejected	correct	1	0.004	0.004	22.1			FAIL 5 declarations, 0 cached, 1 failed in 435.47µs
+nano-lean	bugs/proj-non-structure	bugs	reject	rejected	correct	1	0.004	0.005	28.2			FAIL 10 declarations, 0 cached, 1 failed in 871.31µs
+nano-lean	bugs/proj-of-imax-prop	bugs	reject	rejected	correct	1	0.005	0.007	30.4			FAIL 34 declarations, 0 cached, 1 failed in 929.44µs
+nano-lean	bugs/proj-of-stuck-prop	bugs	reject	rejected	correct	1	0.007	0.013	72.4			FAIL 164 declarations, 0 cached, 3 failed in 2.41ms
+nano-lean	bugs/proj-of-subst-prop	bugs	reject	rejected	correct	1	0.006	0.012	66.2			FAIL 155 declarations, 0 cached, 1 failed in 2.08ms
+nano-lean	bugs/quot-bad-type	bugs	reject	rejected	correct	1	0.005	0.006	26.2			FAIL 7 declarations, 0 cached, 1 failed in 843.57µs
+nano-lean	bugs/rec-k-lie	bugs	reject	rejected	correct	1	0.005	0.005	22.3			FAIL 11 declarations, 0 cached, 1 failed in 614.82µs
+nano-lean	bugs/rec-missing-ih	bugs	reject	rejected	correct	1	0.007	0.013	74.0			FAIL 167 declarations, 0 cached, 1 failed in 2.33ms
+nano-lean	bugs/rec-of-subst-prop	bugs	reject	rejected	correct	1	0.007	0.014	78.4			FAIL 177 declarations, 0 cached, 1 failed in 2.72ms
+nano-lean	bugs/rec-rule-proof-irrel	bugs	reject	rejected	correct	1	0.005	0.007	32.8			FAIL 31 declarations, 0 cached, 1 failed in 1.18ms
+nano-lean	bugs/rec-rule-proof-irrel-nested	bugs	reject	rejected	correct	1	0.006	0.008	30.7			FAIL 36 declarations, 0 cached, 1 failed in 1.84ms
+nano-lean	bugs/rec-rule-wrong-arg	bugs	reject	rejected	correct	1	0.005	0.007	38.2			FAIL 27 declarations, 0 cached, 1 failed in 1.31ms
+nano-lean	bugs/rec-type-proof-irrel	bugs	reject	rejected	correct	1	0.005	0.007	30.8			FAIL 29 declarations, 0 cached, 1 failed in 919.63µs
+nano-lean	bugs/str-lit-utf8	bugs	accept	accepted	correct	0	0.009	0.018	95.9			ok 378 declarations, 0 cached, 0 failed in 3.34ms
+nano-lean	bugs/str-lit-utf8-bad	bugs	reject	rejected	correct	1	0.007	0.015	100.3			FAIL 378 declarations, 0 cached, 1 failed in 3.55ms
+nano-lean	bugs/unit-rec-rule	bugs	reject	rejected	correct	1	0.005	0.006	28.1			FAIL 7 declarations, 0 cached, 3 failed in 955.66µs
+nano-lean	corner-cases/alg-conv-trans-acc	corner-cases	either	rejected	either	1	0.005	0.008	42.6			FAIL 67 declarations, 0 cached, 1 failed in 1.33ms
+nano-lean	corner-cases/alg-conv-trans-acc-left	corner-cases	either	accepted	either	0	0.005	0.008	40.5			ok 68 declarations, 0 cached, 0 failed in 1.39ms
+nano-lean	corner-cases/alg-conv-trans-acc-right	corner-cases	either	accepted	either	0	0.005	0.008	42.7			ok 68 declarations, 0 cached, 0 failed in 1.33ms
+nano-lean	corner-cases/alg-conv-trans-quot	corner-cases	either	rejected	either	1	0.004	0.006	26.3			FAIL 8 declarations, 0 cached, 1 failed in 881.70µs
+nano-lean	corner-cases/alg-conv-trans-quot-left	corner-cases	either	rejected	either	1	0.004	0.006	26.2			FAIL 8 declarations, 0 cached, 1 failed in 816.83µs
+nano-lean	corner-cases/alg-conv-trans-quot-left-def	corner-cases	either	accepted	either	0	0.003	0.005	28.5			ok 10 declarations, 0 cached, 0 failed in 832.06µs
+nano-lean	corner-cases/alg-conv-trans-quot-right	corner-cases	either	accepted	either	0	0.004	0.005	26.4			ok 9 declarations, 0 cached, 0 failed in 868.43µs
+nano-lean	corner-cases/eta-ctor	corner-cases	either	rejected	either	1	0.004	0.006	28.4			FAIL 15 declarations, 0 cached, 1 failed in 812.02µs
+nano-lean	corner-cases/eta-rec-struct	corner-cases	either	rejected	either	1	0.004	0.005	28.2			FAIL 11 declarations, 0 cached, 1 failed in 764.46µs
+nano-lean	corner-cases/eta-rule-k	corner-cases	either	rejected	either	1	0.004	0.005	26.1			FAIL 8 declarations, 0 cached, 1 failed in 735.50µs
+nano-lean	corner-cases/eta-struct-major-and	corner-cases	either	rejected	either	1	0.004	0.006	32.4			FAIL 9 declarations, 0 cached, 1 failed in 912.02µs
+nano-lean	corner-cases/eta-struct-major-and-no-whnf	corner-cases	either	declined	declined	2	1.269	1.270	3614.5		120	FAIL 31 declarations, 0 cached, 1 failed in 1.26s
+nano-lean	corner-cases/eta-struct-major-no-whnf	corner-cases	either	declined	declined	2	1.280	1.277	3622.6		120	FAIL 36 declarations, 0 cached, 1 failed in 1.27s
+nano-lean	corner-cases/eta-unit-like-nested	corner-cases	either	rejected	either	1	0.005	0.007	32.1			FAIL 25 declarations, 0 cached, 1 failed in 1.07ms
+nano-lean	corner-cases/eta-unit-like-pi	corner-cases	either	rejected	either	1	0.004	0.005	26.3			FAIL 8 declarations, 0 cached, 1 failed in 762.14µs
+nano-lean	corner-cases/eta-unit-like-proof-field	corner-cases	either	rejected	either	1	0.004	0.006	28.4			FAIL 10 declarations, 0 cached, 1 failed in 792.11µs
+nano-lean	corner-cases/eta-unit-like-struct	corner-cases	either	rejected	either	1	0.005	0.006	28.2			FAIL 11 declarations, 0 cached, 1 failed in 847.47µs
+nano-lean	corner-cases/imax-nested-absorption	corner-cases	either	accepted	either	0	0.004	0.004	14.2			ok 2 declarations, 0 cached, 0 failed in 436.72µs
+nano-lean	corner-cases/imax-right-successor	corner-cases	either	accepted	either	0	0.003	0.003	12.1			ok 2 declarations, 0 cached, 0 failed in 379.95µs
+nano-lean	corner-cases/large-elim-maybe-prop	corner-cases	either	rejected	either	1	0.004	0.004	24.1			FAIL 4 declarations, 0 cached, 1 failed in 609.90µs
+nano-lean	corner-cases/let-value-type-mismatch	corner-cases	either	rejected	either	1	0.004	0.004	10.1			FAIL 1 declarations, 0 cached, 1 failed in 424.74µs
+nano-lean	corner-cases/nested-nonuniform-param	corner-cases	either	accepted	either	0	0.005	0.006	26.2			ok 14 declarations, 0 cached, 0 failed in 776.11µs
+nano-lean	corner-cases/nested-redex-aux	corner-cases	either	accepted	either	0	0.005	0.008	38.6			ok 36 declarations, 0 cached, 0 failed in 1.32ms
+nano-lean	corner-cases/positivity-whnf	corner-cases	either	rejected	either	1	0.003	0.004	24.3			FAIL 8 declarations, 0 cached, 1 failed in 647.57µs
+nano-lean	corner-cases/proj-maybe-prop	corner-cases	either	accepted	either	0	0.004	0.006	30.6			ok 13 declarations, 0 cached, 0 failed in 839.57µs
+nano-lean	corner-cases/proj-maybe-prop-past	corner-cases	either	accepted	either	0	0.004	0.005	26.3			ok 13 declarations, 0 cached, 0 failed in 712.80µs
+nano-lean	corner-cases/proof-param-ok	corner-cases	accept	accepted	correct	0	0.005	0.005	18.4			ok 3 declarations, 0 cached, 0 failed in 571.36µs
+nano-lean	corner-cases/proof-param-swap	corner-cases	either	rejected	either	1	0.004	0.004	18.1			FAIL 3 declarations, 0 cached, 1 failed in 517.52µs
+nano-lean	corner-cases/subject-reduction-redex	corner-cases	either	accepted	either	0	0.005	0.008	46.8			ok 67 declarations, 0 cached, 0 failed in 1.58ms
+nano-lean	corner-cases/subject-reduction-reduct	corner-cases	either	rejected	either	1	0.006	0.009	42.5			FAIL 66 declarations, 0 cached, 1 failed in 1.49ms
+nano-lean	corner-cases/vanishing-occurrence	corner-cases	either	accepted	either	0	0.004	0.005	22.4			ok 12 declarations, 0 cached, 0 failed in 841.04µs
+nano-lean	init-prelude	real-world	accept	accepted	correct	0	0.016	0.040	166.1		80	ok 2121 declarations, 0 cached, 0 failed in 8.60ms
+nano-lean	other/extra-rec	other	reject	rejected	correct	1	0.004	0.005	20.1			FAIL 4 declarations, 0 cached, 1 failed in 680.27µs
+nano-lean	other/inductive-undeclared-universe	other	reject	rejected	correct	1	0.005	0.005	18.3			FAIL 7 declarations, 0 cached, 1 failed in 523.66µs
+nano-lean	other/level-index-out-of-order	other	accept	accepted	correct	0	0.003	0.003	8.1			ok 1 declarations, 0 cached, 0 failed in 296.94µs
+nano-lean	other/nat-lit-add	other	accept	accepted	correct	0	0.004	0.006	32.7			ok 27 declarations, 0 cached, 0 failed in 1.04ms
+nano-lean	other/nat-lit-add-bad	other	reject	rejected	correct	1	0.005	0.008	33.0			FAIL 26 declarations, 0 cached, 1 failed in 1.05ms
+nano-lean	other/nat-lit-ble	other	accept	accepted	correct	0	0.005	0.007	36.7			ok 31 declarations, 0 cached, 0 failed in 1.06ms
+nano-lean	other/nat-lit-sub	other	accept	accepted	correct	0	0.005	0.007	36.6			ok 31 declarations, 0 cached, 0 failed in 1.00ms
+nano-lean	other/orphan-ctor	other	reject	rejected	correct	1	0.004	0.005	20.3			FAIL 4 declarations, 0 cached, 1 failed in 616.37µs
+nano-lean	other/proj-of-prop	other	reject	rejected	correct	1	0.003	0.004	26.4			FAIL 9 declarations, 0 cached, 1 failed in 607.41µs
+nano-lean	other/sparse-name-index	other	accept	accepted	correct	0	0.004	0.004	8.1			ok 1 declarations, 0 cached, 0 failed in 310.62µs
+nano-lean	perf/app-lam	perf	accept	accepted	correct	0	0.013	0.015	72.0		140	ok 35 declarations, 0 cached, 0 failed in 9.11ms
+nano-lean	perf/args-before-unfold	perf	accept	accepted	correct	0	0.006	0.008	36.4		80	ok 10 declarations, 0 cached, 0 failed in 1.55ms
+nano-lean	perf/beta-ladder	perf	accept	accepted	correct	0	0.007	0.010	52.5		80	ok 21 declarations, 0 cached, 0 failed in 3.42ms
+nano-lean	perf/church-numerals	perf	accept	accepted	correct	0	0.007	0.008	40.3		80	ok 6 declarations, 0 cached, 0 failed in 3.29ms
+nano-lean	perf/discarded-argument	perf	accept	accepted	correct	0	0.004	0.006	28.2		80	ok 11 declarations, 0 cached, 0 failed in 778.58µs
+nano-lean	perf/discarded-argument-match	perf	accept	accepted	correct	0	0.004	0.007	36.3		80	ok 26 declarations, 0 cached, 0 failed in 1.15ms
+nano-lean	perf/folded-constant-first	perf	accept	accepted	correct	0	0.006	0.008	43.9		80	ok 19 declarations, 0 cached, 0 failed in 1.98ms
+nano-lean	perf/folded-constant-last	perf	accept	accepted	correct	0	0.006	0.008	39.9		80	ok 19 declarations, 0 cached, 0 failed in 2.41ms
+nano-lean	perf/fueled-chain	perf	accept	accepted	correct	0	0.020	0.034	117.3		80	ok 205 declarations, 0 cached, 0 failed in 15.61ms
+nano-lean	perf/grind-ring-5	perf	accept	accepted	correct	0	0.163	0.282	335.9		100	ok 2592 declarations, 0 cached, 0 failed in 150.84ms
+nano-lean	perf/identical-nesting	perf	accept	accepted	correct	0	0.005	0.006	26.5		80	ok 13 declarations, 0 cached, 0 failed in 933.41µs
+nano-lean	perf/irrelevance-before-evaluation	perf	accept	accepted	correct	0	0.005	0.007	32.4		80	ok 14 declarations, 0 cached, 0 failed in 1.02ms
+nano-lean	perf/irrelevance-refutes	perf	accept	accepted	correct	0	0.005	0.007	26.9		80	ok 16 declarations, 0 cached, 0 failed in 967.62µs
+nano-lean	perf/ite-taken-branch	perf	accept	accepted	correct	0	0.027	0.077	193.9		460	ok 1629 declarations, 0 cached, 0 failed in 19.47ms
+nano-lean	perf/ite-taken-branch-bad	perf	reject	rejected	correct	1	0.173	0.219	346.8		220	FAIL 1623 declarations, 0 cached, 1 failed in 165.19ms
+nano-lean	perf/let-fold	perf	accept	accepted	correct	0	0.007	0.013	81.9		80	ok 206 declarations, 0 cached, 0 failed in 2.51ms
+nano-lean	perf/let-ladder	perf	accept	accepted	correct	0	0.008	0.010	55.8		80	ok 23 declarations, 0 cached, 0 failed in 4.24ms
+nano-lean	perf/loop-unfolded-once	perf	accept	accepted	correct	0	0.023	0.060	183.0		80	ok 1528 declarations, 0 cached, 0 failed in 13.53ms
+nano-lean	perf/loop-unfolded-once-bad	perf	reject	rejected	correct	1	0.029	0.069	182.8		240	FAIL 1528 declarations, 0 cached, 1 failed in 18.41ms
+nano-lean	perf/magma-list-deep-n21	perf	accept	accepted	correct	0	0.029	0.040	150.8		140	ok 633 declarations, 0 cached, 0 failed in 22.15ms
+nano-lean	perf/magma-list-deep-n36	perf	accept	accepted	correct	0	0.223	0.234	454.9		720	ok 633 declarations, 0 cached, 0 failed in 217.85ms
+nano-lean	perf/magma-list-pair-n21	perf	accept	accepted	correct	0	2.061	2.068	1866.2		480	ok 340 declarations, 0 cached, 0 failed in 2.05s
+nano-lean	perf/magma-list-pair-n7	perf	accept	accepted	correct	0	0.149	0.157	268.2		120	ok 340 declarations, 0 cached, 0 failed in 144.07ms
+nano-lean	perf/magma-string-n4	perf	accept	accepted	correct	0	0.113	0.328	382.5		140	ok 3542 declarations, 0 cached, 0 failed in 89.11ms
+nano-lean	perf/magma-string-pair-n9	perf	accept	accepted	correct	0	0.255	0.473	510.3		240	ok 3542 declarations, 0 cached, 0 failed in 230.84ms
+nano-lean	perf/proj-app-lazy-delta	perf	accept	accepted	correct	0	0.005	0.009	50.3		120	ok 97 declarations, 0 cached, 0 failed in 1.56ms
+nano-lean	perf/proj-applied-struct	perf	accept	accepted	correct	0	0.005	0.009	51.2		460	ok 89 declarations, 0 cached, 0 failed in 1.61ms
+nano-lean	perf/proj-applied-struct-arg-bad	perf	reject	rejected	correct	1	0.816	2.393	3331.7		240	FAIL 89 declarations, 0 cached, 3 failed in 806.82ms
+nano-lean	perf/proj-applied-struct-bad	perf	reject	rejected	correct	1	0.689	0.692	1142.9		260	FAIL 84 declarations, 0 cached, 1 failed in 682.16ms
+nano-lean	perf/proj-cheap-struct	perf	accept	accepted	correct	0	0.005	0.008	44.1		80	ok 83 declarations, 0 cached, 0 failed in 1.61ms
+nano-lean	perf/proj-lazy-struct	perf	accept	accepted	correct	0	0.004	0.007	40.4		80	ok 48 declarations, 0 cached, 0 failed in 1.38ms
+nano-lean	perf/proj-stuck-struct	perf	accept	accepted	correct	0	0.006	0.009	43.1		80	ok 51 declarations, 0 cached, 0 failed in 1.65ms
+nano-lean	perf/prop-struct-projections	perf	accept	accepted	correct	0	0.011	0.025	127.1		80	ok 240 declarations, 0 cached, 0 failed in 5.36ms
+nano-lean	perf/refute-cheap-first	perf	reject	rejected	correct	1	0.005	0.007	34.6		80	FAIL 17 declarations, 0 cached, 1 failed in 1.13ms
+nano-lean	perf/refute-cheap-last	perf	reject	rejected	correct	1	0.006	0.008	34.4		80	FAIL 17 declarations, 0 cached, 1 failed in 2.12ms
+nano-lean	perf/repeated-subproblem	perf	accept	accepted	correct	0	0.005	0.006	30.4		80	ok 13 declarations, 0 cached, 0 failed in 929.14µs
+nano-lean	perf/shared-subterm	perf	accept	accepted	correct	0	0.008	0.010	52.1		80	ok 16 declarations, 0 cached, 0 failed in 4.70ms
+nano-lean	perf/shift-cascade	perf	accept	accepted	correct	0	0.006	0.008	48.8		80	ok 10 declarations, 0 cached, 0 failed in 2.53ms
+nano-lean	perf/short-circuit-and	perf	accept	accepted	correct	0	0.023	0.059	197.6		440	ok 1486 declarations, 0 cached, 0 failed in 13.44ms
+nano-lean	perf/short-circuit-and-bad	perf	reject	rejected	correct	1	0.126	0.158	300.2		240	FAIL 1484 declarations, 0 cached, 1 failed in 117.80ms
+nano-lean	perf/unfold-before-literal	perf	accept	accepted	correct	0	0.788	2.344	3282.6		480	ok 63 declarations, 0 cached, 0 failed in 779.17ms
+nano-lean	perf/unfold-before-literal-bad	perf	reject	rejected	correct	1	0.683	0.685	1138.5		260	FAIL 59 declarations, 0 cached, 1 failed in 678.19ms
+nano-lean	perf/unfold-before-literal-fallback	perf	accept	accepted	correct	0	0.991	2.538	2994.4		540	ok 63 declarations, 0 cached, 0 failed in 981.12ms
+nano-lean	perf/unroll-versus-evaluate	perf	accept	accepted	correct	0	0.005	0.007	32.4		80	ok 10 declarations, 0 cached, 0 failed in 1.40ms
+nano-lean	tutorial/001_basicDef	tutorial	accept	accepted	correct	0	0.004	0.004	8.1			ok 1 declarations, 0 cached, 0 failed in 400.93µs
+nano-lean	tutorial/002_badDef	tutorial	reject	rejected	correct	1	0.004	0.004	8.1			FAIL 1 declarations, 0 cached, 1 failed in 335.44µs
+nano-lean	tutorial/003_arrowType	tutorial	accept	accepted	correct	0	0.004	0.004	12.2			ok 1 declarations, 0 cached, 0 failed in 451.17µs
+nano-lean	tutorial/004_dependentType	tutorial	accept	accepted	correct	0	0.004	0.004	10.2			ok 1 declarations, 0 cached, 0 failed in 446.93µs
+nano-lean	tutorial/005_constType	tutorial	accept	accepted	correct	0	0.003	0.003	12.2			ok 1 declarations, 0 cached, 0 failed in 448.54µs
+nano-lean	tutorial/006_betaReduction	tutorial	accept	accepted	correct	0	0.004	0.004	14.2			ok 2 declarations, 0 cached, 0 failed in 486.67µs
+nano-lean	tutorial/007_betaReduction2	tutorial	accept	accepted	correct	0	0.004	0.004	14.2			ok 2 declarations, 0 cached, 0 failed in 520.32µs
+nano-lean	tutorial/008_forallSortWhnf	tutorial	accept	accepted	correct	0	0.004	0.004	14.2			ok 2 declarations, 0 cached, 0 failed in 371.25µs
+nano-lean	tutorial/009_forallSortBad	tutorial	reject	rejected	correct	1	0.004	0.004	14.0			FAIL 2 declarations, 0 cached, 1 failed in 461.38µs
+nano-lean	tutorial/010_nonTypeType	tutorial	reject	rejected	correct	1	0.004	0.004	14.1			FAIL 2 declarations, 0 cached, 1 failed in 401.07µs
+nano-lean	tutorial/011_nonTypeAxiom	tutorial	reject	rejected	correct	1	0.004	0.004	14.1			FAIL 2 declarations, 0 cached, 1 failed in 474.72µs
+nano-lean	tutorial/012_nonPropThm	tutorial	reject	rejected	correct	1	0.004	0.003	8.1			FAIL 1 declarations, 0 cached, 1 failed in 309.73µs
+nano-lean	tutorial/013_thmProof	tutorial	accept	accepted	correct	0	0.004	0.004	16.3			ok 2 declarations, 0 cached, 0 failed in 585.86µs
+nano-lean	tutorial/014_selfProof	tutorial	reject	rejected	correct	1	0.004	0.004	10.2			FAIL 1 declarations, 0 cached, 1 failed in 573.34µs
+nano-lean	tutorial/015_levelComp1	tutorial	accept	accepted	correct	0	0.004	0.004	8.1			ok 1 declarations, 0 cached, 0 failed in 421.62µs
+nano-lean	tutorial/016_levelComp2	tutorial	accept	accepted	correct	0	0.004	0.004	8.1			ok 1 declarations, 0 cached, 0 failed in 413.87µs
+nano-lean	tutorial/017_levelComp3	tutorial	accept	accepted	correct	0	0.003	0.003	8.1			ok 1 declarations, 0 cached, 0 failed in 361.17µs
+nano-lean	tutorial/018_levelParams	tutorial	accept	accepted	correct	0	0.004	0.004	14.2			ok 2 declarations, 0 cached, 0 failed in 486.30µs
+nano-lean	tutorial/019_tut06_bad01	tutorial	reject	rejected	correct	1	0.004	0.003	6.8			
+nano-lean	tutorial/020_levelComp4	tutorial	accept	accepted	correct	0	0.004	0.004	8.1			ok 1 declarations, 0 cached, 0 failed in 408.35µs
+nano-lean	tutorial/021_levelComp5	tutorial	accept	accepted	correct	0	0.004	0.003	8.1			ok 1 declarations, 0 cached, 0 failed in 401.95µs
+nano-lean	tutorial/022_imax1	tutorial	accept	accepted	correct	0	0.004	0.004	12.2			ok 1 declarations, 0 cached, 0 failed in 475.34µs
+nano-lean	tutorial/023_imax2	tutorial	accept	accepted	correct	0	0.004	0.004	12.2			ok 1 declarations, 0 cached, 0 failed in 548.80µs
+nano-lean	tutorial/024_levelMaxComm	tutorial	accept	accepted	correct	0	0.004	0.004	10.1			ok 1 declarations, 0 cached, 0 failed in 399.26µs
+nano-lean	tutorial/025_levelMaxAssoc	tutorial	accept	accepted	correct	0	0.004	0.004	10.0			ok 1 declarations, 0 cached, 0 failed in 385.31µs
+nano-lean	tutorial/026_levelMaxIdem	tutorial	accept	accepted	correct	0	0.004	0.004	8.1			ok 1 declarations, 0 cached, 0 failed in 307.38µs
+nano-lean	tutorial/027_levelMaxAbsorb	tutorial	accept	accepted	correct	0	0.004	0.004	10.1			ok 1 declarations, 0 cached, 0 failed in 383.54µs
+nano-lean	tutorial/028_inferVar	tutorial	accept	accepted	correct	0	0.003	0.003	12.2			ok 1 declarations, 0 cached, 0 failed in 392.99µs
+nano-lean	tutorial/029_defEqLambda	tutorial	accept	accepted	correct	0	0.004	0.003	12.2			ok 1 declarations, 0 cached, 0 failed in 384.58µs
+nano-lean	tutorial/030_peano1	tutorial	accept	accepted	correct	0	0.005	0.006	22.2			ok 7 declarations, 0 cached, 0 failed in 784.83µs
+nano-lean	tutorial/031_peano2	tutorial	accept	accepted	correct	0	0.004	0.006	24.3			ok 8 declarations, 0 cached, 0 failed in 857.65µs
+nano-lean	tutorial/032_peano3	tutorial	accept	accepted	correct	0	0.004	0.006	24.1			ok 10 declarations, 0 cached, 0 failed in 786.10µs
+nano-lean	tutorial/033_letType	tutorial	accept	accepted	correct	0	0.003	0.003	10.2			ok 1 declarations, 0 cached, 0 failed in 377.17µs
+nano-lean	tutorial/034_letTypeDep	tutorial	accept	accepted	correct	0	0.003	0.004	18.3			ok 3 declarations, 0 cached, 0 failed in 508.50µs
+nano-lean	tutorial/035_letRed	tutorial	accept	accepted	correct	0	0.004	0.004	14.2			ok 2 declarations, 0 cached, 0 failed in 459.33µs
+nano-lean	tutorial/036_empty	tutorial	accept	accepted	correct	0	0.004	0.005	18.3			ok 3 declarations, 0 cached, 0 failed in 642.35µs
+nano-lean	tutorial/037_boolType	tutorial	accept	accepted	correct	0	0.004	0.004	18.3			ok 5 declarations, 0 cached, 0 failed in 513.47µs
+nano-lean	tutorial/038_twoBool	tutorial	accept	accepted	correct	0	0.004	0.005	26.4			ok 8 declarations, 0 cached, 0 failed in 595.49µs
+nano-lean	tutorial/039_andType	tutorial	accept	accepted	correct	0	0.004	0.005	22.3			ok 4 declarations, 0 cached, 0 failed in 651.06µs
+nano-lean	tutorial/040_prodType	tutorial	accept	accepted	correct	0	0.004	0.005	22.2			ok 4 declarations, 0 cached, 0 failed in 659.26µs
+nano-lean	tutorial/041_pprodType	tutorial	accept	accepted	correct	0	0.004	0.005	22.2			ok 4 declarations, 0 cached, 0 failed in 686.93µs
+nano-lean	tutorial/042_pUnitType	tutorial	accept	accepted	correct	0	0.003	0.004	18.0			ok 4 declarations, 0 cached, 0 failed in 517.86µs
+nano-lean	tutorial/043_eqType	tutorial	accept	accepted	correct	0	0.004	0.004	22.3			ok 4 declarations, 0 cached, 0 failed in 789.87µs
+nano-lean	tutorial/044_natDef	tutorial	accept	accepted	correct	0	0.003	0.004	22.4			ok 5 declarations, 0 cached, 0 failed in 562.94µs
+nano-lean	tutorial/045_rbTreeDef	tutorial	accept	accepted	correct	0	0.004	0.005	22.3			ok 14 declarations, 0 cached, 0 failed in 726.62µs
+nano-lean	tutorial/046_inductBadNonSort	tutorial	reject	rejected	correct	1	0.004	0.004	16.1			FAIL 2 declarations, 0 cached, 1 failed in 425.57µs
+nano-lean	tutorial/047_inductBadNonSort2	tutorial	reject	rejected	correct	1	0.003	0.003	12.0			FAIL 2 declarations, 0 cached, 1 failed in 377.97µs
+nano-lean	tutorial/048_inductLevelParam	tutorial	reject	rejected	correct	1	0.003	0.003	6.8			
+nano-lean	tutorial/049_inductTooFewParams	tutorial	reject	rejected	correct	1	0.003	0.003	14.4			FAIL 1 declarations, 0 cached, 1 failed in 477.23µs
+nano-lean	tutorial/050_inductWrongCtorParams	tutorial	reject	rejected	correct	1	0.003	0.004	20.2			FAIL 4 declarations, 0 cached, 1 failed in 546.10µs
+nano-lean	tutorial/051_inductWrongCtorResParams	tutorial	reject	rejected	correct	1	0.003	0.004	20.2			FAIL 3 declarations, 0 cached, 1 failed in 652.10µs
+nano-lean	tutorial/052_inductWrongCtorResLevel	tutorial	reject	rejected	correct	1	0.004	0.005	20.2			FAIL 3 declarations, 0 cached, 1 failed in 668.48µs
+nano-lean	tutorial/053_inductInIndex	tutorial	reject	rejected	correct	1	0.004	0.004	20.1			FAIL 4 declarations, 0 cached, 1 failed in 536.99µs
+nano-lean	tutorial/054_indNeg	tutorial	reject	rejected	correct	1	0.004	0.005	18.1			FAIL 3 declarations, 0 cached, 1 failed in 510.37µs
+nano-lean	tutorial/055_reduceCtorParam.mk	tutorial	accept	accepted	correct	0	0.004	0.005	22.2			ok 5 declarations, 0 cached, 0 failed in 681.50µs
+nano-lean	tutorial/056_reduceCtorType.mk	tutorial	reject	rejected	correct	1	0.004	0.004	20.0			FAIL 4 declarations, 0 cached, 1 failed in 643.54µs
+nano-lean	tutorial/057_indNegReducible	tutorial	reject	rejected	correct	1	0.004	0.004	20.1			FAIL 5 declarations, 0 cached, 1 failed in 553.81µs
+nano-lean	tutorial/058_predWithTypeField	tutorial	accept	accepted	correct	0	0.005	0.005	20.2			ok 4 declarations, 0 cached, 0 failed in 646.16µs
+nano-lean	tutorial/059_typeWithTypeField	tutorial	accept	accepted	correct	0	0.004	0.005	20.1			ok 4 declarations, 0 cached, 0 failed in 640.59µs
+nano-lean	tutorial/060_typeWithTypeFieldPoly	tutorial	accept	accepted	correct	0	0.004	0.004	20.3			ok 4 declarations, 0 cached, 0 failed in 603.74µs
+nano-lean	tutorial/061_typeWithTooHighTypeField.mk	tutorial	reject	rejected	correct	1	0.004	0.005	20.2			FAIL 3 declarations, 0 cached, 1 failed in 496.16µs
+nano-lean	tutorial/062_emptyRec	tutorial	accept	accepted	correct	0	0.004	0.005	20.3			ok 3 declarations, 0 cached, 0 failed in 655.26µs
+nano-lean	tutorial/063_boolRec	tutorial	accept	accepted	correct	0	0.004	0.005	24.2			ok 5 declarations, 0 cached, 0 failed in 718.38µs
+nano-lean	tutorial/064_twoBoolRec	tutorial	accept	accepted	correct	0	0.004	0.005	20.0			ok 8 declarations, 0 cached, 0 failed in 561.22µs
+nano-lean	tutorial/065_andRec	tutorial	accept	accepted	correct	0	0.004	0.005	24.3			ok 4 declarations, 0 cached, 0 failed in 747.54µs
+nano-lean	tutorial/066_prodRec	tutorial	accept	accepted	correct	0	0.005	0.005	22.1			ok 4 declarations, 0 cached, 0 failed in 722.93µs
+nano-lean	tutorial/067_pprodRec	tutorial	accept	accepted	correct	0	0.004	0.005	24.0			ok 4 declarations, 0 cached, 0 failed in 722.14µs
+nano-lean	tutorial/068_punitRec	tutorial	accept	accepted	correct	0	0.004	0.005	20.3			ok 4 declarations, 0 cached, 0 failed in 578.46µs
+nano-lean	tutorial/069_eqRec	tutorial	accept	accepted	correct	0	0.004	0.005	22.3			ok 4 declarations, 0 cached, 0 failed in 654.48µs
+nano-lean	tutorial/070_nRec	tutorial	accept	accepted	correct	0	0.004	0.005	22.2			ok 5 declarations, 0 cached, 0 failed in 706.46µs
+nano-lean	tutorial/071_rbTreeRef	tutorial	accept	accepted	correct	0	0.005	0.006	26.4			ok 14 declarations, 0 cached, 0 failed in 793.47µs
+nano-lean	tutorial/072_boolPropRec	tutorial	accept	accepted	correct	0	0.004	0.005	22.2			ok 5 declarations, 0 cached, 0 failed in 694.77µs
+nano-lean	tutorial/073_BogusRecursor	tutorial	reject	rejected	correct	1	0.004	0.005	22.1			FAIL 6 declarations, 0 cached, 1 failed in 735.47µs
+nano-lean	tutorial/074_existsRec	tutorial	accept	accepted	correct	0	0.004	0.005	24.3			ok 4 declarations, 0 cached, 0 failed in 872.58µs
+nano-lean	tutorial/075_typeSingletonRecReduction	tutorial	accept	accepted	correct	0	0.004	0.006	26.4			ok 12 declarations, 0 cached, 0 failed in 937.84µs
+nano-lean	tutorial/076_sortElimPropRec	tutorial	accept	accepted	correct	0	0.004	0.004	22.2			ok 8 declarations, 0 cached, 0 failed in 553.22µs
+nano-lean	tutorial/077_sortElimProp2Rec	tutorial	accept	accepted	correct	0	0.004	0.005	22.5			ok 9 declarations, 0 cached, 0 failed in 660.22µs
+nano-lean	tutorial/078_boolRecEqns	tutorial	accept	accepted	correct	0	0.005	0.006	28.6			ok 11 declarations, 0 cached, 0 failed in 816.21µs
+nano-lean	tutorial/079_prodRecEqns	tutorial	accept	accepted	correct	0	0.005	0.006	28.2			ok 7 declarations, 0 cached, 0 failed in 929.01µs
+nano-lean	tutorial/080_nRecReduction	tutorial	accept	accepted	correct	0	0.004	0.006	30.8			ok 13 declarations, 0 cached, 0 failed in 1.06ms
+nano-lean	tutorial/081_listRecReduction	tutorial	accept	accepted	correct	0	0.005	0.007	32.4			ok 14 declarations, 0 cached, 0 failed in 1.10ms
+nano-lean	tutorial/082_RBTree.id_spec	tutorial	accept	accepted	correct	0	0.005	0.007	35.8			ok 19 declarations, 0 cached, 0 failed in 1.29ms
+nano-lean	tutorial/083_And.right	tutorial	accept	accepted	correct	0	0.005	0.006	26.3			ok 5 declarations, 0 cached, 0 failed in 762.85µs
+nano-lean	tutorial/084_Prod.snd	tutorial	accept	accepted	correct	0	0.004	0.005	24.0			ok 5 declarations, 0 cached, 0 failed in 640.02µs
+nano-lean	tutorial/085_PProd.snd	tutorial	accept	accepted	correct	0	0.004	0.006	26.0			ok 5 declarations, 0 cached, 0 failed in 845.42µs
+nano-lean	tutorial/086_PSigma.snd	tutorial	accept	accepted	correct	0	0.004	0.005	26.0			ok 5 declarations, 0 cached, 0 failed in 854.64µs
+nano-lean	tutorial/087_projOutOfRange	tutorial	reject	rejected	correct	1	0.004	0.005	24.3			FAIL 4 declarations, 0 cached, 1 failed in 792.38µs
+nano-lean	tutorial/088_projNotStruct	tutorial	reject	rejected	correct	1	0.004	0.005	22.2			FAIL 5 declarations, 0 cached, 1 failed in 539.62µs
+nano-lean	tutorial/089_projProp1	tutorial	accept	accepted	correct	0	0.004	0.005	24.4			ok 10 declarations, 0 cached, 0 failed in 761.66µs
+nano-lean	tutorial/090_projProp2	tutorial	reject	rejected	correct	1	0.005	0.006	26.3			FAIL 10 declarations, 0 cached, 1 failed in 683.98µs
+nano-lean	tutorial/091_projProp3	tutorial	accept	accepted	correct	0	0.005	0.006	26.4			ok 10 declarations, 0 cached, 0 failed in 806.03µs
+nano-lean	tutorial/092_projProp4	tutorial	reject	rejected	correct	1	0.004	0.005	26.6			FAIL 10 declarations, 0 cached, 1 failed in 698.38µs
+nano-lean	tutorial/093_projProp5	tutorial	reject	rejected	correct	1	0.005	0.006	26.3			FAIL 10 declarations, 0 cached, 1 failed in 768.10µs
+nano-lean	tutorial/094_projProp6	tutorial	reject	rejected	correct	1	0.004	0.005	24.5			FAIL 10 declarations, 0 cached, 1 failed in 725.09µs
+nano-lean	tutorial/095_projDataIndexRec	tutorial	accept	accepted	correct	0	0.004	0.005	22.3			ok 11 declarations, 0 cached, 0 failed in 672.02µs
+nano-lean	tutorial/096_projIndexData	tutorial	reject	rejected	correct	1	0.004	0.006	32.3			FAIL 20 declarations, 0 cached, 1 failed in 933.42µs
+nano-lean	tutorial/097_projIndexData2	tutorial	reject	rejected	correct	1	0.005	0.006	34.1			FAIL 20 declarations, 0 cached, 1 failed in 831.22µs
+nano-lean	tutorial/098_projRed	tutorial	accept	accepted	correct	0	0.005	0.006	30.1			ok 13 declarations, 0 cached, 0 failed in 888.18µs
+nano-lean	tutorial/099_ruleK	tutorial	accept	accepted	correct	0	0.004	0.005	26.3			ok 8 declarations, 0 cached, 0 failed in 793.33µs
+nano-lean	tutorial/100_ruleKbad	tutorial	reject	rejected	correct	1	0.005	0.006	28.1			FAIL 8 declarations, 0 cached, 1 failed in 831.81µs
+nano-lean	tutorial/101_ruleKAcc	tutorial	reject	rejected	correct	1	0.004	0.006	28.8			FAIL 11 declarations, 0 cached, 1 failed in 956.96µs
+nano-lean	tutorial/102_aNatLit	tutorial	accept	accepted	correct	0	0.003	0.004	20.4			ok 5 declarations, 0 cached, 0 failed in 526.05µs
+nano-lean	tutorial/103_natLitEq	tutorial	accept	accepted	correct	0	0.004	0.005	26.6			ok 8 declarations, 0 cached, 0 failed in 768.11µs
+nano-lean	tutorial/104_proofIrrelevance	tutorial	accept	accepted	correct	0	0.004	0.005	24.1			ok 5 declarations, 0 cached, 0 failed in 807.78µs
+nano-lean	tutorial/105_proofIrrelevanceBad	tutorial	reject	rejected	correct	1	0.005	0.006	26.2			FAIL 5 declarations, 0 cached, 1 failed in 768.18µs
+nano-lean	tutorial/106_proofIrrelevanceWhnf	tutorial	accept	accepted	correct	0	0.004	0.006	26.0			ok 6 declarations, 0 cached, 0 failed in 861.17µs
+nano-lean	tutorial/107_proofIrrelevanceUnderBinder	tutorial	accept	accepted	correct	0	0.004	0.004	18.1			ok 7 declarations, 0 cached, 0 failed in 570.80µs
+nano-lean	tutorial/108_unitEta1	tutorial	accept	accepted	correct	0	0.003	0.004	24.3			ok 9 declarations, 0 cached, 0 failed in 703.86µs
+nano-lean	tutorial/109_unitEta2	tutorial	accept	accepted	correct	0	0.004	0.005	26.3			ok 8 declarations, 0 cached, 0 failed in 822.00µs
+nano-lean	tutorial/110_unitEta3	tutorial	accept	accepted	correct	0	0.004	0.006	28.2			ok 8 declarations, 0 cached, 0 failed in 801.62µs
+nano-lean	tutorial/111_indexedUnitEta	tutorial	reject	rejected	correct	1	0.004	0.006	26.4			FAIL 11 declarations, 0 cached, 1 failed in 896.64µs
+nano-lean	tutorial/112_structEta	tutorial	accept	accepted	correct	0	0.005	0.007	30.7			ok 13 declarations, 0 cached, 0 failed in 1.15ms
+nano-lean	tutorial/113_indexedStructEta	tutorial	reject	rejected	correct	1	0.005	0.006	28.4			FAIL 14 declarations, 0 cached, 1 failed in 912.37µs
+nano-lean	tutorial/114_funEta	tutorial	accept	accepted	correct	0	0.005	0.006	26.1			ok 5 declarations, 0 cached, 0 failed in 771.74µs
+nano-lean	tutorial/115_funEtaDep	tutorial	accept	accepted	correct	0	0.004	0.005	26.2			ok 5 declarations, 0 cached, 0 failed in 770.05µs
+nano-lean	tutorial/116_funEtaBad	tutorial	reject	rejected	correct	1	0.004	0.005	24.2			FAIL 4 declarations, 0 cached, 1 failed in 606.64µs
+nano-lean	tutorial/117_reflOccLeft	tutorial	reject	rejected	correct	1	0.004	0.005	28.5			FAIL 7 declarations, 0 cached, 1 failed in 766.53µs
+nano-lean	tutorial/118_reflOccInIndex	tutorial	reject	rejected	correct	1	0.003	0.004	26.3			FAIL 7 declarations, 0 cached, 1 failed in 643.84µs
+nano-lean	tutorial/119_reduceCtorParamRefl.mk	tutorial	accept	accepted	correct	0	0.004	0.005	22.1			ok 5 declarations, 0 cached, 0 failed in 668.51µs
+nano-lean	tutorial/120_reduceCtorParamRefl2.mk	tutorial	accept	accepted	correct	0	0.004	0.005	22.1			ok 5 declarations, 0 cached, 0 failed in 730.29µs
+nano-lean	tutorial/121_rTreeRec	tutorial	accept	accepted	correct	0	0.004	0.005	26.3			ok 9 declarations, 0 cached, 0 failed in 661.02µs
+nano-lean	tutorial/122_rtreeRecReduction	tutorial	accept	accepted	correct	0	0.005	0.006	30.5			ok 14 declarations, 0 cached, 0 failed in 849.06µs
+nano-lean	tutorial/123_accRecType	tutorial	accept	accepted	correct	0	0.003	0.004	24.1			ok 4 declarations, 0 cached, 0 failed in 662.80µs
+nano-lean	tutorial/124_accRecReduction	tutorial	accept	accepted	correct	0	0.004	0.005	26.8			ok 11 declarations, 0 cached, 0 failed in 856.21µs
+nano-lean	tutorial/125_accRecNoEta	tutorial	reject	rejected	correct	1	0.005	0.006	28.9			FAIL 11 declarations, 0 cached, 1 failed in 1.04ms
+nano-lean	tutorial/126_quotMkType	tutorial	accept	accepted	correct	0	0.004	0.006	26.3			ok 8 declarations, 0 cached, 0 failed in 811.30µs
+nano-lean	tutorial/127_quotIndType	tutorial	accept	accepted	correct	0	0.004	0.005	24.3			ok 8 declarations, 0 cached, 0 failed in 655.12µs
+nano-lean	tutorial/128_quotLiftType	tutorial	accept	accepted	correct	0	0.003	0.005	26.4			ok 8 declarations, 0 cached, 0 failed in 708.66µs
+nano-lean	tutorial/129_quotSoundType	tutorial	accept	accepted	correct	0	0.004	0.005	26.7			ok 9 declarations, 0 cached, 0 failed in 731.18µs
+nano-lean	tutorial/130_quotLiftReduction	tutorial	accept	accepted	correct	0	0.004	0.006	26.4			ok 8 declarations, 0 cached, 0 failed in 849.46µs
+nano-lean	tutorial/131_quotIndReduction	tutorial	accept	accepted	correct	0	0.004	0.005	24.4			ok 8 declarations, 0 cached, 0 failed in 726.45µs
+nano-lean	tutorial/132_dup_defs	tutorial	reject	rejected	correct	1	0.002	0.002	6.8			
+nano-lean	tutorial/133_dup_ind_def	tutorial	reject	rejected	correct	1	0.004	0.003	8.9			
+nano-lean	tutorial/134_dup_ctor_def	tutorial	reject	rejected	correct	1	0.002	0.002	8.8			
+nano-lean	tutorial/135_dup_rec_def	tutorial	reject	rejected	correct	1	0.002	0.002	8.8			
+nano-lean	tutorial/136_misnamed_rec_user	tutorial	reject	rejected	correct	1	0.004	0.005	22.1			FAIL 4 declarations, 0 cached, 1 failed in 537.94µs
+nano-lean	tutorial/137_dup_rec_def2	tutorial	reject	rejected	correct	1	0.003	0.004	18.0			FAIL 4 declarations, 0 cached, 1 failed in 543.74µs
+nano-lean	tutorial/138_dup_ctor_rec	tutorial	reject	rejected	correct	1	0.003	0.003	8.9			
+nano-lean	tutorial/139_DupConCon	tutorial	reject	rejected	correct	1	0.002	0.002	10.9			
+nano-lean	tutorial/140_falseFromUnsafe	tutorial	reject	rejected	correct	1	0.003	0.003	8.9			
+nano-lean	tutorial/141_falseFromPartial	tutorial	reject	rejected	correct	1	0.003	0.003	8.8			
+nitrolean	init	real-world	accept	accepted	correct	0	14.430	15.036	232.4		740	
+official	init	real-world	accept	accepted	correct	0	35.711	35.706	610.5		740	
+gruszka	init	real-world	accept	accepted	correct	0	0.896	3.358	448.9		740	
+nano-lean	init	real-world	accept	accepted	correct	0	1.582	5.549	966.5		740	ok 59979 declarations, 0 cached, 0 failed in 1.30s
+nitrolean	std	real-world	accept	accepted	correct	0	24.801	25.843	374.0		1200	
+official	std	real-world	accept	accepted	correct	0	61.273	61.246	956.6		1200	
+gruszka	std	real-world	accept	accepted	correct	0	1.575	5.675	573.4		1200	
+nano-lean	std	real-world	accept	accepted	correct	0	2.659	9.276	1163.2		1200	ok 103885 declarations, 0 cached, 0 failed in 2.16s
+nitrolean	perf/gf3-matrix-product	perf	accept	accepted	correct	0	9.893	9.891	3228.4		140	
+official	perf/gf3-matrix-product	perf	accept	accepted	correct	0	2.072	2.071	3649.3		140	
+gruszka	perf/gf3-matrix-product	perf	accept	accepted	correct	0	1.346	1.367	324.7		140	
+nano-lean	perf/gf3-matrix-product	perf	accept	accepted	correct	0	0.530	0.539	3718.9		140	ok 437 declarations, 0 cached, 0 failed in 517.16ms
+official	reachability	real-world	accept	accepted	correct	0	18.560	18.314	1684.1		440	
+gruszka	reachability	real-world	accept	accepted	correct	0	0.965	1.727	900.9		440	
+nano-lean	reachability	real-world	accept	accepted	correct	0	0.702	1.929	1469.7		440	ok 4846 declarations, 0 cached, 0 failed in 678.64ms
+nitrolean	con-leche	real-world	accept	accepted	correct	0	60.263	61.490	2889.5		1840	
+official	con-leche	real-world	accept	accepted	correct	0	129.968	129.949	7197.2		1840	
+gruszka	con-leche	real-world	accept	accepted	correct	0	1.965	7.401	680.3		1840	
+nano-lean	con-leche	real-world	accept	accepted	correct	0	3.592	13.009	1729.2		1840	ok 38246 declarations, 0 cached, 0 failed in 3.12s
+nitrolean	reachability	real-world	accept	timeout	error	-9	440.002	0.001	21.0		440	
+nitrolean	cedar	real-world	accept	accepted	correct	0	30.918	32.553	564.0		1280	
+official	cedar	real-world	accept	accepted	correct	0	82.297	82.270	1451.9		1280	
+gruszka	cedar	real-world	accept	accepted	correct	0	2.378	8.708	702.1		1280	
+nano-lean	cedar	real-world	accept	accepted	correct	0	4.168	14.622	1428.4		1280	ok 151772 declarations, 0 cached, 0 failed in 3.42s
+nitrolean	mathlib	real-world	accept	accepted	correct	0	613.170	623.981	4720.6		8240	
+nitrolean	cslib	real-world	accept	accepted	correct	0	151.153	155.545	1621.6		3200	
+nitrolean	navier-stokes-euler	real-world	accept	accepted	correct	0	192.256	194.829	960.3		3680	
+official	mathlib	real-world	accept	accepted	correct	0	1578.054	1577.247	10170.6		8240	
+gruszka	mathlib	real-world	accept	accepted	correct	0	19.384	72.257	2798.8		8240	
+nano-lean	mathlib	real-world	accept	accepted	correct	0	29.059	100.635	5159.2		8240	ok 739167 declarations, 0 cached, 0 failed in 23.55s
+official	cslib	real-world	accept	accepted	correct	0	343.785	343.662	3610.7		3200	
+gruszka	cslib	real-world	accept	accepted	correct	0	7.044	25.699	1393.9		3200	
+nano-lean	cslib	real-world	accept	accepted	correct	0	10.709	36.162	2426.0		3200	ok 413186 declarations, 0 cached, 0 failed in 8.37s
+official	navier-stokes-euler	real-world	accept	accepted	correct	0	443.488	443.342	2563.0		3680	
+gruszka	navier-stokes-euler	real-world	accept	accepted	correct	0	4.834	17.579	833.6		3680	
+nano-lean	navier-stokes-euler	real-world	accept	accepted	correct	0	7.134	25.873	2056.1		3680	ok 129845 declarations, 0 cached, 0 failed in 6.15s

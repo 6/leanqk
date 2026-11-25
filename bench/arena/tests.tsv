@@ -1,0 +1,271 @@
+test	group	expected	timeout	compare_perf	skip_on_ci	lean_version	export_format	lines	bytes	sha256	yaml
+bugs/closure-level-subst	bugs	reject				4.35.0	3.1.0	74	4087	ba61ad635f4a1e8929b3ada25df22a8ab854f908d5fac44f9e7bf5f2d91ae3a0	tests/bugs/closure-level-subst.yaml
+bugs/constlevels	bugs	reject				4.29.1	3.1.0	283	15670	2fa6a967f15f76cfdcea3ef1992ff31a4cc4aa647b0f8fabf0ff61eedb3afbf1	tests/bugs/constlevels.yaml
+bugs/ctor-num-fields	bugs	reject				4.36.0	3.1.0	755	42086	d2ae68ca43f78b6295815c5c0020e5ae7ff03a3bc7933973dcfc3662cd34b987	tests/bugs/ctor-num-fields.yaml
+bugs/eta-ctor-alias	bugs	reject				4.36.0	3.1.0	122	7365	4226fcb520a549ae478f51e92179514a6cdd0464e6e37e5fcc8b4d6a3f1f9f37	tests/bugs/eta-ctor-alias.yaml
+bugs/k-rec-conv	bugs	reject				4.36.0	3.1.0	232	12861	cdbc8ac430d367a13c009b5c383692c392ac790ae7178a297bfca6f89611da28	tests/bugs/k-rec-conv.yaml
+bugs/large-elim-param	bugs	reject				4.29.1	3.1.0	88	6351	df7d23ff199c4956620f3b1b4d17976c6bbe99ec6c1b5a4e803a7f9f415e331f	tests/bugs/large-elim-param.yaml
+bugs/large-elim-prop-bool	bugs	reject				4.36.0	3.1.0	438	23126	f4a607bfcb72613d4f21423aa8d6eedd927f4e6e929bccfbbe0e01c66a7aaf11	tests/bugs/large-elim-prop-bool.yaml
+bugs/level-imax-leq	bugs	reject				4.29.1	3.1.0	93	5708	497eaa80a214386c679356c33a72c8beab5019c4938494b1608e3772a2756191	tests/bugs/level-imax-leq.yaml
+bugs/level-imax-normalization	bugs	reject				4.29.1	3.1.0	96	5897	d368d5569321b717b7ec95bd1f4fa5bbd7d6e1f8d6ebdf1a0644dc8bc76bc2ec	tests/bugs/level-imax-normalization.yaml
+bugs/loose-bvar-value	bugs	reject				4.34.1	3.1.0	48	2723	a702608ad2a794f5a4fbac42aa8d3894c2f1ab9707013b9e3ac57b2310a2b328	tests/bugs/loose-bvar-value.yaml
+bugs/nat-rec-k-lie	bugs	reject				4.29.1	3.1.0	106	6413	5a49d132bb0c7dca091baa481333f5e97e390fde72c8ec18c6124a690ec47d7c	tests/bugs/nat-rec-k-lie.yaml
+bugs/nat-rec-rules	bugs	reject				4.29.1	3.1.0	128	8345	934e59fdc4f2a978605c4a44e90b94b57e9940f3828620c0db337b7125cdd169	tests/bugs/nat-rec-rules.yaml
+bugs/nat-shift-huge	bugs	accept				4.36.0	3.1.0	5951	322126	e00dfce17f87da4e5e77b7a648b6a789d4b3e959b6a30f6ac4c9bac1a9ab4774	tests/bugs/nat-shift-huge.yaml
+bugs/nested-name-capture	bugs	reject				4.34.1	3.1.0	433	26680	9d38f6480b12a9061ac54dec8ea27477414a39c65301dfb7ee5cedaa8d3cffad	tests/bugs/nested-name-capture.yaml
+bugs/nested-rec-rule-nfields	bugs	reject				4.36.0	3.1.0	728	40840	219705fe0441ce59be6034b40f301fca0bbab2daf1ed0a2340fe57b88bef1e93	tests/bugs/nested-rec-rule-nfields.yaml
+bugs/nested-unused-param	bugs	reject				4.36.0	3.1.0	1080	62579	4655ab3132498e61c2a254a394792a47268ece4fbe13cf8eb3ce2c075105f160	tests/bugs/nested-unused-param.yaml
+bugs/open-term-cache-context	bugs	reject				4.36.0	3.1.0	32	1703	32b03b411fa0ec4e50e799ccc2bcfe0f925b8f26e7068b92a6746c04ad1b3cf7	tests/bugs/open-term-cache-context.yaml
+bugs/orphan-rec	bugs	reject				4.29.1	3.1.0	21	1401	738f28bc1175d70faf09f4b45ae7ca92e8b8d397f6c5d0183240cd695f6d7bc4	tests/bugs/orphan-rec.yaml
+bugs/pi-closure-context	bugs	reject				4.35.0	3.1.0	26	1543	730013454f261b1c20e3ee4600821e325715929a6ddca36779f6ce9e5f506520	tests/bugs/pi-closure-context.yaml
+bugs/proj-non-structure	bugs	reject				4.36.0	3.1.0	75	5071	42d1f0023f97ce7bd31c5d2bda5858a22ce1c0ead587093d767f7c223f376e7a	tests/bugs/proj-non-structure.yaml
+bugs/proj-of-imax-prop	bugs	reject				4.36.0	3.1.0	321	19774	b5eaae68615b8331dc28b00490939d7d304b6c4dd72ba14f8862c4b523aeb6f3	tests/bugs/proj-of-imax-prop.yaml
+bugs/proj-of-stuck-prop	bugs	reject				4.36.0	3.1.0	5261	282277	aabaaa8c00735d29d654cdf7dbee03c3bf6428251987c4487018dceb8209536e	tests/bugs/proj-of-stuck-prop.yaml
+bugs/proj-of-subst-prop	bugs	reject				4.36.0	3.1.0	4848	261052	c82690db06f271a8318c774336827ac3a7828b84710bc805bf78c8ba0687c21a	tests/bugs/proj-of-subst-prop.yaml
+bugs/quot-bad-type	bugs	reject				4.36.0	3.1.0	73	4163	3ee49c21f36b4147076952b3db718c52a49d12caa02b9c65a98c9418235606aa	tests/bugs/quot-bad-type.yaml
+bugs/rec-k-lie	bugs	reject				4.36.0	3.1.0	87	5434	30ca6fafd71f89bac3094d0aac5baa16d80bff972deddb2e7784a7fc5cef9e06	tests/bugs/rec-k-lie.yaml
+bugs/rec-missing-ih	bugs	reject				4.29.1	3.1.0	5526	296514	8a240552317ba17d44d175c10531e5f988f55569db5eff734701735ce598fa73	tests/bugs/rec-missing-ih.yaml
+bugs/rec-of-subst-prop	bugs	reject				4.36.0	3.1.0	5094	275684	8fb68d3b31c15fa2bab2fe7dab5c32ed68a153ed63712bed650f8480775ca802	tests/bugs/rec-of-subst-prop.yaml
+bugs/rec-rule-proof-irrel	bugs	reject				4.36.0	3.1.0	466	25945	1f51a36c829353797ca5def9e2a33171b5fee90071d993ff7c611f59e35d83bf	tests/bugs/rec-rule-proof-irrel.yaml
+bugs/rec-rule-proof-irrel-nested	bugs	reject				4.36.0	3.1.0	584	33225	9d477146c0668ad4eb67f2dcb31f8aebb83db7f147bb6894bfb831bacacee0b1	tests/bugs/rec-rule-proof-irrel-nested.yaml
+bugs/rec-rule-wrong-arg	bugs	reject				4.36.0	3.1.0	363	21042	36600e2f6f7dfa6c289adb9d0d4b3b13f59f4d62aa4cc2ab0bd993010e74687d	tests/bugs/rec-rule-wrong-arg.yaml
+bugs/rec-type-proof-irrel	bugs	reject				4.36.0	3.1.0	462	25543	64741a196ef4d88041b2d99a9e1ad0096769ced1bf3acec60e23d232448f97e7	tests/bugs/rec-type-proof-irrel.yaml
+bugs/str-lit-utf8	bugs	accept				4.36.0	3.1.0	10749	592894	85b733d00d8034801c3f946589cd5f0803210b90826954dd57e30f1066a8ac27	tests/bugs/str-lit-utf8.yaml
+bugs/str-lit-utf8-bad	bugs	reject				4.36.0	3.1.0	10742	592615	3980980b789c2a4e3028f08f36fee068e47e00956e3309d5dce84481152b558d	tests/bugs/str-lit-utf8-bad.yaml
+bugs/unit-rec-rule	bugs	reject				4.34.1	3.1.0	54	3107	cb6d127a5f0daa9fa2047c338e809d1ffb9cc3d8454956c30eede38091a4a969	tests/bugs/unit-rec-rule.yaml
+cedar	real-world	accept	640	yes	yes	4.36.0	3.1.0	15913292	904722064	787b0e0790186f14f79f450896650fe120cd64efcdb4ca9220667612519f0a79	tests/cedar.yaml
+con-leche	real-world	accept	920	yes	yes	4.36.0	3.1.0	12734575	701947717	799c9744ccb5d10bf5ffb0ea63bc11532aaaf95d7eecc678ec43175f18f66f1c	tests/con-leche.yaml
+corner-cases/alg-conv-trans-acc	corner-cases	either				4.36.0	3.1.0	1176	67968	dfb79837ea26ea1daf7257efb326992925abd541031c5550a58a09df2393a0dd	tests/corner-cases/alg-conv-trans-acc.yaml
+corner-cases/alg-conv-trans-acc-left	corner-cases	either				4.36.0	3.1.0	1196	68991	776065768e5c644c5f0325f39bad9e941cdf0a6c54686015b043855ec4e322a0	tests/corner-cases/alg-conv-trans-acc-left.yaml
+corner-cases/alg-conv-trans-acc-right	corner-cases	either				4.36.0	3.1.0	1203	69258	68acf90761db0f36ffcbd3bcc4f33f308c777f87622938ffb638160ed48866ba	tests/corner-cases/alg-conv-trans-acc-right.yaml
+corner-cases/alg-conv-trans-quot	corner-cases	either				4.36.0	3.1.0	169	8680	900436dd4ac1e05e524154f3fcff8a458f828608b361dfc591b5db67cb53ebdf	tests/corner-cases/alg-conv-trans-quot.yaml
+corner-cases/alg-conv-trans-quot-left	corner-cases	either				4.36.0	3.1.0	173	8833	2c0f96f964a0c938befdbd321a9f33fd32119f07721fddd9d58d40d895aa0a28	tests/corner-cases/alg-conv-trans-quot-left.yaml
+corner-cases/alg-conv-trans-quot-left-def	corner-cases	either				4.36.0	3.1.0	208	10774	1e400163b871a336609216314e3fde87d3a950e96ffc8f086716c453b125fd59	tests/corner-cases/alg-conv-trans-quot-left-def.yaml
+corner-cases/alg-conv-trans-quot-right	corner-cases	either				4.36.0	3.1.0	180	9254	654f547a3f495b7e36f1361b4882da8a8b68692e758b2f811f38f8fca29eb86f	tests/corner-cases/alg-conv-trans-quot-right.yaml
+corner-cases/eta-ctor	corner-cases	either				4.36.0	3.1.0	148	9234	cb801f84fadbb4e145afb7b02b3051da5f99dd2951544e53c08c8cfd3d233e8e	tests/corner-cases/eta-ctor.yaml
+corner-cases/eta-rec-struct	corner-cases	either				4.36.0	3.1.0	174	9709	d924d1cfc2b4ef7c3d576d329e32ad28b6daa1abdbb529607dfaab3238ee6f13	tests/corner-cases/eta-rec-struct.yaml
+corner-cases/eta-rule-k	corner-cases	either				4.36.0	3.1.0	121	6626	29754a313b82637e4687028e3429991c75c205e34096126e95dbc42ffdd473a3	tests/corner-cases/eta-rule-k.yaml
+corner-cases/eta-struct-major-and	corner-cases	either				4.36.0	3.1.0	175	9613	c0bdc2c3ed4714b75bfed510884a4b4636b9e732473c2c84865e9c1e015533a5	tests/corner-cases/eta-struct-major-and.yaml
+corner-cases/eta-struct-major-and-no-whnf	corner-cases	either	60			4.36.0	3.1.0	421	24534	f1f4879eacbebb1c2a3555a5ab515f1310df8b4dbe003dce1ea50ddc01cb44f8	tests/corner-cases/eta-struct-major-and-no-whnf.yaml
+corner-cases/eta-struct-major-no-whnf	corner-cases	either	60			4.36.0	3.1.0	582	32967	0a0db564e6fb85d3ba68e74a23b6c1bc3e2e89d7ddfd6158a1f8f8f03cf9f338	tests/corner-cases/eta-struct-major-no-whnf.yaml
+corner-cases/eta-unit-like-nested	corner-cases	either				4.36.0	3.1.0	256	16429	5908cf5186c810cdcfa1836c8c92217d6d2ddd885684810b528825b211694c57	tests/corner-cases/eta-unit-like-nested.yaml
+corner-cases/eta-unit-like-pi	corner-cases	either				4.36.0	3.1.0	101	5769	74a6c346c6bbbb78f8eedee8a90bb32cd5ecc60a98cdc34f70ee461f8b597b99	tests/corner-cases/eta-unit-like-pi.yaml
+corner-cases/eta-unit-like-proof-field	corner-cases	either				4.36.0	3.1.0	111	6663	a773dbb19be9f9b733f270a2727f17fddbecb87e8223a63b58f67046d81d13f5	tests/corner-cases/eta-unit-like-proof-field.yaml
+corner-cases/eta-unit-like-struct	corner-cases	either				4.36.0	3.1.0	115	6882	e37a44686dba091d9f622a0ffea2b0580fd8c5aff561e7d09238a16702d92b13	tests/corner-cases/eta-unit-like-struct.yaml
+corner-cases/imax-nested-absorption	corner-cases	either				4.36.0	3.1.0	17	736	2f3ea1fbbebdd50e85cdeb1a0285800409f5fa77aa33d590505c239fbc6d57f5	tests/corner-cases/imax-nested-absorption.yaml
+corner-cases/imax-right-successor	corner-cases	either				4.36.0	3.1.0	21	806	5ed78f516f1de6c7cc7b7689d3e551dabe598a8abf299ec62390d4ec36a1aa4a	tests/corner-cases/imax-right-successor.yaml
+corner-cases/large-elim-maybe-prop	corner-cases	either				4.35.0	3.1.0	55	3174	b060758c2795e39d33c2e2194fb0f6017828c88fbe781c9dcf3e361478196884	tests/corner-cases/large-elim-maybe-prop.yaml
+corner-cases/let-value-type-mismatch	corner-cases	either				4.29.1	3.1.0	13	601	52e75d78c948d466e90fb203e7a04192dde4273c7319d44fc261fd2b3b6beeac	tests/corner-cases/let-value-type-mismatch.yaml
+corner-cases/nested-nonuniform-param	corner-cases	either				4.36.0	3.1.0	142	9415	8f84755f18f951fbf21ebea0d38867d690409474823e46a5e3c7580a167feb52	tests/corner-cases/nested-nonuniform-param.yaml
+corner-cases/nested-redex-aux	corner-cases	either				4.36.0	3.1.0	755	44047	2cf25a2d8767320fbd7561debd3da90743e059db0494fa22e489e5644d25a284	tests/corner-cases/nested-redex-aux.yaml
+corner-cases/positivity-whnf	corner-cases	either				4.29.1	3.1.0	81	4808	5e1c3ea262e5d57f0ffef2cbb7009a5a9020a977b648f109c0b0ab51ef3fa664	tests/corner-cases/positivity-whnf.yaml
+corner-cases/proj-maybe-prop	corner-cases	either				4.36.0	3.1.0	131	8308	3b0363d283898e6facbd2d1b8329899de0e6ad9f9b388437cee38fa43775eda6	tests/corner-cases/proj-maybe-prop.yaml
+corner-cases/proj-maybe-prop-past	corner-cases	either				4.36.0	3.1.0	131	8313	f5a388bcb9ccef1029fdf3d8a717e0cd7d08a6dc59bf4c56b55712b65b5e7905	tests/corner-cases/proj-maybe-prop-past.yaml
+corner-cases/proof-param-ok	corner-cases	accept				4.29.1	3.1.0	53	2961	7f9b3c07a64b441f8dd0f7dd2912274241fdb17118953fb089f796fdd1590af4	tests/corner-cases/proof-param-ok.yaml
+corner-cases/proof-param-swap	corner-cases	either				4.29.1	3.1.0	53	2961	25cfb47d4c80ebe1ec61931898df8e6bd8d06793aebf3ee8b2a7cd00beca1abc	tests/corner-cases/proof-param-swap.yaml
+corner-cases/subject-reduction-redex	corner-cases	either				4.36.0	3.1.0	1188	68158	30adb4fd3ed91e447e3e2ee27f5e659f5c791b2a89d706ce692008fe637f641e	tests/corner-cases/subject-reduction-redex.yaml
+corner-cases/subject-reduction-reduct	corner-cases	either				4.36.0	3.1.0	1165	67092	b7b01eb6797c30bf0f445217d527947d48eb0f2f5033de9f53c868fc20641cf3	tests/corner-cases/subject-reduction-reduct.yaml
+corner-cases/vanishing-occurrence	corner-cases	either				4.36.0	3.1.0	110	7376	727aa4adf8213555f09437c4442ca762d9158370db79d2492b39017942c1eb26	tests/corner-cases/vanishing-occurrence.yaml
+cslib	real-world	accept	1600	yes	yes	4.36.0	3.1.0	44051112	2500956112	09d1225013197983fe16b7078f6475707ce13da8f7e92d7c41ab1bc354522567	tests/cslib.yaml
+init	real-world	accept	370	yes	yes	4.36.0	3.1.0	6495296	347772063	93b61a432ed4241b1d2184de65354e0b98333bf4403a8d63922da18e10b430ba	tests/init.yaml
+init-prelude	real-world	accept	40	yes		4.36.0	3.1.0	65406	3811816	4772efbd23270de11b206ed63c5bbe6783363acc83757d37c5e6884a2549074b	tests/init-prelude.yaml
+mathlib	real-world	accept	4120	yes	yes	4.36.0	3.1.0	112081718	6326141213	f749dfd084fc0727d107c7aaded7d492cebfc0b517cfaa7337d8a7578a6c0dec	tests/mathlib.yaml
+navier-stokes-euler	real-world	accept	1840	yes	yes	4.34.0-rc2	3.1.0	28569038	1559685706	632943fca6795d48bc13e703aabfaef39931f9445f1275d2150a44f4de7b55e6	tests/navier-stokes-euler.yaml
+other/extra-rec	other	reject				4.29.1	3.1.0	21	1402	eab650028a71177bd4d9fcb6a84b4e92dd91cf4e7af67023af458d18729be0e2	tests/other/extra-rec.yaml
+other/inductive-undeclared-universe	other	reject				4.34.1	3.1.0	42	2611	ca3ad18ba0d1bd8abc4ec86f750ec583912ca657b68389cb2e29611c2888a7c9	tests/other/inductive-undeclared-universe.yaml
+other/level-index-out-of-order	other	accept				4.29.1	0.1.0	6	328	7db8148079e2e8160a1a4c71258ad11b17ce18edfa84ab1e12eae937ec9538d1	tests/other/level-index-out-of-order.yaml
+other/nat-lit-add	other	accept				4.36.0	3.1.0	478	26642	70dac063c0c1a67670bedec96e492632b05cb2831dd38e735764716dd181b245	tests/other/nat-lit-add.yaml
+other/nat-lit-add-bad	other	reject				4.36.0	3.1.0	465	25939	ffcc715bbab5c92e7dfe079215b0986b89cd3bbf6371e204e1a333e1e0a1bac7	tests/other/nat-lit-add-bad.yaml
+other/nat-lit-ble	other	accept				4.36.0	3.1.0	520	29497	7b4dba99f2145c789b2772f709e752cb6a7f76adebff9a375d62eda4b6f8319d	tests/other/nat-lit-ble.yaml
+other/nat-lit-sub	other	accept				4.36.0	3.1.0	561	30739	4cf9e8e73e1d906b2c4d53ff521256d1a60263047edda53db52949694be5ad8e	tests/other/nat-lit-sub.yaml
+other/orphan-ctor	other	reject				4.29.1	3.1.0	22	1400	2c9b12979ea3da11272d6eca4b0a39523a863d6fb501daf61c4edb8996a97daa	tests/other/orphan-ctor.yaml
+other/proj-of-prop	other	reject				4.36.0	3.1.0	56	3967	5138e56a1e601e89d3c45ce42a8ed9a9f5f4f2a8d8b29e609e27cfec8cefe198	tests/other/proj-of-prop.yaml
+other/sparse-name-index	other	accept				4.29.1	0.1.0	4	292	3279c9c8ae24d5b3a8433ddee5d4a421c4e15e3cd84117fb4873d1284112b96d	tests/other/sparse-name-index.yaml
+perf/app-lam	perf	accept	70	yes		4.36.0	3.1.0	28578	1276862	557fbc2c92374f2067454aeefbe0a5e8d588a5ada2d7e3c0ac0e19164f45bbee	tests/perf/app-lam.yaml
+perf/args-before-unfold	perf	accept	40	yes		4.36.0	3.1.0	1158	45602	9dfe2db4210d434497499fdfa7f0c000809296540b22b8a02fc70ca250702905	tests/perf/args-before-unfold.yaml
+perf/beta-ladder	perf	accept	40	yes		4.36.0	3.1.0	10382	461373	9a6bca5f9ece4c413b2b7b8b47d190029bcd4cda6f268b4a47cc1ae90c762741	tests/perf/beta-ladder.yaml
+perf/church-numerals	perf	accept	40	yes		4.36.0	3.1.0	227	9849	f411fad799c03ec0ff40c941ed846a4af9d246024cf0000313ed436a1d4e9e1c	tests/perf/church-numerals.yaml
+perf/discarded-argument	perf	accept	40	yes		4.36.0	3.1.0	367	16245	c8f47e11816007ea5ef7159da23c29edfe3dfd186a20ad812937386ecad0c76c	tests/perf/discarded-argument.yaml
+perf/discarded-argument-match	perf	accept	40	yes		4.36.0	3.1.0	606	29929	f1ca4c078302c462a773a5c02d2223331ad1fb4a1a40fb2d820a2eb4f5856c40	tests/perf/discarded-argument-match.yaml
+perf/folded-constant-first	perf	accept	40	yes		4.36.0	3.1.0	1262	53202	4c4bcd32a9af0ca91314f07b6d357a3cb6d2c37145047f96c6dc87771ffa8e13	tests/perf/folded-constant-first.yaml
+perf/folded-constant-last	perf	accept	40	yes		4.36.0	3.1.0	1262	52211	9189c2eac2f61bbf4fc9605004ef63d3d336490b61bb5d7b94585b06f495beba	tests/perf/folded-constant-last.yaml
+perf/fueled-chain	perf	accept	40	yes		4.36.0	3.1.0	17458	878023	48b8b93fbc50c84528f275dca393c09c0f1301031b518fa33601926c64c6b46d	tests/perf/fueled-chain.yaml
+perf/gf3-matrix-product	perf	accept	70	yes	yes	4.36.0	3.1.0	15002	800582	9826fe188e0b5d8b77e41cad188870f25fb07270ec55c65d3b8ff0c41c82a9bc	tests/perf/gf3-matrix-product.yaml
+perf/grind-ring-5	perf	accept	50	yes		4.36.0	3.1.0	203056	10408972	19331af9652c84013b934a26ebf2bf25eba19abc8b9246baa4014c08850fb2e3	tests/perf/grind-ring-5.yaml
+perf/identical-nesting	perf	accept	40	yes		4.36.0	3.1.0	172	8949	15491987c20611f97f7ed97a0f8723f743a126837c9aad6fbe032ad2f91b932f	tests/perf/identical-nesting.yaml
+perf/irrelevance-before-evaluation	perf	accept	40	yes		4.36.0	3.1.0	388	17877	44a0b9f331d54aefdd736d78817678d6ca7d7d06bdd0705bff62738077423c2f	tests/perf/irrelevance-before-evaluation.yaml
+perf/irrelevance-refutes	perf	accept	40	yes		4.36.0	3.1.0	244	13389	812387a76695886313edcd973646ea0737bcd9ca488b33941e0cb76d0ca6ebf0	tests/perf/irrelevance-refutes.yaml
+perf/ite-taken-branch	perf	accept	230	yes		4.36.0	3.1.0	88918	4557142	6e669aef4f85d584bff3e35cb5a9603e859e1a0c6290a46661560883823d6088	tests/perf/ite-taken-branch.yaml
+perf/ite-taken-branch-bad	perf	reject	110	yes		4.36.0	3.1.0	88818	4552177	be58b27c935928b4ae40955da0948088994d4f893c3570a10641d03f3361c909	tests/perf/ite-taken-branch-bad.yaml
+perf/let-fold	perf	accept	40	yes		4.36.0	3.1.0	5991	324192	016a814880c289096b06ee26665cccfc0a75da46c92693afb451e56673a29c53	tests/perf/let-fold.yaml
+perf/let-ladder	perf	accept	40	yes		4.36.0	3.1.0	10403	468621	d57e978f7e68ab7aee3bd1632890859eb16cff1551da1ab0b24b418f79679804	tests/perf/let-ladder.yaml
+perf/loop-unfolded-once	perf	accept	40	yes		4.36.0	3.1.0	84733	4309048	06f5d50e3f664321a4b4e0c90ff9a0143a174266d32f09ec0cd7dd88da7baba5	tests/perf/loop-unfolded-once.yaml
+perf/loop-unfolded-once-bad	perf	reject	120	yes		4.36.0	3.1.0	84733	4309050	f506ae3b24d7e5356e01c41720d500fe3245cfa25fc8af3d4ee1c4bfac3219ef	tests/perf/loop-unfolded-once-bad.yaml
+perf/magma-list-deep-n21	perf	accept	70	yes		4.36.0	3.1.0	22558	1224405	5d470c0b68949e393ea61469dccb0aac6185433c56f06bfc15202e2644a5a5ff	tests/perf/magma-list-deep-n21.yaml
+perf/magma-list-deep-n36	perf	accept	360	yes		4.36.0	3.1.0	23751	1279481	c8e0ad4037e2123eb2e5fce42b8da1c705b9dd52487549d932e00b82eeff93c7	tests/perf/magma-list-deep-n36.yaml
+perf/magma-list-pair-n21	perf	accept	240	yes		4.36.0	3.1.0	11296	609686	36895459051bfb2494aa6a5c8542b36581c74f03a5cbe59282874e2068a47a32	tests/perf/magma-list-pair-n21.yaml
+perf/magma-list-pair-n7	perf	accept	60	yes		4.36.0	3.1.0	11306	610238	41333e6e8c06623d8064583e040d2983148ca7d2c6e98b6604c0fc98ef8b7102	tests/perf/magma-list-pair-n7.yaml
+perf/magma-string-n4	perf	accept	70	yes		4.36.0	3.1.0	346332	17461675	b63ebfd31193fbbfc7d8aa4314971d4231c86fb2c261c31e1aea8e4feeb3d612	tests/perf/magma-string-n4.yaml
+perf/magma-string-pair-n9	perf	accept	120	yes		4.36.0	3.1.0	346353	17463066	ed9a15a45140b12a52c196cc97e8bca39d0fa98896859f564d98348e0af6b350	tests/perf/magma-string-pair-n9.yaml
+perf/proj-app-lazy-delta	perf	accept	60	yes		4.36.0	3.1.0	2242	124900	af53da2879ce0c88a11c37cbdaf5fddbfada7f6fb8aa7128afb8915d113edf38	tests/perf/proj-app-lazy-delta.yaml
+perf/proj-applied-struct	perf	accept	230	yes		4.36.0	3.1.0	2059	113246	f0fef3dca221e91e9d19d5f84f58f3a00940075a04b049d4c5c1f3d9ba57e5c8	tests/perf/proj-applied-struct.yaml
+perf/proj-applied-struct-arg-bad	perf	reject	120	yes		4.36.0	3.1.0	2064	113465	b7164a9143aaa62920b541b07202c9581af81083bd793eb3df51f8fbe6d1850d	tests/perf/proj-applied-struct-arg-bad.yaml
+perf/proj-applied-struct-bad	perf	reject	130	yes		4.36.0	3.1.0	1998	110138	2bdad7ce54c48e70a9d15a18ac84cd482ad0a981bb86898dcd58cb147ea14705	tests/perf/proj-applied-struct-bad.yaml
+perf/proj-cheap-struct	perf	accept	40	yes		4.36.0	3.1.0	1543	87921	218f5a7d5e0bf2f580308db175fc2acfeee66b89401e74e8edc2c9ebfc6b3453	tests/perf/proj-cheap-struct.yaml
+perf/proj-lazy-struct	perf	accept	40	yes		4.36.0	3.1.0	808	45972	1320d791347581c657571c7b92a495a1c174b9c931298ed2c134d9a5ab977ea9	tests/perf/proj-lazy-struct.yaml
+perf/proj-stuck-struct	perf	accept	40	yes		4.36.0	3.1.0	916	51334	4211de17b3fb55217226d8ed9f56b442ed1112d2da742c612f3181808a8426ad	tests/perf/proj-stuck-struct.yaml
+perf/prop-struct-projections	perf	accept	40	yes		4.36.0	3.1.0	8628	415671	18694d69879f2a01aa3c16b5082a6c436b4aeb4b76d249acf246f484b8f8957a	tests/perf/prop-struct-projections.yaml
+perf/refute-cheap-first	perf	reject	40	yes		4.36.0	3.1.0	439	21171	592e8c40f216075d764ef6fba2e235fe9e9f2e53162c2a93ed790a93ebc3b5a4	tests/perf/refute-cheap-first.yaml
+perf/refute-cheap-last	perf	reject	40	yes		4.36.0	3.1.0	439	20975	27f300cd0b793555a9accc8862cbab910fd671247a30d75d03dfc98a43919a65	tests/perf/refute-cheap-last.yaml
+perf/repeated-subproblem	perf	accept	40	yes		4.36.0	3.1.0	214	11659	cdb599bbb8f0b1d49297508577051b8376928ca67f0c8b70a00bd3b6dd22851d	tests/perf/repeated-subproblem.yaml
+perf/shared-subterm	perf	accept	40	yes		4.36.0	3.1.0	1252	51310	22d1ca176249a3a69dd0162fbb84bc0248c2ea539b54f38bb27c775cc923fde3	tests/perf/shared-subterm.yaml
+perf/shift-cascade	perf	accept	40	yes		4.36.0	3.1.0	5131	262410	164059da34883d7654d4a3a48b0594e243836ac1a241220d0298287c68332d5f	tests/perf/shift-cascade.yaml
+perf/short-circuit-and	perf	accept	220	yes		4.36.0	3.1.0	77536	3977628	ab5cb78a88611603f2f2982c5d9a02f8306bcd114cd0329493259e0816793252	tests/perf/short-circuit-and.yaml
+perf/short-circuit-and-bad	perf	reject	120	yes		4.36.0	3.1.0	77499	3975656	fdcdfc59dbe17c73d69dab1f332e10ac9f4fa4eaa6bdc3a803ed2f7fadbaea54	tests/perf/short-circuit-and-bad.yaml
+perf/unfold-before-literal	perf	accept	240	yes		4.36.0	3.1.0	1222	67115	ca30fb3a52b7c0b130f318777fd9ac215fe3510aeca6f22b34fa2d08a4940f3c	tests/perf/unfold-before-literal.yaml
+perf/unfold-before-literal-bad	perf	reject	130	yes		4.36.0	3.1.0	1182	65347	7541304fe48cb5b2ccdb91d3e14a690ee2b2ea7a5efd20c6a8bd9b581b4d0c5e	tests/perf/unfold-before-literal-bad.yaml
+perf/unfold-before-literal-fallback	perf	accept	270	yes		4.36.0	3.1.0	1224	67218	f0ba42ccc7c0f4a08fbc66413976ae0547a2eafcd56f14384c2f76440fe9d017	tests/perf/unfold-before-literal-fallback.yaml
+perf/unroll-versus-evaluate	perf	accept	40	yes		4.36.0	3.1.0	1159	45645	7cfb70d4954f7e88dd41fe535fc804e4b8244270d209d04327b1b9c965888902	tests/perf/unroll-versus-evaluate.yaml
+reachability	real-world	accept	220	yes	yes	4.34.1	3.1.0	361766	19031110	31d06d90f2cd6037bb03f98c771304b0530132be514ea1c63b31f3c975fda065	tests/reachability.yaml
+std	real-world	accept	600	yes	yes	4.36.0	3.1.0	10611507	584315500	15b659c12c14eb5c104b169ff288dcbd35baaff51412f43c9a078f79e9cf2f7d	tests/std.yaml
+tutorial/001_basicDef	tutorial	accept				4.36.0	3.1.0	6	367	452da36409147282653fbd49d9eea93c869e70f4e26a0b24fc7bd6e23898c171	tests/tutorial.yaml
+tutorial/002_badDef	tutorial	reject				4.36.0	3.1.0	6	365	ac3314be1f67eb6f34ae863ca34d7b97672d3a4747db46946de4796a49e4d9e1	tests/tutorial.yaml
+tutorial/003_arrowType	tutorial	accept				4.36.0	3.1.0	12	622	0e9db1d7c2941b3af74b941e56cf2f5719cb0107692b0f842be4a017974f6b3f	tests/tutorial.yaml
+tutorial/004_dependentType	tutorial	accept				4.36.0	3.1.0	7	460	d2c12fe19c8a467c0bc90bbde2959dc77ec22a82141653bc08c98e6947fbbfd8	tests/tutorial.yaml
+tutorial/005_constType	tutorial	accept				4.36.0	3.1.0	17	897	99669695aa1e055facfedae4d331c3ab3879534caada9008c5b615c885b63ed9	tests/tutorial.yaml
+tutorial/006_betaReduction	tutorial	accept				4.36.0	3.1.0	27	1363	09eac8899a89e6ff631f33ab5568128b3d6dee870e0a0b15d002a07a83bf8253	tests/tutorial.yaml
+tutorial/007_betaReduction2	tutorial	accept				4.36.0	3.1.0	28	1434	1254c01a42667e695bcbeb074f670b27341cdb6fbabfdcf0862b8223393565ab	tests/tutorial.yaml
+tutorial/008_forallSortWhnf	tutorial	accept				4.36.0	3.1.0	25	1201	d54d188126193de35bb5ec4ab372c79b38bc858dc358c96418041c08bb365306	tests/tutorial.yaml
+tutorial/009_forallSortBad	tutorial	reject				4.36.0	3.1.0	26	1273	131eba168386d03ef2b0d45a019f692d3f0dccd98f335e28e69b266e9e35d5f2	tests/tutorial.yaml
+tutorial/010_nonTypeType	tutorial	reject				4.36.0	3.1.0	21	1094	e85f6c90e6dcecf267f6005d326d02ac8a7efbdb1174672ad7a032bbe88f9bec	tests/tutorial.yaml
+tutorial/011_nonTypeAxiom	tutorial	reject				4.36.0	3.1.0	20	1043	fa2ffb11a4dacaad702e94b8a1abaccfc9d3af431119aa0f395b3e68eb0166b7	tests/tutorial.yaml
+tutorial/012_nonPropThm	tutorial	reject				4.36.0	3.1.0	7	424	7d86e804fb23ddeffee1132e72dc1548daa16e577d8ef2e4fb2a02e2d4d8031b	tests/tutorial.yaml
+tutorial/013_thmProof	tutorial	accept				4.36.0	3.1.0	26	1345	4368d1189e8d4b9f1d26aec79856d3700d74b73d67d4693ee4454d87a1289688	tests/tutorial.yaml
+tutorial/014_selfProof	tutorial	reject				4.36.0	3.1.0	8	459	9a01d45019a9bff48fba9a7d88908238580f0708e205ccfe6ec194ba4c2daa90	tests/tutorial.yaml
+tutorial/015_levelComp1	tutorial	accept				4.36.0	3.1.0	7	391	d486581acd8b34506074669ca24fa2c775efb10456f814886b6d67c86ef640da	tests/tutorial.yaml
+tutorial/016_levelComp2	tutorial	accept				4.36.0	3.1.0	8	409	f3153749d57f99dd4ac9536e64fb20a6829a8d556df8fd7d1fe18ffdf344cc55	tests/tutorial.yaml
+tutorial/017_levelComp3	tutorial	accept				4.36.0	3.1.0	9	427	af28791b0b67a03a27cdb0717e46dcddea0f9248013d59a775244fc2fc5c683f	tests/tutorial.yaml
+tutorial/018_levelParams	tutorial	accept				4.36.0	3.1.0	29	1429	575cd8c91e81b70819017c86da7220f017459a9e9eba8bde98f1ca5a5e47f88f	tests/tutorial.yaml
+tutorial/019_tut06_bad01	tutorial	reject				4.36.0	3.1.0	8	427	de869d1c304afc864bef3acee0957107c02d8571e111d75df8647023e8d9d751	tests/tutorial.yaml
+tutorial/020_levelComp4	tutorial	accept				4.36.0	3.1.0	8	424	fa0a8b27601b9cec67c3c17c7687d06ae0d4d7c58f8daf00caf419e00e67b28c	tests/tutorial.yaml
+tutorial/021_levelComp5	tutorial	accept				4.36.0	3.1.0	8	424	8d0dff1944cd424079d4750ac09df425e085e17f79335a599f5715b01ac4a0ed	tests/tutorial.yaml
+tutorial/022_imax1	tutorial	accept				4.36.0	3.1.0	16	809	5fdd13476cef4169b5a9a9b7e9ae60669e55dfb455ce7ed50339b8812f88f183	tests/tutorial.yaml
+tutorial/023_imax2	tutorial	accept				4.36.0	3.1.0	17	828	e4dbd746b235712d61ae18453ce2684dbd4230c3fd25caa434fa461764f595e8	tests/tutorial.yaml
+tutorial/024_levelMaxComm	tutorial	accept				4.36.0	3.1.0	12	524	501a8e844a2062a108ea82719a1eaa27a0188e5aba86f14cc99ed458ff06a165	tests/tutorial.yaml
+tutorial/025_levelMaxAssoc	tutorial	accept				4.36.0	3.1.0	16	623	87813b2ebd9ab46d85d192f36b972344d3bff1510c8758bf63263de0f0be67d0	tests/tutorial.yaml
+tutorial/026_levelMaxIdem	tutorial	accept				4.36.0	3.1.0	9	447	bd036c89691aa01361f6facaa7e963889e5fdc954d31b4b1771f343f38f214b6	tests/tutorial.yaml
+tutorial/027_levelMaxAbsorb	tutorial	accept				4.36.0	3.1.0	12	526	bc81befefa77ee955e3b57d18a79d029d7c3592a995bb00ebbb1675cea9bea81	tests/tutorial.yaml
+tutorial/028_inferVar	tutorial	accept				4.36.0	3.1.0	12	713	dc70b43ad0efa180de31ec39831f8110d9fa24fed5678bac955bb8c6f9c37852	tests/tutorial.yaml
+tutorial/029_defEqLambda	tutorial	accept				4.36.0	3.1.0	26	1391	b74cd38cb75aff401cbd891f128297f29c96a6d958246670adaa3c81a2beabda	tests/tutorial.yaml
+tutorial/030_peano1	tutorial	accept				4.36.0	3.1.0	73	3692	f652dc0cad4706ffd7036480a96ee93a345cb4dd538d5ece6b9f3c4f929d8a8c	tests/tutorial.yaml
+tutorial/031_peano2	tutorial	accept				4.36.0	3.1.0	90	4566	cba813becc49d507543fc52e0452fa133fbf5f2e24f69312d47964bbee902fea	tests/tutorial.yaml
+tutorial/032_peano3	tutorial	accept				4.36.0	3.1.0	98	5006	03c105a7596d55a312622b936db2ccaa383ed9b446f26a5b2cd0bbcc6826fa2f	tests/tutorial.yaml
+tutorial/033_letType	tutorial	accept				4.36.0	3.1.0	9	489	8fca66343063ba49a6875c3eba7748ed9e761a77f8fcde0e99f2dda24a01bd26	tests/tutorial.yaml
+tutorial/034_letTypeDep	tutorial	accept				4.36.0	3.1.0	26	1238	99ea74afb7f951c1d9676601a9a0d63792ce29b1827c53e4f6249ac6876b2b3f	tests/tutorial.yaml
+tutorial/035_letRed	tutorial	accept				4.36.0	3.1.0	12	627	153c835c452a28d8fefb32db71e345cc7f037a2552710ec9504632a8fa8e3b22	tests/tutorial.yaml
+tutorial/036_empty	tutorial	accept				4.36.0	3.1.0	20	1228	725be784bfa6cd322313e743a91b6e5af2404dad1075ef6898f03d556e46a10a	tests/tutorial.yaml
+tutorial/037_boolType	tutorial	accept				4.36.0	3.1.0	37	2377	ff471bd6c180ec70a6d8ec31e93d62f41a3eb264824dbfdce27184178f5e5934	tests/tutorial.yaml
+tutorial/038_twoBool	tutorial	accept				4.36.0	3.1.0	65	4266	5dff3e59ee30e4c311563e2b8b52ff82f9aa362c43eb055274d4b220982699e6	tests/tutorial.yaml
+tutorial/039_andType	tutorial	accept				4.36.0	3.1.0	57	3273	f9a28765bff2af11f7a31f1e66d62857344fab84f71aeff7a2e55c079ec627fd	tests/tutorial.yaml
+tutorial/040_prodType	tutorial	accept				4.36.0	3.1.0	76	3919	a06eff57cd2392486c46a46879cf49e3ef1f235b2fc3160fe3b6a69316301681	tests/tutorial.yaml
+tutorial/041_pprodType	tutorial	accept				4.36.0	3.1.0	75	3906	cc19599ee771f4054ae77ee6319f78cd7e072ccb71951dfe2ab44937149ff4c0	tests/tutorial.yaml
+tutorial/042_pUnitType	tutorial	accept				4.36.0	3.1.0	31	1843	e36546e154b91c02850a7615aac070ff57a9a0283aad566fa19289be5a54221d	tests/tutorial.yaml
+tutorial/043_eqType	tutorial	accept				4.36.0	3.1.0	62	3324	ce7e04db2ed6c34703ef356e1086303400ca2531c8424797e52bd3e36ff6de1d	tests/tutorial.yaml
+tutorial/044_natDef	tutorial	accept				4.36.0	3.1.0	61	3392	8e37e3a8e13aea63cfe66221ce299dc30cfe133d8952afd252278c79631a9d43	tests/tutorial.yaml
+tutorial/045_rbTreeDef	tutorial	accept				4.36.0	3.1.0	296	16090	0b194e3bcf4bd574ac018b8a1dfbd4e1aa4774b186eba46e153fa603d94ca3cb	tests/tutorial.yaml
+tutorial/046_inductBadNonSort	tutorial	reject				4.36.0	3.1.0	20	1182	202b909ed05d8a6eb50c1ffc66013eb12e846e701e7146ce00d4fdf2018fe04b	tests/tutorial.yaml
+tutorial/047_inductBadNonSort2	tutorial	reject				4.36.0	3.1.0	8	598	9c21a133d8adb9e8271018971b68edefeaf9267a644f2ac0903dec43c8aa043f	tests/tutorial.yaml
+tutorial/048_inductLevelParam	tutorial	reject				4.36.0	3.1.0	7	515	525fda6c5b84c8fb6643748e53d2e313ab67383084765650300fd41f61e49a08	tests/tutorial.yaml
+tutorial/049_inductTooFewParams	tutorial	reject				4.36.0	3.1.0	6	548	4546c3ad772245ebc2215a1a1f82f63b6038c52531f98a9a811e89eb25d72593	tests/tutorial.yaml
+tutorial/050_inductWrongCtorParams	tutorial	reject				4.36.0	3.1.0	16	1182	24ba196b2f3776006bce4801f499f6805fbc6ba0dc529aa2fde70d6cf62e41ca	tests/tutorial.yaml
+tutorial/051_inductWrongCtorResParams	tutorial	reject				4.36.0	3.1.0	19	1293	06398994c3f57e2a184eb5079a044ad6a8091e5f643af027be91609551ff6eed	tests/tutorial.yaml
+tutorial/052_inductWrongCtorResLevel	tutorial	reject				4.36.0	3.1.0	23	1411	8713beacfc7953b1e56c099da8ea3630700df4dc0439d8437e0a05a158759fb8	tests/tutorial.yaml
+tutorial/053_inductInIndex	tutorial	reject				4.36.0	3.1.0	14	1099	3e0e9bcfc73b1b9ff222d286b83ba5ec06f672f75c4b8bb9f9624d693ffaef76	tests/tutorial.yaml
+tutorial/054_indNeg	tutorial	reject				4.36.0	3.1.0	12	996	96f61470c1c056735ccfc31459beb8e20eaae0223a7c24053deff1711f079e6f	tests/tutorial.yaml
+tutorial/055_reduceCtorParam.mk	tutorial	accept				4.36.0	3.1.0	80	4179	4cb3e039236b6bf8cc75cecc6db3c44cdd9b90111cff4c7c198c7ba6fbfa9dc4	tests/tutorial.yaml
+tutorial/056_reduceCtorType.mk	tutorial	reject				4.36.0	3.1.0	26	1549	7c1164870632a59c5014362aaccb133f95127d154af24b44229a1fb55d3d5153	tests/tutorial.yaml
+tutorial/057_indNegReducible	tutorial	reject				4.36.0	3.1.0	31	1918	dd54dcf6e0e8be2a01efecc13d307df010877be0c904885672a89ee9e3310fe0	tests/tutorial.yaml
+tutorial/058_predWithTypeField	tutorial	accept				4.36.0	3.1.0	32	2023	4cb82cafdfd8ad9a6a5683610f6339f037a8a6edea040ea1f733e2bf1974446b	tests/tutorial.yaml
+tutorial/059_typeWithTypeField	tutorial	accept				4.36.0	3.1.0	36	2116	442205c6c21609f84d8d2d12f663e290244f5b3f83b045fffa098e3b3d68ec8c	tests/tutorial.yaml
+tutorial/060_typeWithTypeFieldPoly	tutorial	accept				4.36.0	3.1.0	38	2190	624440ccef6849ce56d9d376467decb02062ce17f7af2d5260cbc33ffa58b59e	tests/tutorial.yaml
+tutorial/061_typeWithTooHighTypeField.mk	tutorial	reject				4.36.0	3.1.0	11	943	34724350d858e00322afdf43097eb86b9a27fc87968461177964d12ba429d3d4	tests/tutorial.yaml
+tutorial/062_emptyRec	tutorial	accept				4.36.0	3.1.0	21	1269	4d15ad611f088f70e889200b40a6a6d3c0556ea743c714b376135bc76fd84e8f	tests/tutorial.yaml
+tutorial/063_boolRec	tutorial	accept				4.36.0	3.1.0	53	3092	6f9fccc64f47bb2483f36c366d69c5bd2b7ce3d8f6c1bbea48d6689340aeb4e2	tests/tutorial.yaml
+tutorial/064_twoBoolRec	tutorial	accept				4.36.0	3.1.0	78	4866	012f281bfe115f6f977bb38f0a234362c3e1da9917519ac994af24f943d42490	tests/tutorial.yaml
+tutorial/065_andRec	tutorial	accept				4.36.0	3.1.0	58	3313	252dced17509200aaa5d4a567a550b04a2457e8f28b1cfebc3b89ffdaeb985ae	tests/tutorial.yaml
+tutorial/066_prodRec	tutorial	accept				4.36.0	3.1.0	79	4111	880f0446de1ab514e32345cbce03e53fc53550b99205c9d651d0e41b0829d518	tests/tutorial.yaml
+tutorial/067_pprodRec	tutorial	accept				4.36.0	3.1.0	78	4096	0cea83775a251dafd57d25b0ce5dd6b5643c87b29a6a1793302d1c4f0cec49de	tests/tutorial.yaml
+tutorial/068_punitRec	tutorial	accept				4.36.0	3.1.0	39	2227	41fff78db80acf9708296374404045ca35022e898cecea8e6bdb900c3f7a9778	tests/tutorial.yaml
+tutorial/069_eqRec	tutorial	accept				4.36.0	3.1.0	63	3369	c1a598ca6c09e8b21d5bf693a60ecf36e7753b0040f03cf2b29d43e875f1d6fb	tests/tutorial.yaml
+tutorial/070_nRec	tutorial	accept				4.36.0	3.1.0	61	3394	96817a88da3d96f81bd974426b4d9bf0c1549e5d650f8fb613741a0ad503fbc3	tests/tutorial.yaml
+tutorial/071_rbTreeRef	tutorial	accept				4.36.0	3.1.0	303	16556	912ed301c6e48a8829a3d932134d63ee3a9fa5abeb4659b4d6ad5fb5c756b9f5	tests/tutorial.yaml
+tutorial/072_boolPropRec	tutorial	accept				4.36.0	3.1.0	34	2313	46d7541ef5aebba59bd4ababd276ddbd1e47a2b8ed33e343e44c4f5f4ceea1ae	tests/tutorial.yaml
+tutorial/073_BogusRecursor	tutorial	reject				4.36.0	3.1.0	27	1865	b5dc122fe0806633c3e6fae577e824ac3fa6aa237f01622e3c8baff9a903087c	tests/tutorial.yaml
+tutorial/074_existsRec	tutorial	accept				4.36.0	3.1.0	66	3665	b997c1adffd0bfd8303803abcfc4a3a58cb8cd2c851f20dd2e67264770b584f4	tests/tutorial.yaml
+tutorial/075_typeSingletonRecReduction	tutorial	accept				4.36.0	3.1.0	138	8095	d50e808678846aaf751be6f4303bd209c62d6cbd327739ad0575cfce0af97714	tests/tutorial.yaml
+tutorial/076_sortElimPropRec	tutorial	accept				4.36.0	3.1.0	97	5773	3fc164eb4b989900346ddfb325f1f349bb00236c17d4ec4ddcde45a4c2fdce9c	tests/tutorial.yaml
+tutorial/077_sortElimProp2Rec	tutorial	accept				4.36.0	3.1.0	114	6794	413efdad5135c8219984ae8f48d1e637422e3bff775be57eeecd509351cfc7d7	tests/tutorial.yaml
+tutorial/078_boolRecEqns	tutorial	accept				4.36.0	3.1.0	199	11058	78d41410fed2abd21f6e4c3ae8acaf6188f9e3c18691158bf9546723e1296aae	tests/tutorial.yaml
+tutorial/079_prodRecEqns	tutorial	accept				4.36.0	3.1.0	205	10305	40cb2c2794fb493e1ff585ba9fb05a6d5e46b2d3c9c669f07eaa722e8d04a928	tests/tutorial.yaml
+tutorial/080_nRecReduction	tutorial	accept				4.36.0	3.1.0	238	13051	a9f45fc26c0b5f9ca2b33ddba4380c53f0880e50a8fdf86cc1cb58a6d9137910	tests/tutorial.yaml
+tutorial/081_listRecReduction	tutorial	accept				4.36.0	3.1.0	335	17898	bf97127df6481f6f9882f49ab32decc5ed7a845a82b4dbb45f824227e827504f	tests/tutorial.yaml
+tutorial/082_RBTree.id_spec	tutorial	accept				4.36.0	3.1.0	1006	49017	f6c0b577338a8541e884a3dd0289dec9a88a66c52d4723dacd643d7f74704e14	tests/tutorial.yaml
+tutorial/083_And.right	tutorial	accept				4.36.0	3.1.0	74	4353	af8fe401cc52894a4a48e38cc438d76d50bc7c5ebdc26b3814a415b8356c8338	tests/tutorial.yaml
+tutorial/084_Prod.snd	tutorial	accept				4.36.0	3.1.0	83	4646	4c0c0898619d528f9a70068f4b1c0e9d5d96d0e22762fd60e7d12abb5792ffe3	tests/tutorial.yaml
+tutorial/085_PProd.snd	tutorial	accept				4.36.0	3.1.0	83	4650	9d057a874a75b9ff11272fb8f27abe87ad2aa85f170b4e47f4b2e98ed4a80121	tests/tutorial.yaml
+tutorial/086_PSigma.snd	tutorial	accept				4.36.0	3.1.0	96	5177	c53b1e653a5c3adc3d1986caed98a70f260c07dbd45d569d2ad2b0c8cea40ab8	tests/tutorial.yaml
+tutorial/087_projOutOfRange	tutorial	reject				4.36.0	3.1.0	67	3875	520293e32a2cbedef3d44987f30dab5a22ba56594e4ab7eae156db0e2cd1fabf	tests/tutorial.yaml
+tutorial/088_projNotStruct	tutorial	reject				4.36.0	3.1.0	64	3557	d127bec36a908a954b562a68cfa98c1e816dfe1c65b9b18cb6b50c300ed43b37	tests/tutorial.yaml
+tutorial/089_projProp1	tutorial	accept				4.36.0	3.1.0	143	8390	f3dfba2ebfbec35450b9fdbe91f415d0c1be15012e2de41af0cc6b0d84be852a	tests/tutorial.yaml
+tutorial/090_projProp2	tutorial	reject				4.36.0	3.1.0	143	8390	d8ea976f7c94c4f3d8a1e2080db46dbabf884a85647f5092471930fb57a50f49	tests/tutorial.yaml
+tutorial/091_projProp3	tutorial	accept				4.36.0	3.1.0	143	8390	e148e804db17df54cb69b1ffb0f3f4e8b13f30a2c0464f968b71b47c5e56eb5f	tests/tutorial.yaml
+tutorial/092_projProp4	tutorial	reject				4.36.0	3.1.0	143	8390	ece4c7f02451764b8343126761f8101490599194886697b30d414bbeb8042f43	tests/tutorial.yaml
+tutorial/093_projProp5	tutorial	reject				4.36.0	3.1.0	148	8596	409598617a6de7afc18427c2503e6bef5ea3a39742fe94e99de7ce64328b148b	tests/tutorial.yaml
+tutorial/094_projProp6	tutorial	reject				4.36.0	3.1.0	143	8390	f7841a52cf39c556f03214d7da51f0ff1017f7aeeeede7c6143742d70e1c33a4	tests/tutorial.yaml
+tutorial/095_projDataIndexRec	tutorial	accept				4.36.0	3.1.0	111	6921	d72a7a622b6580f344c98f2eb9b9d3a61dedab0aaf20c053f9ddef58a09bb0f5	tests/tutorial.yaml
+tutorial/096_projIndexData	tutorial	reject				4.36.0	3.1.0	226	14395	0944a963c08413bda90b3b50a9c24628f5d4e0e64d8dd6651c379e25abfc5485	tests/tutorial.yaml
+tutorial/097_projIndexData2	tutorial	reject				4.36.0	3.1.0	226	14397	d53946347324f99baf9fefe77999c4908d515dc294759ddad2a04f8b264627d0	tests/tutorial.yaml
+tutorial/098_projRed	tutorial	accept				4.36.0	3.1.0	177	10151	c23b7ba9254cff520a42974b6db8d6199c2895b44edf4b3a29eb4fbb345b6ed0	tests/tutorial.yaml
+tutorial/099_ruleK	tutorial	accept				4.36.0	3.1.0	121	6624	e903bb23353e57acb5db3035ee38f83b48b98bd30c2a0206a307c55d628346ee	tests/tutorial.yaml
+tutorial/100_ruleKbad	tutorial	reject				4.36.0	3.1.0	121	6628	a66ae5140e9f7f934090292506a6e2a746b932ad53347672122c234158782ad2	tests/tutorial.yaml
+tutorial/101_ruleKAcc	tutorial	reject				4.36.0	3.1.0	229	12750	bfacaaa1af816677e32b23718a06f6f1fb2ef85cd4a1701ce33a311ac613d0fb	tests/tutorial.yaml
+tutorial/102_aNatLit	tutorial	accept				4.36.0	3.1.0	54	3101	cb770a2865667edd35ffdea37e100d736952cdd3a1de5e10748e389140dc842e	tests/tutorial.yaml
+tutorial/103_natLitEq	tutorial	accept				4.36.0	3.1.0	114	6274	862b6369da05b9120c7f65095b5dad99d51be9c4c9fc8c5310532daf73a2c48d	tests/tutorial.yaml
+tutorial/104_proofIrrelevance	tutorial	accept				4.36.0	3.1.0	100	5154	9768390b86144454cf79297194c1a0e73500042d7f14161c256acbd0185449f4	tests/tutorial.yaml
+tutorial/105_proofIrrelevanceBad	tutorial	reject				4.36.0	3.1.0	93	4851	3c1466eed22d3cfd09b3f1b79b4374a63e8bd7ecfb8fc8cf0b469bd6f59105de	tests/tutorial.yaml
+tutorial/106_proofIrrelevanceWhnf	tutorial	accept				4.36.0	3.1.0	112	5757	fc1c79283d738f2a8f45c9a84b9faec0df1a14a791faedca2feb009c026121f7	tests/tutorial.yaml
+tutorial/107_proofIrrelevanceUnderBinder	tutorial	accept				4.36.0	3.1.0	39	1918	99925710f01d45f48fc5e64f59fa8dafa66fa292eb948aee3c88d7280259a088	tests/tutorial.yaml
+tutorial/108_unitEta1	tutorial	accept				4.36.0	3.1.0	116	6395	563e5e4c162feb7a56263bb1d072e994710022f16304a495de875a098a4d2d13	tests/tutorial.yaml
+tutorial/109_unitEta2	tutorial	accept				4.36.0	3.1.0	109	6092	72bd12cf6d89f33d83020e44962439f387abd0d22dff2d36bb60faff081dbba1	tests/tutorial.yaml
+tutorial/110_unitEta3	tutorial	accept				4.36.0	3.1.0	111	6173	18874badbad5c8aacac5377250fc6c63da617ef3b007e155217e2e62f9233eca	tests/tutorial.yaml
+tutorial/111_indexedUnitEta	tutorial	reject				4.36.0	3.1.0	121	7372	c8f10f2d011e2f61ecc67820e2d562ce95d9d87cee4b43af543c95bb16d33f80	tests/tutorial.yaml
+tutorial/112_structEta	tutorial	accept				4.36.0	3.1.0	230	12836	6a6e92399f06b7dd72f2055e42d89c5fbc5ec59a54107353bcf039025164765c	tests/tutorial.yaml
+tutorial/113_indexedStructEta	tutorial	reject				4.36.0	3.1.0	138	8713	357e56731251d5fa3a5ef89553eadb862ad58282b36d2a3113897815e93eba8a	tests/tutorial.yaml
+tutorial/114_funEta	tutorial	accept				4.36.0	3.1.0	104	5335	896d3af4e2b3c24e4cda3503bdddbf1e33654e595ce626222ef94f6507ae5633	tests/tutorial.yaml
+tutorial/115_funEtaDep	tutorial	accept				4.36.0	3.1.0	106	5443	4abdb18a324f0ab8d81b752c2a46a2bd7e0d01cebee4b370314980b7f6817691	tests/tutorial.yaml
+tutorial/116_funEtaBad	tutorial	reject				4.36.0	3.1.0	97	4979	28651916597db84cab283b820ac5489e8ad8d2e2cf25c4aeee250ff14a51cf6f	tests/tutorial.yaml
+tutorial/117_reflOccLeft	tutorial	reject				4.36.0	3.1.0	61	3826	1d316fb114a82541ae006e911a784fec76334f8e2a22ead4822b21315c47c898	tests/tutorial.yaml
+tutorial/118_reflOccInIndex	tutorial	reject				4.36.0	3.1.0	66	4044	ecbcd16395d437f176ec28f9b4b2c7fa7c120bf9b3b7176900d1500499545309	tests/tutorial.yaml
+tutorial/119_reduceCtorParamRefl.mk	tutorial	accept				4.36.0	3.1.0	88	4642	bbe2bd2824e7ab971847aa122bced56c3dc59a84f6ab9a1fcf62e0e885cbceb0	tests/tutorial.yaml
+tutorial/120_reduceCtorParamRefl2.mk	tutorial	accept				4.36.0	3.1.0	88	4642	e39bd89f0a35f9d04bc3ad5e235a2fa38df3e390d9521134a7c244d68f41dceb	tests/tutorial.yaml
+tutorial/121_rTreeRec	tutorial	accept				4.36.0	3.1.0	91	5639	b0e149f215a9d0d7b6fa4007f91c49934c4268a4d6b217711415ba18e6275553	tests/tutorial.yaml
+tutorial/122_rtreeRecReduction	tutorial	accept				4.36.0	3.1.0	191	10986	a76503873a009b5760dffc4143d68c65f8e1dc649d3eec19f011ef9b32ca7e74	tests/tutorial.yaml
+tutorial/123_accRecType	tutorial	accept				4.36.0	3.1.0	151	7649	7c6ea69f56391a47ecb3f6b5061e5116eefe79627ecc59ae3dcbb652679510e0	tests/tutorial.yaml
+tutorial/124_accRecReduction	tutorial	accept				4.36.0	3.1.0	243	13363	6b2dfb17c64f3a2b8c3ac67c4abfe612fbf29de4e69c9e6972f06bc8ab60b799	tests/tutorial.yaml
+tutorial/125_accRecNoEta	tutorial	reject				4.36.0	3.1.0	235	12978	71c40eb3ad74d8fb99501f8355f2c9c5e643e6f0ea771c629abcfa37675149b1	tests/tutorial.yaml
+tutorial/126_quotMkType	tutorial	accept				4.36.0	3.1.0	123	6450	44995b6f691b9fce53c4a36830421626611dc253d2d8419c64e654309a73f733	tests/tutorial.yaml
+tutorial/127_quotIndType	tutorial	accept				4.36.0	3.1.0	124	6490	05031ab093efe0f3a4097e8f5ddcca3ff8046547ace23cac25ee1a974360efdd	tests/tutorial.yaml
+tutorial/128_quotLiftType	tutorial	accept				4.36.0	3.1.0	124	6496	c9127157334111bec54d7a1886f21218d3a9d93714a14a044e4250d451d8043f	tests/tutorial.yaml
+tutorial/129_quotSoundType	tutorial	accept				4.36.0	3.1.0	141	7332	631eb545bc836854e9adb44ae293a1e0909a8f1a6cb402a88850dac75d398fef	tests/tutorial.yaml
+tutorial/130_quotLiftReduction	tutorial	accept				4.36.0	3.1.0	153	7957	6be727f01e1515742bdc2234c2442a383ea229a62cf9c73eb6a7060bd387dc0c	tests/tutorial.yaml
+tutorial/131_quotIndReduction	tutorial	accept				4.36.0	3.1.0	151	7817	c9e115ddb99cf74930e8f62e6e3e95464b2b9bcc04d97685610d1f9d36a077ca	tests/tutorial.yaml
+tutorial/132_dup_defs	tutorial	reject				4.36.0	3.1.0	7	475	be956703057e4ad1c4db50f3b8c50a17cca93f2568bccb639781804f76cebf35	tests/tutorial.yaml
+tutorial/133_dup_ind_def	tutorial	reject				4.36.0	3.1.0	27	1706	d6e1437d0ced441e83202138f20f8317e5f76e330e88c6ecca3786d4ebe856b1	tests/tutorial.yaml
+tutorial/134_dup_ctor_def	tutorial	reject				4.36.0	3.1.0	27	1707	4c7b41af3e9a03edd1958154776be074e59fa8bcc87afdcf644cfed6227030d2	tests/tutorial.yaml
+tutorial/135_dup_rec_def	tutorial	reject				4.36.0	3.1.0	27	1706	3928f03b1291bfeca11e1e3d6b6731bb592611627620b7486000e7b4e2644a4f	tests/tutorial.yaml
+tutorial/136_misnamed_rec_user	tutorial	reject				4.36.0	3.1.0	33	2006	1527a49c5bf2410b549f04008ef099747c2235a4349cf4646fecef8dbefb4f9a	tests/tutorial.yaml
+tutorial/137_dup_rec_def2	tutorial	reject				4.36.0	3.1.0	28	1748	1b19aa37516d10a465b418164d6472790e1ef39dc3d5ce9a2ce1935dfce1a36e	tests/tutorial.yaml
+tutorial/138_dup_ctor_rec	tutorial	reject				4.36.0	3.1.0	24	1548	c312e1f4b64f35963c3b402bb5234c87f42d7fa415481948fe59cb6ceef6828a	tests/tutorial.yaml
+tutorial/139_DupConCon	tutorial	reject				4.36.0	3.1.0	34	2206	ea853360417474246eb1b066880193a0f467dd9cabdd53cd2aef7b2dcb76cecd	tests/tutorial.yaml
+tutorial/140_falseFromUnsafe	tutorial	reject				4.36.0	3.1.0	22	1367	e9aca3d9b3d56f6002baf489eb9e79c29d60d6faa58e936c7d5976c8d20db441	tests/tutorial.yaml
+tutorial/141_falseFromPartial	tutorial	reject				4.36.0	3.1.0	22	1370	55aaf8bb26d84e8fafdf65d08155d4f9564a90813f3d78a45f27d746ecc9c611	tests/tutorial.yaml
