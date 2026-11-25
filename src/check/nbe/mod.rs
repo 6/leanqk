@@ -35,7 +35,7 @@ use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
 use super::ext::Ext;
-use super::store::{IdMap, Store};
+use super::store::{IdMap, IdSet, Store};
 use super::tc::{KErr, R, Tc};
 use val::{Arena, Ls, V};
 
@@ -77,7 +77,11 @@ const PRUNES: usize = 1 << 12;
 
 /// Closed terms remembered as checked (`checked_closed`) before they are
 /// forgotten.
-const CHECKED_KEEP: usize = 1 << 20;
+const CHECKED_KEEP: usize = 1 << 19;
+
+/// Whether open terms are remembered as checked too, keyed by the binder
+/// types they were checked under (`ctx_of`).
+const OPEN_FACTS: bool = true;
 
 /// Terms read from `.olean` files the store may hold between declarations.
 const READ_KEEP: usize = 1 << 20;
@@ -149,10 +153,18 @@ pub struct Nbe<'e> {
     /// Terms added to `st` for names: they do not count towards its size
     /// for keeping it between declarations.
     name_exprs: usize,
-    /// Closed terms of the environment checked in an earlier declaration,
-    /// with (the id of) the universe parameters they were checked under:
-    /// they stay well-typed as the environment grows.
-    checked_closed: IdMap<(ExprId, u64), ()>,
+    /// Terms of the environment checked in an earlier declaration, closed
+    /// or under the binders of a context (`ctxs`), with (the id of) the
+    /// universe parameters they were checked under, packed in one word
+    /// (`infer_term`): they stay well-typed as the environment grows.
+    checked_closed: IdSet<u64>,
+    /// Contexts of open terms in `checked_closed`, ids from 1 (0 is the
+    /// empty context): the context with one more binder, of type the term
+    /// of the environment `.1`, after `.0`.
+    ctxs: IdMap<(u32, ExprId), u32>,
+    /// The context (`ctxs`) of environments made of the free variables of
+    /// binders only, as opened by checking.
+    ctx_of: IdMap<val::Env, u32>,
     /// `checked_closed`'s key for `lparams`, or `None` until computed.
     lparams_key: Option<u64>,
     /// Ids of lists of universe parameters, from 1.
@@ -280,7 +292,9 @@ impl<'e> Nbe<'e> {
             trim_holes_memo: vec![[val::NONE; 4]; PRUNES],
             not_proof: IdMap::default(),
             name_exprs: 0,
-            checked_closed: IdMap::default(),
+            checked_closed: IdSet::default(),
+            ctxs: IdMap::default(),
+            ctx_of: IdMap::default(),
             lparams_key: None,
             lparams_ids: Default::default(),
             ticks: 0,
@@ -332,6 +346,37 @@ impl<'e> Nbe<'e> {
         self.fresh = self.a.is_empty();
     }
 
+    /// Note that `env2` is `env` with one more binder, of type `dom` in
+    /// `env` under `ls`, for the contexts of `checked_closed`.
+    pub(super) fn ctx_push(&mut self, env: val::Env, dom: ExprId, ls: val::Ls, env2: val::Env) {
+        if !OPEN_FACTS || ls != val::Ls::ID || super::store::is_local(dom.0) {
+            return;
+        }
+        if self.st.data(dom).has_fvar() {
+            return;
+        }
+        let parent = if env == val::Env::NIL {
+            0
+        } else {
+            match self.ctx_of.get(&env) {
+                Some(&c) => c,
+                None => return,
+            }
+        };
+        let next = self.ctxs.len() as u32 + 1;
+        let c = *self.ctxs.entry((parent, dom)).or_insert(next);
+        // Equal environments are one context, whichever binders made them.
+        self.ctx_of.entry(env2).or_insert(c);
+    }
+
+    /// The context (`ctxs`) of `env`, if it is one.
+    pub(super) fn ctx(&self, env: val::Env) -> Option<u32> {
+        if env == val::Env::NIL {
+            return Some(0);
+        }
+        self.ctx_of.get(&env).copied()
+    }
+
     /// The id of the declaration's list of universe parameters.
     pub(super) fn lparams_key(&mut self) -> u64 {
         if let Some(k) = self.lparams_key {
@@ -380,10 +425,12 @@ impl<'e> Nbe<'e> {
         self.st.reset_nat_unfold_work();
         self.limit = limit;
         self.lparams_key = None;
-        if self.checked_closed.len() > CHECKED_KEEP {
-            self.checked_closed = IdMap::default();
+        if self.checked_closed.len() > CHECKED_KEEP || self.ctxs.len() > CHECKED_KEEP {
+            self.checked_closed = IdSet::default();
+            self.ctxs = IdMap::default();
             self.lparams_ids = Default::default();
         }
+        shrink(&mut self.ctx_of);
         self.decl_steps = 0;
         // Names hold free variables by index, and those go now.
         if !self.names.is_empty() {
