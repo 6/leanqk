@@ -1,0 +1,40 @@
+[package]
+name = "nitrolean-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+nitrolean = { path = ".." }
+
+# Not part of the main crate's workspace: built only by `cargo fuzz`.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "read_ndjson"
+path = "fuzz_targets/read_ndjson.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "read_olean"
+path = "fuzz_targets/read_olean.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "check_export"
+path = "fuzz_targets/check_export.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
