@@ -18,9 +18,9 @@ use hashbrown::HashMap;
 
 use super::Fail;
 use super::decode::Tape;
-use super::par::Par;
+use super::par::{Local, Par};
 use crate::env::{Block, BlockKind, Decl, DeclKind, Env, NameList, QuotKind, RecRule};
-use crate::expr::{ExprId, ExprNode, LetBinder};
+use crate::expr::{ExprData, ExprId, ExprNode, LetBinder};
 use crate::level::{LevelId, LevelList, LevelNode};
 use crate::name::{NameId, NameNode};
 use crate::reader::ErrorClass;
@@ -44,23 +44,37 @@ pub struct ModOut {
 }
 
 /// Intern a module's tape into `par`.
-pub fn intern_module(par: &Par, t: &Tape) -> Result<ModOut, Fail> {
+pub fn intern_module(par: &Par, loc: &mut Local, t: &Tape) -> Result<ModOut, Fail> {
     let units = group(t);
     let order = sort_units(t, &units);
     let strs: Vec<StrId> = (0..t.strs.len() as u32)
         .map(|i| par.str(t.str(StrId(i))))
         .collect::<Result<_, _>>()?;
+    // Names depth by depth: a layer's names do not depend on each other.
     let mut names = vec![NameId::ANON; t.names.len()];
-    for &i in &t.name_order.order {
-        let node = match t.names[i as usize] {
-            NameNode::Str(p, s) => NameNode::Str(names[p.index()], strs[s.index()]),
-            NameNode::Num(p, k) => NameNode::Num(names[p.index()], k),
-            NameNode::Anon => NameNode::Anon,
-        };
-        names[i as usize] = par.name(node)?;
+    let mut batch: Vec<(NameNode, u32)> = Vec::new();
+    let mut ids: Vec<u32> = Vec::new();
+    for d in 0..t.name_order.ends.len() {
+        let is = layer(&t.name_order, d);
+        batch.clear();
+        batch.extend(is.iter().map(|&i| {
+            let node = match t.names[i as usize] {
+                NameNode::Str(p, s) => NameNode::Str(names[p.index()], strs[s.index()]),
+                NameNode::Num(p, k) => NameNode::Num(names[p.index()], k),
+                NameNode::Anon => NameNode::Anon,
+            };
+            (node, 0)
+        }));
+        ids.clear();
+        par.names(loc, &batch, &mut ids)?;
+        for (&i, &id) in is.iter().zip(&ids) {
+            names[i as usize] = NameId(id);
+        }
     }
     let mut levels = Vec::with_capacity(t.levels.len());
+    let mut level_hp = Vec::with_capacity(t.levels.len());
     levels.push(LevelId::ZERO);
+    level_hp.push(false);
     for l in &t.levels[1..] {
         let g = |x: LevelId| levels[x.index()];
         let node = match *l {
@@ -70,9 +84,12 @@ pub fn intern_module(par: &Par, t: &Tape) -> Result<ModOut, Fail> {
             LevelNode::IMax(a, b) => LevelNode::IMax(g(a), g(b)),
             LevelNode::Param(n) => LevelNode::Param(names[n.index()]),
         };
-        levels.push(par.level(node)?);
+        let (id, hp) = par.level(node)?;
+        levels.push(id);
+        level_hp.push(hp);
     }
     let mut lists = Vec::with_capacity(t.level_ends.len());
+    let mut list_hp = Vec::with_capacity(t.level_ends.len());
     let mut buf = Vec::new();
     for i in 0..t.level_ends.len() {
         buf.clear();
@@ -81,38 +98,70 @@ pub fn intern_module(par: &Par, t: &Tape) -> Result<ModOut, Fail> {
                 .iter()
                 .map(|l| levels[l.index()]),
         );
-        lists.push(par.list(&buf)?);
+        let (id, hp) = par.list(&buf)?;
+        lists.push(id);
+        list_hp.push(hp);
     }
     // Leaves first, height by height: the probes of one height do not
-    // wait on each other.
+    // wait on each other. Each node's data is computed here from its
+    // children's, in the module's own arrays.
     let mut exprs = vec![ExprId(0); t.exprs.len()];
-    for &i in &t.expr_order.order {
-        let e = |x: ExprId| exprs[x.index()];
-        let n = |x: NameId| names[x.index()];
-        let node = match t.exprs[i as usize] {
-            ExprNode::BVar(i) => ExprNode::BVar(i),
-            ExprNode::Sort(l) => ExprNode::Sort(levels[l.index()]),
-            ExprNode::Const(c, ls) => ExprNode::Const(n(c), lists[ls.0 as usize]),
-            ExprNode::App(f, a) => ExprNode::App(e(f), e(a)),
-            ExprNode::Lam(bi, x, ty, b) => ExprNode::Lam(bi, n(x), e(ty), e(b)),
-            ExprNode::Pi(bi, x, ty, b) => ExprNode::Pi(bi, n(x), e(ty), e(b)),
-            ExprNode::Let(l, b) => {
-                let lb = t.lets[l.0 as usize];
-                let lb = LetBinder {
-                    name: n(lb.name),
-                    ty: e(lb.ty),
-                    value: e(lb.value),
-                    nondep: lb.nondep,
-                };
-                ExprNode::Let(par.let_binder(lb)?, e(b))
-            }
-            ExprNode::NatSmall(lo, hi) => ExprNode::NatSmall(lo, hi),
-            ExprNode::NatBig(b) => ExprNode::NatBig(par.nat_big(&t.bigs[b.0 as usize])?),
-            ExprNode::Str(s) => ExprNode::Str(strs[s.index()]),
-            ExprNode::Proj(c, k, x) => ExprNode::Proj(n(c), k, e(x)),
-            ExprNode::FVar(_) => return Err(Fail::malformed("free variable in a declaration")),
-        };
-        exprs[i as usize] = par.expr(node)?;
+    let mut data = vec![ExprData::new(0, false); t.exprs.len()];
+    let mut ebatch: Vec<(ExprNode, u32)> = Vec::new();
+    for h in 0..t.expr_order.ends.len() {
+        let is = layer(&t.expr_order, h);
+        ebatch.clear();
+        for &i in is {
+            let e = |x: ExprId| exprs[x.index()];
+            let dt = |x: ExprId| data[x.index()];
+            let n = |x: NameId| names[x.index()];
+            let (node, d) = match t.exprs[i as usize] {
+                ExprNode::BVar(i) => (ExprNode::BVar(i), ExprData::new(i + 1, false)),
+                ExprNode::Sort(l) => (
+                    ExprNode::Sort(levels[l.index()]),
+                    ExprData::new(0, level_hp[l.index()]),
+                ),
+                ExprNode::Const(c, ls) => (
+                    ExprNode::Const(n(c), lists[ls.0 as usize]),
+                    ExprData::new(0, list_hp[ls.0 as usize]),
+                ),
+                ExprNode::App(f, a) => (ExprNode::App(e(f), e(a)), dt(f).union(dt(a))),
+                ExprNode::Lam(bi, x, ty, b) => (
+                    ExprNode::Lam(bi, n(x), e(ty), e(b)),
+                    dt(ty).union(dt(b).under_binder()),
+                ),
+                ExprNode::Pi(bi, x, ty, b) => (
+                    ExprNode::Pi(bi, n(x), e(ty), e(b)),
+                    dt(ty).union(dt(b).under_binder()),
+                ),
+                ExprNode::Let(l, b) => {
+                    let lb = t.lets[l.0 as usize];
+                    let d = dt(lb.ty).union(dt(lb.value)).union(dt(b).under_binder());
+                    let lb = LetBinder {
+                        name: n(lb.name),
+                        ty: e(lb.ty),
+                        value: e(lb.value),
+                        nondep: lb.nondep,
+                    };
+                    (ExprNode::Let(par.let_binder(lb)?, e(b)), d)
+                }
+                ExprNode::NatSmall(lo, hi) => (ExprNode::NatSmall(lo, hi), ExprData::new(0, false)),
+                ExprNode::NatBig(b) => (
+                    ExprNode::NatBig(par.nat_big(&t.bigs[b.0 as usize])?),
+                    ExprData::new(0, false),
+                ),
+                ExprNode::Str(s) => (ExprNode::Str(strs[s.index()]), ExprData::new(0, false)),
+                ExprNode::Proj(c, k, x) => (ExprNode::Proj(n(c), k, e(x)), dt(x)),
+                ExprNode::FVar(_) => return Err(Fail::malformed("free variable in a declaration")),
+            };
+            data[i as usize] = d;
+            ebatch.push((node, d.bits()));
+        }
+        ids.clear();
+        par.exprs(loc, &ebatch, &mut ids)?;
+        for (&i, &id) in is.iter().zip(&ids) {
+            exprs[i as usize] = ExprId(id);
+        }
     }
     let pool: Vec<NameId> = t.name_pool.iter().map(|n| names[n.index()]).collect();
     let rules: Vec<RecRule> = t
@@ -184,6 +233,12 @@ pub fn intern_module(par: &Par, t: &Tape) -> Result<ModOut, Fail> {
         units,
         order,
     })
+}
+
+/// Layer `d` of `l`.
+fn layer(l: &super::decode::Layers, d: usize) -> &[u32] {
+    let start = if d == 0 { 0 } else { l.ends[d - 1] as usize };
+    &l.order[start..l.ends[d] as usize]
 }
 
 /// Appends modules' declarations to an environment, in import order.

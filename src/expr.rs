@@ -15,7 +15,7 @@
 use num_bigint::BigUint;
 
 use crate::hash::{hash_bytes, hash2};
-use crate::intern::{Interner, Node, Sharded};
+use crate::intern::{Big, Chunked, IdTable, Interner, Node};
 use crate::level::{LevelId, LevelList, Levels};
 use crate::name::NameId;
 use crate::strings::{Overflow, StrId};
@@ -202,8 +202,8 @@ impl From<Overflow> for ExprError {
 }
 
 pub struct Exprs {
-    arena: Sharded<ExprNode>,
-    data: Vec<ExprData>,
+    arena: Big<ExprNode>,
+    data: Chunked<ExprData>,
     lets: Interner<LetBinder>,
     bigs: Vec<BigUint>,
     big_table: hashbrown::HashTable<u32>,
@@ -222,8 +222,8 @@ pub(crate) fn big_hash(n: &BigUint) -> u64 {
 impl Exprs {
     pub fn new() -> Self {
         Exprs {
-            arena: Sharded::new("too many expressions"),
-            data: Vec::new(),
+            arena: Big::new("too many expressions"),
+            data: Chunked::default(),
             lets: Interner::new("too many let binders"),
             bigs: Vec::new(),
             big_table: hashbrown::HashTable::new(),
@@ -231,12 +231,12 @@ impl Exprs {
     }
 
     /// An arena made of the parts the `.olean` loader builds: nodes in id
-    /// order (children first, pairwise distinct), the shard tables indexing
-    /// them, each node's data, the let binders and the big literals.
+    /// order, the table indexing them (see [`Big::from_parts`]), each node's
+    /// data, the let binders and the big literals.
     pub(crate) fn from_parts(
-        nodes: Vec<ExprNode>,
-        tables: Vec<hashbrown::HashTable<u32>>,
-        data: Vec<ExprData>,
+        nodes: Chunked<ExprNode>,
+        table: IdTable,
+        data: Chunked<ExprData>,
         lets: Interner<LetBinder>,
         bigs: Vec<BigUint>,
     ) -> Self {
@@ -246,7 +246,7 @@ impl Exprs {
             big_table.insert_unique(big_hash(b), i as u32, |&id| big_hash(&bigs[id as usize]));
         }
         Exprs {
-            arena: Sharded::from_parts(nodes, tables, "too many expressions"),
+            arena: Big::from_parts(nodes, table, "too many expressions"),
             data,
             lets,
             bigs,
@@ -283,7 +283,7 @@ impl Exprs {
 
     #[inline]
     pub fn data(&self, e: ExprId) -> ExprData {
-        self.data[e.index()]
+        *self.data.get(e.0)
     }
 
     pub fn let_binder(&self, l: LetId) -> LetBinder {
@@ -292,11 +292,6 @@ impl Exprs {
 
     pub fn big(&self, b: BigId) -> &BigUint {
         &self.bigs[b.0 as usize]
-    }
-
-    /// Iterate over all nodes in id order.
-    pub fn nodes(&self) -> &[ExprNode] {
-        self.arena.nodes()
     }
 
     /// Intern a node. Its children must already be interned here, and its
@@ -384,7 +379,7 @@ impl Exprs {
 
     pub fn heap_bytes(&self) -> usize {
         self.arena.heap_bytes()
-            + self.data.capacity() * 4
+            + self.data.heap_bytes()
             + self.lets.heap_bytes()
             + self.bigs.capacity() * size_of::<BigUint>()
             + self

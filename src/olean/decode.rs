@@ -10,7 +10,6 @@
 //! Every walk is iterative, and [`Heap::get`] only follows pointers to lower
 //! addresses, so no input can overflow the stack or loop.
 
-use hashbrown::HashMap;
 use num_bigint::BigUint;
 
 use super::Fail;
@@ -79,39 +78,76 @@ impl Layers {
     }
 }
 
+/// The local id already decoded for an object, by address: a dense array
+/// with one entry per 8 bytes of the module's data, valid where its bit is
+/// set (so it never needs clearing beyond the bits). An entry holds the id
+/// and, in its top two bits, what kind of value it is, so an object read
+/// as two kinds (in a malformed file) is decoded once per kind rather than
+/// confused.
 #[derive(Default)]
-struct Memo {
-    names: HashMap<u64, u32, Fx>,
-    levels: HashMap<u64, u32, Fx>,
-    lists: HashMap<u64, u32, Fx>,
-    exprs: HashMap<u64, u32, Fx>,
+pub struct Memo {
+    bits: Vec<u64>,
+    vals: Vec<u32>,
+    /// (first address, end address, first entry) of each part.
+    parts: Vec<(u64, u64, usize)>,
 }
 
-/// A fast hasher for addresses (8-aligned, so the low bits carry nothing).
-#[derive(Default, Clone, Copy)]
-pub struct Fx;
-
-pub struct FxHasher(u64);
-
-impl std::hash::BuildHasher for Fx {
-    type Hasher = FxHasher;
-    fn build_hasher(&self) -> FxHasher {
-        FxHasher(0)
-    }
+#[derive(Clone, Copy)]
+#[repr(u32)]
+enum Kind {
+    Name = 0,
+    Level = 1,
+    List = 2,
+    Expr = 3,
 }
 
-impl std::hash::Hasher for FxHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.0 = (self.0.rotate_left(5) ^ b as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+/// Local ids are below this, so the kind fits above them.
+const MAX_LOCAL: u32 = 1 << 30;
+
+impl Memo {
+    /// Reset for `heap`, keeping the allocations.
+    pub fn reset(&mut self, heap: &Heap<'_>) {
+        self.parts.clear();
+        let mut n = 0usize;
+        for (lo, hi) in heap.ranges() {
+            self.parts.push((lo, hi, n));
+            n += ((hi - lo) / 8) as usize;
+        }
+        self.bits.clear();
+        self.bits.resize(n / 64 + 1, 0);
+        if self.vals.len() < n {
+            self.vals.resize(n, 0);
         }
     }
-    fn write_u64(&mut self, n: u64) {
-        let r = (n as u128).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-        self.0 = (r as u64) ^ ((r >> 64) as u64);
+
+    #[inline]
+    fn slot(&self, addr: u64) -> Option<usize> {
+        // Most objects are in the last part.
+        for &(lo, hi, first) in self.parts.iter().rev() {
+            if addr >= lo {
+                return (addr < hi).then(|| first + ((addr - lo) / 8) as usize);
+            }
+        }
+        None
+    }
+
+    #[inline]
+    fn get(&self, kind: Kind, addr: u64) -> Option<u32> {
+        let k = self.slot(addr)?;
+        if self.bits[k / 64] >> (k % 64) & 1 == 0 {
+            return None;
+        }
+        let v = self.vals[k];
+        (v >> 30 == kind as u32).then_some(v & (MAX_LOCAL - 1))
+    }
+
+    #[inline]
+    fn insert(&mut self, kind: Kind, addr: u64, id: u32) {
+        debug_assert!(id < MAX_LOCAL);
+        if let Some(k) = self.slot(addr) {
+            self.bits[k / 64] |= 1 << (k % 64);
+            self.vals[k] = (kind as u32) << 30 | id;
+        }
     }
 }
 
@@ -120,6 +156,7 @@ pub struct Decoder<'h, 'a> {
     pub tape: Tape,
     memo: Memo,
     stack: Vec<(u64, u64, bool)>,
+    estack: Vec<(Obj<'a>, bool)>,
     lvl_buf: Vec<LevelId>,
 }
 
@@ -130,12 +167,18 @@ fn too_many(what: &str) -> Fail {
 fn idx(len: usize, what: &str) -> Result<u32, Fail> {
     u32::try_from(len)
         .ok()
-        .filter(|&n| n < u32::MAX - 1)
+        .filter(|&n| n < MAX_LOCAL)
         .ok_or_else(|| too_many(what))
 }
 
 impl<'h, 'a> Decoder<'h, 'a> {
     pub fn new(heap: &'h Heap<'a>) -> Self {
+        Self::with_memo(heap, Memo::default())
+    }
+
+    /// A decoder that reuses `memo`'s allocations.
+    pub fn with_memo(heap: &'h Heap<'a>, mut memo: Memo) -> Self {
+        memo.reset(heap);
         let mut tape = Tape::default();
         tape.names.push(NameNode::Anon);
         tape.levels.push(LevelNode::Zero);
@@ -143,8 +186,9 @@ impl<'h, 'a> Decoder<'h, 'a> {
         Decoder {
             heap,
             tape,
-            memo: Memo::default(),
+            memo,
             stack: Vec::new(),
+            estack: Vec::new(),
             lvl_buf: Vec::new(),
         }
     }
@@ -201,7 +245,7 @@ impl<'h, 'a> Decoder<'h, 'a> {
                 Val::Scalar(0) => break NameId::ANON,
                 Val::Scalar(_) => return Err(Fail::malformed("bad name")),
                 Val::Obj(o) => {
-                    if let Some(&id) = self.memo.names.get(&o.addr) {
+                    if let Some(id) = self.memo.get(Kind::Name, o.addr) {
                         break NameId(id);
                     }
                     let node = match o.tag {
@@ -233,7 +277,7 @@ impl<'h, 'a> Decoder<'h, 'a> {
             };
             let id = idx(self.tape.names.len(), "names")?;
             self.tape.names.push(node);
-            self.memo.names.insert(addr, id);
+            self.memo.insert(Kind::Name, addr, id);
             base = NameId(id);
         }
         Ok(base)
@@ -256,7 +300,7 @@ impl<'h, 'a> Decoder<'h, 'a> {
                 Val::Scalar(_) => return Err(Fail::malformed("bad universe level")),
                 Val::Obj(o) => o,
             };
-            if let Some(&id) = self.memo.levels.get(&o.addr) {
+            if let Some(id) = self.memo.get(Kind::Level, o.addr) {
                 self.stack.pop();
                 last = LevelId(id);
                 continue;
@@ -265,7 +309,7 @@ impl<'h, 'a> Decoder<'h, 'a> {
                 match d.heap.get(o.field(i), o.addr)? {
                     Val::Scalar(0) => Ok(Some(LevelId::ZERO)),
                     Val::Scalar(_) => Err(Fail::malformed("bad universe level")),
-                    Val::Obj(c) => Ok(d.memo.levels.get(&c.addr).map(|&i| LevelId(i))),
+                    Val::Obj(c) => Ok(d.memo.get(Kind::Level, c.addr).map(LevelId)),
                 }
             };
             let nkids = match o.tag {
@@ -308,7 +352,7 @@ impl<'h, 'a> Decoder<'h, 'a> {
                 self.tape.levels.push(node);
                 id
             };
-            self.memo.levels.insert(o.addr, id);
+            self.memo.insert(Kind::Level, o.addr, id);
             self.stack.pop();
             last = LevelId(id);
         }
@@ -319,7 +363,7 @@ impl<'h, 'a> Decoder<'h, 'a> {
         if ptr == 1 {
             return Ok(LevelList::EMPTY);
         }
-        if let Some(&id) = self.memo.lists.get(&ptr) {
+        if let Some(id) = self.memo.get(Kind::List, ptr) {
             return Ok(LevelList(id));
         }
         let mut buf = std::mem::take(&mut self.lvl_buf);
@@ -344,7 +388,7 @@ impl<'h, 'a> Decoder<'h, 'a> {
             self.tape.level_pool.extend_from_slice(&buf);
             let end = idx(self.tape.level_pool.len(), "levels")?;
             self.tape.level_ends.push(end);
-            self.memo.lists.insert(ptr, id);
+            self.memo.insert(Kind::List, ptr, id);
             Ok(LevelList(id))
         });
         self.lvl_buf = buf;
@@ -353,20 +397,29 @@ impl<'h, 'a> Decoder<'h, 'a> {
 
     /// The memoized id of the expression at `ptr`, following `mdata`.
     fn expr_done(&self, ptr: u64) -> Option<ExprId> {
-        self.memo.exprs.get(&ptr).map(|&i| ExprId(i))
+        self.memo.get(Kind::Expr, ptr).map(ExprId)
     }
 
     /// An `Expr`, with an explicit stack.
     pub fn expr(&mut self, ptr: u64, holder: u64) -> Result<ExprId, Fail> {
-        let start = self.stack.len();
-        self.stack.push((ptr, holder, false));
-        while self.stack.len() > start {
-            let (p, h, expanded) = *self.stack.last().expect("nonempty");
-            if self.expr_done(p).is_some() {
-                self.stack.pop();
-                continue;
-            }
-            let o = self.obj(p, h, "an expression")?;
+        if let Some(e) = self.expr_done(ptr) {
+            return Ok(e);
+        }
+        let root = self.obj(ptr, holder, "an expression")?;
+        let mut stack = std::mem::take(&mut self.estack);
+        stack.clear();
+        stack.push((root, false));
+        let res = self.expr_walk(&mut stack);
+        self.estack = stack;
+        res?;
+        self.expr_done(ptr)
+            .ok_or_else(|| Fail::malformed("internal: unresolved expression"))
+    }
+
+    /// Decode the expressions on `stack` (resolved objects, and whether
+    /// their children have been pushed).
+    fn expr_walk(&mut self, stack: &mut Vec<(Obj<'a>, bool)>) -> Result<(), Fail> {
+        while let Some(&(o, expanded)) = stack.last() {
             // (object fields, scalar bytes, expression children)
             let (nobjs, scalars, kids): (u8, usize, &[usize]) = match o.tag {
                 0 => (1, 8, &[]),
@@ -382,18 +435,26 @@ impl<'h, 'a> Decoder<'h, 'a> {
                 11 => (3, 8, &[2]),
                 t => return Err(Fail::malformed(format!("bad expression tag {t}"))),
             };
-            o.ctor(o.tag, nobjs, scalars, "expression")?;
-            if !expanded && !kids.is_empty() {
-                self.stack.last_mut().expect("nonempty").2 = true;
+            if !expanded {
+                o.ctor(o.tag, nobjs, scalars, "expression")?;
+                stack.last_mut().expect("nonempty").1 = true;
+                let mut pushed = false;
                 for &i in kids.iter().rev() {
                     let c = o.field(i);
                     if self.expr_done(c).is_none() {
-                        // Check the bound now so the stack only holds
-                        // pointers that go down.
-                        self.obj(c, o.addr, "an expression")?;
-                        self.stack.push((c, o.addr, false));
+                        // Resolving the child checks that it lies below
+                        // its holder, so the walk only goes down.
+                        let co = self.obj(c, o.addr, "an expression")?;
+                        stack.push((co, false));
+                        pushed = true;
                     }
                 }
+                if pushed {
+                    continue;
+                }
+            } else if self.expr_done(o.addr).is_some() {
+                // Reached twice through shared children before it was done.
+                stack.pop();
                 continue;
             }
             let kid = |d: &Self, i: usize| {
@@ -473,8 +534,8 @@ impl<'h, 'a> Decoder<'h, 'a> {
                 10 => {
                     // `mdata` is kernel-transparent: alias its inner term.
                     let inner = kid(self, 1)?;
-                    self.memo.exprs.insert(o.addr, inner.0);
-                    self.stack.pop();
+                    self.memo.insert(Kind::Expr, o.addr, inner.0);
+                    stack.pop();
                     continue;
                 }
                 _ => ExprNode::Proj(
@@ -485,11 +546,10 @@ impl<'h, 'a> Decoder<'h, 'a> {
             };
             let id = idx(self.tape.exprs.len(), "expressions")?;
             self.tape.exprs.push(node);
-            self.memo.exprs.insert(o.addr, id);
-            self.stack.pop();
+            self.memo.insert(Kind::Expr, o.addr, id);
+            stack.pop();
         }
-        self.expr_done(ptr)
-            .ok_or_else(|| Fail::malformed("internal: unresolved expression"))
+        Ok(())
     }
 
     fn name_list(&mut self, ptr: u64, holder: u64) -> Result<NameList, Fail> {

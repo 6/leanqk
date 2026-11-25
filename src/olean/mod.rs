@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -471,9 +471,18 @@ fn new_env() -> Env {
 /// What a worker makes of a module.
 type Done = Result<(build::ModOut, usize, u64), OleanError>;
 
-fn work(par: &Par, m: &Module) -> Done {
+/// Nanoseconds spent decoding and interning, over all threads (for
+/// `NITROLEAN_OLEAN_PROFILE`).
+static DECODE_NS: AtomicU64 = AtomicU64::new(0);
+static INTERN_NS: AtomicU64 = AtomicU64::new(0);
+
+fn work(par: &Par, loc: &mut par::Local, m: &Module) -> Done {
+    let t = Instant::now();
     let (tape, files, bytes) = decode_module(m)?;
-    let out = build::intern_module(par, &tape).map_err(|e| e.at(&m.path))?;
+    let d = t.elapsed();
+    let out = build::intern_module(par, loc, &tape).map_err(|e| e.at(&m.path))?;
+    DECODE_NS.fetch_add(d.as_nanos() as u64, Ordering::Relaxed);
+    INTERN_NS.fetch_add((t.elapsed() - d).as_nanos() as u64, Ordering::Relaxed);
     Ok((out, files, bytes))
 }
 
@@ -489,7 +498,7 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
                 .map(|e| std::fs::metadata(m.path.with_extension(e)).map_or(0, |md| md.len()))
         })
         .sum();
-    let par = Par::new(bytes);
+    let par = Par::new(bytes, threads);
     let mut asm = build::Assembler::new(new_env(), &par);
     let mut stats = Stats {
         modules: mods.len(),
@@ -508,8 +517,9 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
         Ok::<(), OleanError>(())
     };
     if threads <= 1 {
+        let mut loc = par::Local::default();
         for (i, m) in mods.iter().enumerate() {
-            add(&mut asm, i, work(&par, m))?;
+            add(&mut asm, i, work(&par, &mut loc, m))?;
         }
     } else {
         let next = AtomicUsize::new(0);
@@ -520,12 +530,13 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
                 let tx = tx.clone();
                 let (next, failed, par) = (&next, &failed, &par);
                 s.spawn(move || {
+                    let mut loc = par::Local::default();
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);
                         if i >= mods.len() || failed.load(Ordering::Relaxed) {
                             break;
                         }
-                        if tx.send((i, work(par, &mods[i]))).is_err() {
+                        if tx.send((i, work(par, &mut loc, &mods[i]))).is_err() {
                             break;
                         }
                     }
@@ -553,9 +564,11 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
     let t = Instant::now();
     if std::env::var_os("NITROLEAN_OLEAN_PROFILE").is_some() {
         eprintln!(
-            "rss before finish: {:?} peak {:?}",
+            "rss before finish: {:?} MiB, peak {:?}; decode {:.3} s, intern {:.3} s (all threads)",
             rss_now(),
-            crate::stats::peak_rss_bytes()
+            crate::stats::peak_rss_bytes(),
+            DECODE_NS.load(Ordering::Relaxed) as f64 / 1e9,
+            INTERN_NS.load(Ordering::Relaxed) as f64 / 1e9,
         );
     }
     let mut env = asm.env;

@@ -2,74 +2,44 @@
 //!
 //! Worker threads intern modules into these arenas at the same time; at the
 //! end [`Par::finish`] turns them into the environment's [`Names`],
-//! [`Levels`] and [`Exprs`], handing over the expression shard tables as
-//! they are (no rehashing).
+//! [`Levels`] and [`Exprs`], handing the expression and name tables over as
+//! they are (no rehashing) and converting the node stores chunk by chunk,
+//! on all threads.
 //!
-//! Each arena is a set of shard tables (each behind its own mutex, chosen
-//! by [`shard_of`]) of `u32` ids, and a store from id to node, written once
-//! before the id is published in a table. Ids come from one atomic counter
-//! while the shard is locked, so a node's id is greater than its
-//! children's, as in the sequential arenas. Node equality is [`Node::same`],
-//! and the hash is [`Node::hash`], so the tables are exactly the ones the
-//! sequential arena would have, up to the order of ids.
+//! An arena ([`Conc`]) is an [`IdTable`] (lock-free: a slot is claimed with
+//! one compare-and-swap) and a store from id to node, written before the id
+//! is published in the table. Each thread takes ids in blocks of
+//! [`ID_BLOCK`] ([`Cursor`]), so threads do not contend on a counter; ids
+//! left unused at the end of a block, or taken for a node another thread
+//! added first, hold a placeholder that no term refers to. Inserts run in
+//! batches of at most [`BATCH`] nodes under a read lock of the table; a
+//! batch that might fill the table first grows it under the write lock.
+//! Node equality is [`Node::same`] and the hash is [`Node::hash`], so a
+//! table finds exactly what the sequential arena's would.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 
 use hashbrown::HashTable;
 use num_bigint::BigUint;
 
 use crate::expr::{BigId, ExprData, ExprId, ExprNode, Exprs, LetBinder, LetId};
 use crate::hash::hash_bytes;
-use crate::intern::{Interner, Node, SHARDS, shard_of};
+use crate::intern::{Big, CHUNK, CHUNK_BITS, Chunked, IdTable, Interner, Node, SHARDS, shard_of};
 use crate::level::{LevelId, LevelList, LevelNode, Levels};
 use crate::name::{NameId, NameNode, Names};
 use crate::strings::{Overflow, StrId, StrPool};
 
-const CHUNK_BITS: u32 = 16;
-const CHUNK: usize = 1 << CHUNK_BITS;
 const MAX_CHUNKS: usize = 1 << (32 - CHUNK_BITS);
 
-/// Write-once storage of `W` words per id, in lazily allocated chunks of
-/// `2^B` ids. The expression store uses chunks above the allocator's mmap
-/// threshold, so that each is returned to the system when freed.
-struct Words<const W: usize, const B: u32> {
-    chunks: Vec<OnceLock<Box<[AtomicU64]>>>,
-    /// Ids per chunk: `2^B`, or fewer if all ids fit in one chunk.
-    per: usize,
-}
+/// Ids a thread takes at once.
+pub const ID_BLOCK: u32 = 1024;
 
-impl<const W: usize, const B: u32> Words<W, B> {
-    /// Storage for ids below `max`.
-    fn new(max: usize) -> Self {
-        let n = (max >> B) + 1;
-        Words {
-            chunks: (0..n.min(1 << (32 - B))).map(|_| OnceLock::new()).collect(),
-            per: max.min(1 << B).max(1),
-        }
-    }
+/// Most inserts per read lock of a table.
+pub const BATCH: usize = 1 << 14;
 
-    fn chunk(&self, id: u32) -> &[AtomicU64] {
-        self.chunks[(id >> B) as usize]
-            .get_or_init(|| (0..W * self.per).map(|_| AtomicU64::new(0)).collect())
-    }
-
-    #[inline]
-    fn set(&self, id: u32, w: [u64; W]) {
-        let c = self.chunk(id);
-        let o = (id as usize & ((1 << B) - 1)) * W;
-        for (i, x) in w.into_iter().enumerate() {
-            c[o + i].store(x, Ordering::Relaxed);
-        }
-    }
-
-    #[inline]
-    fn get(&self, id: u32) -> [u64; W] {
-        let c = self.chunk(id);
-        let o = (id as usize & ((1 << B) - 1)) * W;
-        std::array::from_fn(|i| c[o + i].load(Ordering::Relaxed))
-    }
-}
+/// Probes issued together, so that their cache misses overlap.
+const GROUP: usize = 16;
 
 /// Write-once storage of values per id.
 struct Cells<T> {
@@ -224,78 +194,305 @@ impl Pack for LetBinder {
     }
 }
 
-/// A concurrent arena of packable nodes, with one word of side data each.
-pub(crate) struct Conc<T, const B: u32 = 16> {
-    shards: Vec<Mutex<HashTable<u32>>>,
-    /// Ids are below this (see [`Par::new`]).
-    max: usize,
-    words: Words<3, B>,
+/// A thread's current block of ids in one arena.
+#[derive(Default)]
+pub struct Cursor {
+    next: u32,
+    end: u32,
+}
+
+/// Write-once storage of a packed node and a side word per id, in lazily
+/// allocated chunks of [`CHUNK`] ids.
+struct Store {
+    words: Vec<OnceLock<Box<[AtomicU64]>>>,
+    side: Vec<OnceLock<Box<[AtomicU32]>>>,
+}
+
+impl Store {
+    fn new() -> Self {
+        Store {
+            words: (0..MAX_CHUNKS).map(|_| OnceLock::new()).collect(),
+            side: (0..MAX_CHUNKS).map(|_| OnceLock::new()).collect(),
+        }
+    }
+
+    #[inline]
+    fn words(&self, id: u32) -> &[AtomicU64] {
+        let c = self.words[(id >> CHUNK_BITS) as usize]
+            .get_or_init(|| (0..2 * CHUNK).map(|_| AtomicU64::new(0)).collect());
+        let o = (id as usize & (CHUNK - 1)) * 2;
+        &c[o..o + 2]
+    }
+
+    #[inline]
+    fn side_cell(&self, id: u32) -> &AtomicU32 {
+        let c = self.side[(id >> CHUNK_BITS) as usize]
+            .get_or_init(|| (0..CHUNK).map(|_| AtomicU32::new(0)).collect());
+        &c[id as usize & (CHUNK - 1)]
+    }
+
+    #[inline]
+    fn set(&self, id: u32, w: [u64; 2], side: u32) {
+        let c = self.words(id);
+        c[0].store(w[0], Ordering::Relaxed);
+        c[1].store(w[1], Ordering::Relaxed);
+        if side != 0 {
+            self.side_cell(id).store(side, Ordering::Relaxed);
+        }
+    }
+
+    #[inline]
+    fn get(&self, id: u32) -> [u64; 2] {
+        let c = self.words(id);
+        [c[0].load(Ordering::Relaxed), c[1].load(Ordering::Relaxed)]
+    }
+}
+
+/// A concurrent arena of packable nodes, with a `u32` of side data each.
+pub(crate) struct Conc<T> {
+    table: RwLock<IdTable>,
+    store: Store,
+    /// The next unallocated block.
     next: AtomicU32,
+    /// Room kept free in the table for the batches in flight.
+    slack: usize,
     what: &'static str,
     _t: std::marker::PhantomData<T>,
 }
 
-impl<T: Pack, const B: u32> Conc<T, B> {
-    /// An arena with room for about `n` nodes before any shard rehashes
-    /// (rehashing reads every node of the shard back).
-    fn new(what: &'static str, n: usize, max: usize) -> Self {
-        let per = n / SHARDS + n / (8 * SHARDS);
+impl<T: Pack> Conc<T> {
+    /// An arena with room for about `n` nodes before the table grows, for
+    /// `threads` inserting threads.
+    fn new(what: &'static str, n: usize, threads: usize) -> Self {
+        let slack = threads.max(1) * BATCH;
         Conc {
-            shards: (0..SHARDS)
-                .map(|_| Mutex::new(HashTable::with_capacity(per)))
-                .collect(),
-            words: Words::new(max),
-            max,
+            table: RwLock::new(IdTable::with_capacity(n + slack)),
+            store: Store::new(),
             next: AtomicU32::new(0),
+            slack,
             what,
             _t: std::marker::PhantomData,
         }
     }
 
+    /// Ids handed out so far (including unused ones).
     pub fn len(&self) -> usize {
         self.next.load(Ordering::Acquire) as usize
     }
 
     #[inline]
     pub fn get(&self, id: u32) -> T {
-        let w = self.words.get(id);
-        T::unpack([w[0], w[1]])
+        T::unpack(self.store.get(id))
     }
 
-    #[inline]
-    pub fn side(&self, id: u32) -> u64 {
-        self.words.get(id)[2]
-    }
-
-    /// The id of `node`, adding it (with side data `side()`) if new.
-    #[inline]
-    pub fn intern(&self, node: T, side: impl FnOnce() -> u64) -> Result<u32, Overflow> {
-        let h = node.hash();
-        let mut t = self.shards[shard_of(h)].lock().expect("shard lock");
-        if let Some(&id) = t.find(h, |&id| self.get(id).same(&node)) {
-            return Ok(id);
+    fn alloc(&self, cur: &mut Cursor) -> Result<u32, Overflow> {
+        if cur.next == cur.end {
+            let b = self.next.fetch_add(ID_BLOCK, Ordering::AcqRel);
+            if b >= u32::MAX - 2 * ID_BLOCK {
+                self.next.store(u32::MAX - 2 * ID_BLOCK, Ordering::Release);
+                return Err(Overflow(self.what));
+            }
+            cur.next = b;
+            cur.end = b + ID_BLOCK;
         }
-        let id = self.next.fetch_add(1, Ordering::AcqRel);
-        if id >= u32::MAX - 1 || id as usize >= self.max {
-            self.next.store(id, Ordering::Release);
-            return Err(Overflow(self.what));
-        }
-        let p = node.pack();
-        self.words.set(id, [p[0], p[1], side()]);
-        t.insert_unique(h, id, |&i| self.get(i).hash());
+        let id = cur.next;
+        cur.next += 1;
         Ok(id)
     }
 
-    /// The shard tables, and the nodes and side words in id order.
-    fn into_parts(self) -> (Vec<HashTable<u32>>, Words<3, B>, usize) {
-        let n = self.len();
-        let tables = self
-            .shards
-            .into_iter()
-            .map(|m| m.into_inner().expect("shard lock"))
-            .collect();
-        (tables, self.words, n)
+    /// Run `f` with the table, after making room for `n` (at most
+    /// [`BATCH`]) inserts.
+    fn batch<R>(&self, n: usize, f: impl FnOnce(&IdTable) -> R) -> R {
+        debug_assert!(n <= BATCH);
+        {
+            let t = self.table.read().expect("table lock");
+            if t.has_room(n + self.slack) {
+                return f(&t);
+            }
+        }
+        {
+            let mut t = self.table.write().expect("table lock");
+            if !t.has_room(n + self.slack) {
+                let want = (t.len() + n + self.slack) * 2;
+                let grown = t.grown(want, |id| self.get(id).hash());
+                *t = grown;
+            }
+        }
+        let t = self.table.read().expect("table lock");
+        f(&t)
     }
+
+    /// Intern one node in a batch.
+    #[inline]
+    fn put(
+        &self,
+        t: &IdTable,
+        cur: &mut Cursor,
+        node: T,
+        h: u64,
+        side: u32,
+        added: &mut usize,
+    ) -> Result<u32, Overflow> {
+        let mut err = None;
+        let mut made = None;
+        let (id, fresh) = t.insert_shared(
+            h,
+            |id| self.get(id).same(&node),
+            || match self.alloc(cur) {
+                Ok(id) => {
+                    self.store.set(id, node.pack(), side);
+                    made = Some(id);
+                    id
+                }
+                Err(e) => {
+                    err = Some(e);
+                    // Never published: the error is returned below.
+                    u32::MAX
+                }
+            },
+        );
+        if let Some(e) = err {
+            return Err(e);
+        }
+        if fresh {
+            *added += 1;
+        } else if let Some(m) = made {
+            // Another thread added an equal node first: leave a
+            // placeholder in the unused id.
+            self.store.set(m, [0, 0], 0);
+        }
+        Ok(id)
+    }
+
+    /// Intern `nodes` with their side data, appending their ids to `out`.
+    /// The nodes must not depend on each other.
+    pub fn intern_all(
+        &self,
+        cur: &mut Cursor,
+        nodes: &[(T, u32)],
+        out: &mut Vec<u32>,
+    ) -> Result<(), Overflow> {
+        for part in nodes.chunks(BATCH) {
+            let r = self.batch(part.len(), |t| {
+                let mut added = 0;
+                let mut res = Ok(());
+                'groups: for g in part.chunks(GROUP) {
+                    let mut hs = [0u64; GROUP];
+                    let mut acc = 0u64;
+                    for (i, (n, _)) in g.iter().enumerate() {
+                        hs[i] = n.hash();
+                        acc = acc.wrapping_add(t.touch(hs[i]));
+                    }
+                    std::hint::black_box(acc);
+                    for (i, &(n, side)) in g.iter().enumerate() {
+                        match self.put(t, cur, n, hs[i], side, &mut added) {
+                            Ok(id) => out.push(id),
+                            Err(e) => {
+                                res = Err(e);
+                                break 'groups;
+                            }
+                        }
+                    }
+                }
+                t.add_len(added);
+                res
+            });
+            r?;
+        }
+        Ok(())
+    }
+
+    /// Intern one node.
+    pub fn intern(&self, cur: &mut Cursor, node: T, side: u32) -> Result<u32, Overflow> {
+        self.batch(1, |t| {
+            let mut added = 0;
+            let r = self.put(t, cur, node, node.hash(), side, &mut added);
+            t.add_len(added);
+            r
+        })
+    }
+
+    /// The table, and the nodes and side data in id order, converted on
+    /// `threads` threads chunk by chunk (each chunk of the store is freed
+    /// once converted).
+    fn into_parts<N: Send, S: Send>(
+        self,
+        threads: usize,
+        node: impl Fn([u64; 2]) -> N + Sync,
+        side: impl Fn(u32) -> S + Sync,
+    ) -> (IdTable, Vec<Vec<N>>, Vec<Vec<S>>, usize) {
+        let n = self.len();
+        let nchunks = n.div_ceil(CHUNK);
+        let Conc { table, store, .. } = self;
+        let table = table.into_inner().expect("table lock");
+        let words: Vec<Mutex<Option<Box<[AtomicU64]>>>> = store
+            .words
+            .into_iter()
+            .take(nchunks)
+            .map(|c| Mutex::new(c.into_inner()))
+            .collect();
+        let sides: Vec<Mutex<Option<Box<[AtomicU32]>>>> = store
+            .side
+            .into_iter()
+            .take(nchunks)
+            .map(|c| Mutex::new(c.into_inner()))
+            .collect();
+        let out: Vec<Mutex<(Vec<N>, Vec<S>)>> = (0..nchunks)
+            .map(|_| Mutex::new((Vec::new(), Vec::new())))
+            .collect();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let convert = || {
+            loop {
+                let c = next.fetch_add(1, Ordering::Relaxed);
+                if c >= nchunks {
+                    break;
+                }
+                let len = (n - c * CHUNK).min(CHUNK);
+                let w = words[c].lock().expect("chunk").take();
+                let ns: Vec<N> = match &w {
+                    Some(w) => w[..2 * len]
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|p| node([p[0].load(Ordering::Relaxed), p[1].load(Ordering::Relaxed)]))
+                        .collect(),
+                    None => (0..len).map(|_| node([0, 0])).collect(),
+                };
+                drop(w);
+                let sd = sides[c].lock().expect("chunk").take();
+                let ss: Vec<S> = match &sd {
+                    Some(s) => s[..len]
+                        .iter()
+                        .map(|x| side(x.load(Ordering::Relaxed)))
+                        .collect(),
+                    None => (0..len).map(|_| side(0)).collect(),
+                };
+                drop(sd);
+                *out[c].lock().expect("chunk") = (ns, ss);
+            }
+        };
+        if threads <= 1 || nchunks <= 1 {
+            convert();
+        } else {
+            std::thread::scope(|s| {
+                for _ in 0..threads.min(nchunks) {
+                    s.spawn(convert);
+                }
+            });
+        }
+        let (nodes, sides): (Vec<Vec<N>>, Vec<Vec<S>>) = out
+            .into_iter()
+            .map(|m| m.into_inner().expect("chunk"))
+            .unzip();
+        (table, nodes, sides, n)
+    }
+}
+
+/// A worker's cursors, one per arena.
+#[derive(Default)]
+pub struct Local {
+    pub names: Cursor,
+    pub exprs: Cursor,
 }
 
 /// A concurrent table of values identified by content (strings, level
@@ -354,39 +551,40 @@ impl<V: ?Sized + PartialEq> ConcVals<V> {
 pub struct Par {
     strs: ConcVals<str>,
     pub(crate) names: Conc<NameNode>,
-    /// Side data: whether the level has a parameter.
-    levels: Conc<LevelNode>,
-    lists: ConcVals<[LevelId]>,
-    /// Side data: the `ExprData` bits. Chunks of 2^21 nodes (48 MiB).
-    pub(crate) exprs: Conc<ExprNode, 21>,
-    lets: Conc<LetBinder>,
+    /// Levels and level lists are few: one lock is enough.
+    levels: Mutex<Levels>,
+    /// Side data: the `ExprData` bits.
+    pub(crate) exprs: Conc<ExprNode>,
+    lets: Mutex<Interner<LetBinder>>,
     bigs: ConcVals<BigUint>,
 }
 
 impl Par {
-    /// Arenas sized for `bytes` of `.olean` files. Lean's files hold about
-    /// one distinct expression per 60 bytes and one name per 1300 (Init,
-    /// Std and Mathlib); the tables grow past that if needed. Every node
-    /// comes from an object of at least 16 bytes, so there are fewer than
-    /// `bytes / 16` of each kind (plus the few made here).
-    pub fn new(bytes: u64) -> Self {
+    /// Arenas sized for `bytes` of `.olean` files and `threads` threads.
+    /// Lean's files hold about one distinct expression per 70 bytes and
+    /// one name per 1300 (Init, Std and Mathlib); the tables grow past that
+    /// if needed. Every node comes from an object of at least 16 bytes, so
+    /// there are fewer than `bytes / 16` of each kind (plus the few made
+    /// here).
+    pub fn new(bytes: u64, threads: usize) -> Self {
         let b = usize::try_from(bytes).unwrap_or(usize::MAX);
         let max = b / 16 + 16;
         let p = Par {
             strs: ConcVals::new("string pool exceeds 4 GiB", max),
-            names: Conc::new("too many names", b / 1300, max),
-            levels: Conc::new("too many universe levels", 0, max),
-            lists: ConcVals::new("too many universe level lists", max),
-            exprs: Conc::new("too many expressions", b / 60, max),
-            lets: Conc::new("too many let binders", b / 3000, max),
+            names: Conc::new("too many names", b / 1300, threads),
+            levels: Mutex::new(Levels::new()),
+            exprs: Conc::new("too many expressions", b / 80, threads),
+            lets: Mutex::new(Interner::new("too many let binders")),
             bigs: ConcVals::new("too many big literals", max),
         };
         // Id 0 is the anonymous name, the zero level and the empty list,
         // as in the sequential arenas.
-        let anon = p.names.intern(NameNode::Anon, || 0).expect("empty");
-        let zero = p.levels.intern(LevelNode::Zero, || 0).expect("empty");
-        let empty = p.list(&[]).expect("empty");
-        debug_assert!(anon == 0 && zero == 0 && empty == LevelList::EMPTY);
+        let mut loc = Local::default();
+        let anon = p
+            .names
+            .intern(&mut loc.names, NameNode::Anon, 0)
+            .expect("empty");
+        debug_assert!(anon == 0);
         p
     }
 
@@ -398,38 +596,33 @@ impl Par {
         Ok(StrId(id))
     }
 
-    pub fn name(&self, n: NameNode) -> Result<NameId, Overflow> {
-        Ok(NameId(self.names.intern(n, || 0)?))
+    /// Intern independent names (none a prefix of another).
+    pub fn names(
+        &self,
+        loc: &mut Local,
+        ns: &[(NameNode, u32)],
+        out: &mut Vec<u32>,
+    ) -> Result<(), Overflow> {
+        self.names.intern_all(&mut loc.names, ns, out)
     }
 
-    pub fn level(&self, l: LevelNode) -> Result<LevelId, Overflow> {
-        let hp = |x: LevelId| self.levels.side(x.0);
-        let id = self.levels.intern(l, || match l {
-            LevelNode::Zero => 0,
-            LevelNode::Succ(a) => hp(a),
-            LevelNode::Max(a, b) | LevelNode::IMax(a, b) => hp(a) | hp(b),
-            LevelNode::Param(_) => 1,
-        })?;
-        Ok(LevelId(id))
+    /// Intern a level; also says whether it has a parameter.
+    pub fn level(&self, l: LevelNode) -> Result<(LevelId, bool), Overflow> {
+        let mut ls = self.levels.lock().expect("levels lock");
+        let (id, _) = ls.intern(l)?;
+        Ok((id, ls.has_param(id)))
     }
 
-    pub fn list(&self, ls: &[LevelId]) -> Result<LevelList, Overflow> {
-        let h = crate::level::list_hash(ls);
-        let id = self
-            .lists
-            .intern(ls, h, || ls.into(), crate::level::list_hash)?;
-        Ok(LevelList(id))
-    }
-
-    fn list_has_param(&self, l: LevelList) -> bool {
-        self.lists
-            .get(l.0)
-            .iter()
-            .any(|x| self.levels.side(x.0) != 0)
+    /// Intern a level list; also says whether a level has a parameter.
+    pub fn list(&self, l: &[LevelId]) -> Result<(LevelList, bool), Overflow> {
+        let mut ls = self.levels.lock().expect("levels lock");
+        let id = ls.intern_list(l)?;
+        Ok((id, ls.list_has_param(id)))
     }
 
     pub fn let_binder(&self, b: LetBinder) -> Result<LetId, Overflow> {
-        Ok(LetId(self.lets.intern(b, || 0)?))
+        let (id, _) = self.lets.lock().expect("lets lock").intern(b)?;
+        Ok(LetId(id))
     }
 
     pub fn nat_big(&self, n: &BigUint) -> Result<BigId, Overflow> {
@@ -440,34 +633,15 @@ impl Par {
         Ok(BigId(id))
     }
 
-    fn data(&self, e: ExprId) -> ExprData {
-        ExprData::from_bits(self.exprs.side(e.0) as u32)
-    }
-
-    pub fn expr(&self, node: ExprNode) -> Result<ExprId, Overflow> {
-        let id = self.exprs.intern(node, || {
-            let d = |x: ExprId| self.data(x);
-            let data = match node {
-                ExprNode::BVar(i) => ExprData::new(i + 1, false),
-                ExprNode::Sort(l) => ExprData::new(0, self.levels.side(l.0) != 0),
-                ExprNode::Const(_, ls) => ExprData::new(0, self.list_has_param(ls)),
-                ExprNode::App(f, a) => d(f).union(d(a)),
-                ExprNode::Lam(_, _, t, b) | ExprNode::Pi(_, _, t, b) => {
-                    d(t).union(d(b).under_binder())
-                }
-                ExprNode::Let(h, b) => {
-                    let h = self.lets.get(h.0);
-                    d(h.ty).union(d(h.value)).union(d(b).under_binder())
-                }
-                ExprNode::NatSmall(..) | ExprNode::NatBig(_) | ExprNode::Str(_) => {
-                    ExprData::new(0, false)
-                }
-                ExprNode::Proj(_, _, e) => d(e),
-                ExprNode::FVar(_) => ExprData::FVAR,
-            };
-            data.bits() as u64
-        })?;
-        Ok(ExprId(id))
+    /// Intern independent expressions (none a subterm of another) with
+    /// their data.
+    pub fn exprs(
+        &self,
+        loc: &mut Local,
+        es: &[(ExprNode, u32)],
+        out: &mut Vec<u32>,
+    ) -> Result<(), Overflow> {
+        self.exprs.intern_all(&mut loc.exprs, es, out)
     }
 
     pub fn expr_node(&self, e: ExprId) -> ExprNode {
@@ -498,14 +672,14 @@ impl Par {
         parts.join(".")
     }
 
-    /// The environment's arenas, with the same ids. `threads` copy the
-    /// expression nodes out in parallel.
+    /// The environment's arenas, with the same ids. The expression and
+    /// name stores are converted on `threads` threads; their tables are
+    /// handed over as they are.
     pub fn finish(self, threads: usize) -> Result<(Names, Levels, Exprs), Overflow> {
         let Par {
             strs,
             names,
             levels,
-            lists,
             exprs,
             lets,
             bigs,
@@ -515,56 +689,26 @@ impl Par {
             let id = pool.intern(strs.get(i))?;
             debug_assert_eq!(id.0, i);
         }
-        let mut ns = Names::new();
-        ns.strings = pool;
-        let (_, nw, nn) = names.into_parts();
-        for i in 1..nn as u32 {
-            let w = nw.get(i);
-            let (id, _) = ns.intern(NameNode::unpack([w[0], w[1]]))?;
-            debug_assert_eq!(id.0, i);
-        }
-        drop(nw);
-        let mut ls = Levels::new();
-        let (_, lw, ln) = levels.into_parts();
-        for i in 1..ln as u32 {
-            let w = lw.get(i);
-            let (id, _) = ls.intern(LevelNode::unpack([w[0], w[1]]))?;
-            debug_assert_eq!(id.0, i);
-        }
-        for i in 1..lists.len() as u32 {
-            let id = ls.intern_list(lists.get(i))?;
-            debug_assert_eq!(id.0, i);
-        }
-        let mut li = Interner::new("too many let binders");
-        let (_, letw, letn) = lets.into_parts();
-        for i in 0..letn as u32 {
-            let w = letw.get(i);
-            let (id, _) = li.intern(LetBinder::unpack([w[0], w[1]]))?;
-            debug_assert_eq!(id, i);
-        }
+        drop(strs);
+        let (ntable, nnodes, _, _) = names.into_parts(threads, NameNode::unpack, |_| ());
+        let ns = Names::from_parts(
+            Big::from_parts(Chunked::from_chunks(nnodes), ntable, "too many names"),
+            pool,
+        );
+        let ls = levels.into_inner().expect("levels lock");
+        let li = lets.into_inner().expect("lets lock");
         let bigs: Vec<BigUint> = (0..bigs.len() as u32)
             .map(|i| bigs.get(i).clone())
             .collect();
-        let (tables, ew, en) = exprs.into_parts();
-        // Copy the nodes out chunk by chunk, freeing each chunk as it goes,
-        // so the store and the arena are not both held whole.
-        let _ = threads;
-        let mut nodes = Vec::with_capacity(en);
-        let mut data = Vec::with_capacity(en);
-        for c in ew.chunks.into_iter() {
-            if nodes.len() >= en {
-                break;
-            }
-            let Some(c) = c.into_inner() else { break };
-            let take = (en - nodes.len()).min(c.len() / 3);
-            for w in c[..take * 3].as_chunks::<3>().0 {
-                let w: [u64; 3] = std::array::from_fn(|i| w[i].load(Ordering::Relaxed));
-                nodes.push(ExprNode::unpack([w[0], w[1]]));
-                data.push(ExprData::from_bits(w[2] as u32));
-            }
-        }
-        assert_eq!(nodes.len(), en, "expression store complete");
-        let es = Exprs::from_parts(nodes, tables, data, li, bigs);
+        let (etable, enodes, edata, _) =
+            exprs.into_parts(threads, ExprNode::unpack, ExprData::from_bits);
+        let es = Exprs::from_parts(
+            Chunked::from_chunks(enodes),
+            etable,
+            Chunked::from_chunks(edata),
+            li,
+            bigs,
+        );
         Ok((ns, ls, es))
     }
 }
