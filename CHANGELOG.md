@@ -5,7 +5,11 @@
 - Declarations are checked on several threads (`check --jobs N`, or
   `NITROLEAN_JOBS`; default: all cores). The verdict, and the failure
   reported, do not depend on it. While the process holds more than
-  `NITROLEAN_MEM_BUDGET_MIB` (1 GiB by default), only one thread is busy.
+  `NITROLEAN_MEM_BUDGET_MIB` (1 GiB by default), a thread starts a new
+  block only if no other is busy. Known limitation: the budget is checked
+  only when a block starts, so blocks that start together before memory
+  grows all run. On the corpus, three neighbouring declarations of about
+  2.6 GB each reach 5.3 GB on two threads (2.7 GB on one).
 - A closed-term evaluator for proofs by kernel computation, with fast paths
   for `Nat`, `Array` and `List` operations and the core `DecidableEq`
   instances, enabled on the definitions of known Lean versions
