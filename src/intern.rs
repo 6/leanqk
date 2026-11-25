@@ -91,6 +91,19 @@ impl<T: Node> Interner<T> {
         }
     }
 
+    /// Add `node` without looking it up or indexing it: [`Interner::find`]
+    /// and [`Interner::intern`] never return its id (an equal node interned
+    /// later gets an id of its own).
+    #[inline]
+    pub fn push_unindexed(&mut self, node: T) -> Result<u32, Overflow> {
+        let id = self.nodes.len() as u32;
+        if id >= u32::MAX - 1 {
+            return Err(Overflow(self.what));
+        }
+        self.nodes.push(node);
+        Ok(id)
+    }
+
     /// Make room for `extra` more nodes without rehashing.
     pub fn reserve(&mut self, extra: usize) {
         let Self { nodes, table, .. } = self;

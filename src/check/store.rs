@@ -373,32 +373,47 @@ impl<'e> Store<'e> {
         self.mk_local(node)
     }
 
+    /// `node` with an id of its own, not looked up or indexed (see
+    /// [`crate::env::TermSink::expr_owned`]).
+    pub fn mk_owned(&mut self, node: ExprNode) -> ExprId {
+        let i = self.exprs.push_unindexed(node).expect("expressions");
+        let d = self.data_of(node);
+        self.edata.push(d);
+        ExprId(local_id(i))
+    }
+
     fn mk_local(&mut self, node: ExprNode) -> ExprId {
         let (i, fresh) = self.exprs.intern(node).expect("expressions");
         if fresh {
-            let d = match node {
-                ExprNode::BVar(i) => ExprData::new((i + 1).min(ExprData::MAX_RANGE), false),
-                ExprNode::Sort(l) => ExprData::new(0, self.level_has_param(l)),
-                ExprNode::Const(_, ls) => ExprData::new(0, self.list_has_param(ls)),
-                ExprNode::App(f, a) => self.data(f).union(self.data(a)),
-                ExprNode::Lam(_, _, t, b) | ExprNode::Pi(_, _, t, b) => {
-                    self.data(t).union(self.data(b).under_binder())
-                }
-                ExprNode::Let(h, b) => {
-                    let h = self.let_binder(h);
-                    self.data(h.ty)
-                        .union(self.data(h.value))
-                        .union(self.data(b).under_binder())
-                }
-                ExprNode::NatSmall(..) | ExprNode::NatBig(_) | ExprNode::Str(_) => {
-                    ExprData::new(0, false)
-                }
-                ExprNode::Proj(_, _, e) => self.data(e),
-                ExprNode::FVar(_) => ExprData::FVAR,
-            };
+            let d = self.data_of(node);
             self.edata.push(d);
         }
         ExprId(local_id(i))
+    }
+
+    /// The data of a node whose children are known.
+    #[inline]
+    fn data_of(&self, node: ExprNode) -> ExprData {
+        match node {
+            ExprNode::BVar(i) => ExprData::new((i + 1).min(ExprData::MAX_RANGE), false),
+            ExprNode::Sort(l) => ExprData::new(0, self.level_has_param(l)),
+            ExprNode::Const(_, ls) => ExprData::new(0, self.list_has_param(ls)),
+            ExprNode::App(f, a) => self.data(f).union(self.data(a)),
+            ExprNode::Lam(_, _, t, b) | ExprNode::Pi(_, _, t, b) => {
+                self.data(t).union(self.data(b).under_binder())
+            }
+            ExprNode::Let(h, b) => {
+                let h = self.let_binder(h);
+                self.data(h.ty)
+                    .union(self.data(h.value))
+                    .union(self.data(b).under_binder())
+            }
+            ExprNode::NatSmall(..) | ExprNode::NatBig(_) | ExprNode::Str(_) => {
+                ExprData::new(0, false)
+            }
+            ExprNode::Proj(_, _, e) => self.data(e),
+            ExprNode::FVar(_) => ExprData::FVAR,
+        }
     }
 
     pub fn bvar(&mut self, i: u32) -> ExprId {
@@ -641,6 +656,10 @@ impl crate::env::TermSink for Store<'_> {
 
     fn expr(&mut self, node: ExprNode) -> ExprId {
         self.mk(node)
+    }
+
+    fn expr_owned(&mut self, node: ExprNode) -> ExprId {
+        self.mk_owned(node)
     }
 
     fn let_in(&mut self, binder: LetBinder, body: ExprId) -> ExprId {
