@@ -234,6 +234,40 @@ pub struct State {
     methods: IdMap<ExprId, Vec<Method>>,
     /// `NITROLEAN_EVAL_PROFILE=1`: how often each constant was reached.
     profile: Option<IdMap<ExprId, u64>>,
+    /// Every array version made, to empty them when the state goes (see
+    /// `Drop`).
+    arrays: Vec<Weak<ArrVal>>,
+}
+
+/// The versions of a persistent array can form a cycle with what they
+/// hold: a version points to the newer one it was changed into, and the
+/// newer one's elements can hold the older version (a delayed `a.set! i
+/// (f a[i])`, or a structure holding both). Reference counting never
+/// frees such a cycle, so the arrays are emptied when the state goes, and
+/// with them everything they keep. No value outlives the state: what
+/// leaves it is read back first.
+impl Drop for State {
+    fn drop(&mut self) {
+        for a in self.arrays.drain(..) {
+            if let Some(a) = a.upgrade() {
+                ArrVal::clear(&a);
+            }
+        }
+    }
+}
+
+impl State {
+    /// Records the array version `a` (see `Drop`). Versions already
+    /// freed are forgotten whenever the record doubles.
+    fn array(&mut self, a: Rc<ArrVal>) -> Rc<ArrVal> {
+        if self.arrays.len() == self.arrays.capacity() && self.arrays.len() >= 64 {
+            self.arrays.retain(|w| w.strong_count() > 0);
+            let n = self.arrays.len();
+            self.arrays.reserve(n.max(64));
+        }
+        self.arrays.push(Rc::downgrade(&a));
+        a
+    }
 }
 
 /// A constant is memoized while at least one lookup in `MEMO_RATIO` hits,
@@ -2016,7 +2050,9 @@ impl<'a, 'e> Machine<'a, 'e> {
             None => None,
             Some(a) => match op {
                 ArrayOp::Size => Some(Rc::new(Val::Nat(Nat::Small(ArrVal::len(&a) as u64)))),
-                ArrayOp::Push => Some(Rc::new(Val::Arr(ArrVal::push(&a, args[2].clone())))),
+                ArrayOp::Push => Some(Rc::new(Val::Arr(
+                    self.s.array(ArrVal::push(&a, args[2].clone())),
+                ))),
                 ArrayOp::Get | ArrayOp::Set => {
                     let i = self.force(&args[2])?;
                     match self.nat_of(&i) {
@@ -2027,7 +2063,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                             }
                         }
                         Some(Nat::Small(i)) => ArrVal::set(&a, i as usize, args[3].clone())
-                            .map(|b| Rc::new(Val::Arr(b))),
+                            .map(|b| Rc::new(Val::Arr(self.s.array(b)))),
                         _ => None,
                     }
                 }
@@ -2071,7 +2107,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 _ => return Ok(None),
             }
         }
-        let a = ArrVal::new(mk, cons, nil, ty, elems);
+        let a = self.s.array(ArrVal::new(mk, cons, nil, ty, elems));
         // The vector stands for the same term: later operations on this
         // thunk need not walk the list again.
         if let TState::Done(_) = &*t.0.borrow() {
@@ -3210,5 +3246,27 @@ impl Head {
             Head::Cases(ci, _) => ci.arity,
             Head::Tree(t, _) => t.arity,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An array version whose newer version holds it (through an element)
+    /// is freed with the state, not kept by the cycle.
+    #[test]
+    fn dropping_the_state_frees_array_cycles() {
+        let e = ExprId(0);
+        let mut s = State::default();
+        let ty = Thunk::closed(e);
+        let a = s.array(ArrVal::new(e, e, e, ty, vec![Thunk::closed(e)]));
+        let old = Thunk::done(Rc::new(Val::Arr(a.clone())));
+        let b = s.array(ArrVal::set(&a, 0, old).expect("in bounds"));
+        let (wa, wb) = (Rc::downgrade(&a), Rc::downgrade(&b));
+        drop((a, b));
+        assert!(wa.upgrade().is_some() && wb.upgrade().is_some(), "a cycle");
+        drop(s);
+        assert!(wa.upgrade().is_none() && wb.upgrade().is_none());
     }
 }

@@ -156,6 +156,12 @@ impl ArrVal {
         Some(b)
     }
 
+    /// Empties `a`, dropping what it keeps.
+    pub fn clear(a: &Rc<ArrVal>) {
+        let n = a.node.replace(Node::Root(Vec::new()));
+        drop(n);
+    }
+
     /// `a` with `t` added at the end.
     pub fn push(a: &Rc<ArrVal>, t: Th) -> Rc<ArrVal> {
         ArrVal::reroot(a);

@@ -247,6 +247,20 @@ On the Keller cubes of `bench/famous-sat` (variables numbered up to
 0.34 GB, and cube 17832, which ran out of 30 GB, takes 19.6 s and 0.51 GB.
 Memory no longer depends on how the variables are numbered.
 
+Versions can form a cycle with what they hold: the old version points to
+the new one it was changed into, and an element or a structure reachable
+from the new one can hold the old one. Reference counting never frees
+such a cycle. The machine's state therefore records every version it
+makes (forgetting those already freed whenever the record doubles), and
+when the state is dropped, after the declaration, it empties the ones still
+alive, which frees what the cycles kept. Nothing the machine computed
+outlives its state, since an answer is read back into a term first. On
+Keller cubes stated against the whole formula (`keller7-full` and the
+full bundle of `bench/famous-sat`), each theorem kept about 0.9 GB after
+it was checked: the 48 theorems of the full bundle reached 46 GB on one
+thread. Four copies of `keller7-full` in one export now peak at 3.1 GB,
+as one does, instead of 5.8 GB.
+
 ## Lists and decidable equality
 
 What is left of a proof checked by LRAT-Catcher's kernel checker is mostly
