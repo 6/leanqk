@@ -13,6 +13,10 @@ use super::super::tc::{KErr, NAT_MAX_BYTES, R};
 use super::val::{Elim, Sp, V, Val};
 use super::{BOTTOM, Nbe};
 
+/// Steps of reduction before a closed computation goes to the closed-term
+/// evaluator (`whnf_closed`; 0: at once).
+const EVAL_AFTER: u64 = 1024;
+
 impl Nbe<'_> {
     /// The value bound to the let-variable `k`, if it is one.
     #[inline]
@@ -665,6 +669,26 @@ impl Nbe<'_> {
         Ok(self.nat(r))
     }
 
+    /// The weak head normal form of `t`, a closed definition applied, if
+    /// it is worth asking the closed-term evaluator: past `EVAL_AFTER`
+    /// steps of reduction here (most computations are a few steps, where
+    /// converting to terms and back costs more than it saves).
+    fn whnf_closed(&mut self, t: V) -> R<Option<V>> {
+        if self.eval_probe || !self.closed_eval || self.a.has_fvar(t) {
+            return Ok(None);
+        }
+        if EVAL_AFTER == 0 || self.stop != u64::MAX {
+            return Ok(self.closed_whnf(t));
+        }
+        self.eval_probe = true;
+        let r = self.attempt(EVAL_AFTER, |nb| nb.whnf_from(t, false));
+        self.eval_probe = false;
+        match r? {
+            Some(n) => Ok(Some(n)),
+            None => Ok(self.closed_whnf(t)),
+        }
+    }
+
     pub fn whnf(&mut self, v: V) -> R<V> {
         let v = self.force(v);
         match self.a.get(v) {
@@ -682,8 +706,13 @@ impl Nbe<'_> {
         if c != super::val::NONE {
             return Ok(V(c));
         }
+        self.whnf_from(v, true)
+    }
+
+    /// `whnf` of `v`, by the closed-term evaluator too if `eval`.
+    fn whnf_from(&mut self, v: V, eval: bool) -> R<V> {
         let mut t = v;
-        let mut first = true;
+        let mut first = eval;
         loop {
             self.tick()?;
             let t_l = self.whnf_core(t, false, false)?;
@@ -693,7 +722,7 @@ impl Nbe<'_> {
             }
             if first && self.is_delta(t_l).is_some() {
                 first = false;
-                if let Some(n) = self.closed_whnf(t_l) {
+                if let Some(n) = self.whnf_closed(t_l)? {
                     self.a.rm(v).whnf = n.0;
                     self.a.rm(n).whnf = n.0;
                     return Ok(n);

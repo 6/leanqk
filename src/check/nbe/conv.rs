@@ -290,6 +290,47 @@ impl Nbe<'_> {
         m
     }
 
+    /// The argument positions (below 63) the value of the definition at
+    /// the head of `t` does not read: its body past its leading lambdas
+    /// does not mention them.
+    fn unused_positions(&mut self, t: V) -> u64 {
+        if !UNUSED_ARGS {
+            return 0;
+        }
+        let Val::Const(n, _, _) = self.a.get(t) else {
+            return 0;
+        };
+        if let Some(&m) = self.unused_pos.get(&n) {
+            return m;
+        }
+        let m = match self.is_delta(t) {
+            Some(d) if matches!(d.kind, DeclKind::Definition { .. }) => match self.unfold_value(&d)
+            {
+                Some(value) => {
+                    let mut body = value;
+                    let mut k = 0u32;
+                    while let ExprNode::Lam(_, _, _, b) = self.st.node(body) {
+                        body = b;
+                        k += 1;
+                    }
+                    let used = self.used_bvars(body);
+                    let mut m = 0u64;
+                    for i in 0..k.min(63) {
+                        let j = k - 1 - i;
+                        if j < 63 && used & 1 << j == 0 {
+                            m |= 1 << i;
+                        }
+                    }
+                    m
+                }
+                None => 0,
+            },
+            _ => 0,
+        };
+        self.unused_pos.insert(n, m);
+        m
+    }
+
     fn is_def_eq_args(&mut self, t: V, s: V) -> R<bool> {
         let (Val::Const(n, _, tsp), Val::Const(n_r, _, ssp)) = (self.a.get(t), self.a.get(s))
         else {
@@ -303,6 +344,13 @@ impl Nbe<'_> {
         } else {
             0
         };
+        // Both sides unfold (the callers' heads are one definition at equal
+        // levels) to its body, which does not read some arguments.
+        let skip = if n == n_r {
+            props | self.unused_positions(t)
+        } else {
+            props
+        };
         let len = self.a.sp_len(tsp);
         if len != self.a.sp_len(ssp) {
             return Ok(false);
@@ -311,7 +359,7 @@ impl Nbe<'_> {
             let te = self.a.sp_elim(tsp, pos);
             let se = self.a.sp_elim(ssp, pos);
             match (te, se) {
-                (Elim::Arg(_), Elim::Arg(_)) if pos < 64 && props & 1 << pos != 0 => {}
+                (Elim::Arg(_), Elim::Arg(_)) if pos < 64 && skip & 1 << pos != 0 => {}
                 (Elim::Arg(a), Elim::Arg(b)) => {
                     if !self.is_def_eq(a, b)? {
                         return Ok(false);
@@ -983,6 +1031,10 @@ impl Nbe<'_> {
         Ok(r)
     }
 }
+
+/// Whether arguments a definition's body does not read are left out when
+/// two applications of it are compared (`unused_positions`).
+const UNUSED_ARGS: bool = true;
 
 /// Whether proof irrelevance first asks `surely_not_proof`.
 const NOT_PROOF: bool = true;

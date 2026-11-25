@@ -111,6 +111,8 @@ pub struct Nbe<'e> {
     major_induct: IdMap<NameId, NameId>,
     /// `prop_positions` of constants.
     prop_pos: IdMap<NameId, u64>,
+    /// `unused_positions` of definitions.
+    unused_pos: IdMap<NameId, u64>,
     open_count: IdMap<(V, V), u32>,
     trim_cache: IdMap<(val::Env, u32), val::Env>,
     canon_fvar: IdMap<(V, V, u32), u32>,
@@ -124,6 +126,8 @@ pub struct Nbe<'e> {
     eager_depth: u32,
     /// Whether closed values go to the closed-term evaluator (`closed.rs`).
     closed_eval: bool,
+    /// Inside `whnf_closed`'s attempt without the evaluator.
+    eval_probe: bool,
     /// The evaluator's checker, over `st` while it runs.
     ev: Option<Box<Tc<'e>>>,
     /// Whether `ev` was used since `begin`.
@@ -251,6 +255,7 @@ impl<'e> Nbe<'e> {
             level_eq: IdMap::default(),
             major_induct: IdMap::default(),
             prop_pos: IdMap::default(),
+            unused_pos: IdMap::default(),
             open_count: IdMap::default(),
             trim_cache: IdMap::default(),
             canon_fvar: IdMap::default(),
@@ -262,6 +267,7 @@ impl<'e> Nbe<'e> {
             vargs: Vec::new(),
             eager_depth: 0,
             closed_eval: super::eval::enabled(),
+            eval_probe: false,
             ev: None,
             ev_used: false,
             names: IdMap::default(),
