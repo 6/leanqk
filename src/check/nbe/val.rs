@@ -379,6 +379,13 @@ impl Arena {
     }
 
     pub fn mk(&mut self, val: Val) -> V {
+        if let Val::Const(_, _, sp) | Val::FVar(_, sp) = val
+            && sp != Sp::NIL
+        {
+            let k = sp.0 as usize + 1;
+            let n = self.sp_len(sp) as usize;
+            return self.neutral_in(val, k, n, &[], Some(sp));
+        }
         let h = val.hash();
         let Self { vals, vtable, .. } = self;
         if let Some(&(id, _)) =
@@ -484,16 +491,27 @@ impl Arena {
     /// The neutral `head` (a `Const` or `FVar`) with the arguments `xs`
     /// after its spine.
     pub fn neutral(&mut self, head: Val, xs: &[V]) -> V {
-        let (tag, a, b, base) = match head {
-            Val::Const(n, l, sp) => (0u64, n.0, l.0, sp),
-            Val::FVar(k, sp) => (1u64, k, 0, sp),
-            _ => unreachable!(),
+        let (Val::Const(_, _, base) | Val::FVar(_, base)) = head else {
+            unreachable!()
         };
         if xs.is_empty() {
             return self.mk(head);
         }
         let k = base.0 as usize + 1;
         let n = self.sp_len(base) as usize;
+        self.neutral_in(head, k, n, xs, None)
+    }
+
+    /// The neutral with `head`'s head and the spine of the `n` eliminations
+    /// at `sps[k..]` followed by the arguments `xs`: found by its contents,
+    /// else made, with `sp` as its spine if given (else a copy). Applied
+    /// neutrals are made here only, so that one probe finds them.
+    fn neutral_in(&mut self, head: Val, k: usize, n: usize, xs: &[V], sp: Option<Sp>) -> V {
+        let (tag, a, b) = match head {
+            Val::Const(n, l, _) => (0u64, n.0, l.0),
+            Val::FVar(k, _) => (1u64, k, 0),
+            _ => unreachable!(),
+        };
         let mut h = hash2(tag | (a as u64) << 32, b as u64);
         for &w in &self.sps[k..k + 2 * n] {
             h = (h.rotate_left(5) ^ w as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
@@ -525,15 +543,49 @@ impl Arena {
         if let Some(&(id, _)) = found {
             return V(id);
         }
-        let sp = self.snoc_args(base, xs);
-        let v = self.mk(match head {
+        let sp = match sp {
+            Some(sp) => sp,
+            None => {
+                let id = self.sps.len();
+                if id + 1 + 2 * (n + xs.len()) >= SP_WORDS {
+                    out_of_room();
+                }
+                let base = self.sps[k - 1] & (HAS_FVAR_BIT | HAS_PROJ_BIT);
+                let fv = xs.iter().any(|&x| self.has_fvar(x));
+                self.sps
+                    .push((n + xs.len()) as u32 | base | if fv { HAS_FVAR_BIT } else { 0 });
+                self.sps.extend_from_within(k..k + 2 * n);
+                for x in xs {
+                    self.sps.push(x.0);
+                    self.sps.push(NONE);
+                }
+                Sp(id as u32)
+            }
+        };
+        let val = match head {
             Val::Const(n, l, _) => Val::Const(n, l, sp),
             Val::FVar(k, _) => Val::FVar(k, sp),
             _ => unreachable!(),
+        };
+        let id = self.vals.len() as u32;
+        if id >= LIMIT {
+            out_of_room();
+        }
+        self.vals.push(val);
+        self.recs.push(Rec {
+            flags: 0,
+            forced: NONE,
+            whnf_core: NONE,
+            whnf: NONE,
+            ty: NONE,
+            delta: NONE,
         });
+        if matches!(head, Val::FVar(..)) || self.sps[sp.0 as usize] & HAS_FVAR_BIT != 0 {
+            self.recs[id as usize].flags = HAS_FVAR;
+        }
         self.nutable
-            .insert_unique(spread(h), (v.0, h), |&(_, k)| spread(k));
-        v
+            .insert_unique(spread(h), (id, h), |&(_, k)| spread(k));
+        V(id)
     }
 
     /// `sp` followed by the arguments `xs`.
