@@ -165,7 +165,7 @@ by the kernel. The package is `bench/certificates/` (its README has the details)
 - the checker `check : Int → Nat → Nat → Nat → Mat → Mat → Mat → Bool` on
   `List (List Int)`, computing each row of `A * B` as a combination of the rows of `B`;
 - `check_sound`, proved in core Lean (axioms `propext`, `Quot.sound`);
-- the `matcert` tool (Rust, `bench/certificates/tool/`), which makes seeded synthetic
+- `cargo xtask matcert`, which makes seeded synthetic
   certificates of any size (inverses modulo 65521: machine-word arithmetic; adjugates with
   their determinants: big integers), states them with the `mat_cert` command, exports
   them, runs the checkers and tabulates the results.
@@ -184,14 +184,14 @@ an LU factorisation checked the same way.
 
 ### Results
 
-12-core aarch64 Linux, 95 GB, one run each, with `measure.sh`'s limits (60 s wall clock,
+12-core aarch64 Linux, 95 GB, one run each, with the limits of `cargo xtask kc measure` (60 s wall clock,
 4 GiB resident), plus 600 s runs: nitrolean where it timed out, and leanchecker on the two
 `n = 64` exports with a 32 GiB limit. Checkers as in `bench/kernel-compute/README.md`:
 nitrolean at the commit that added this benchmark (no change to the checker itself),
 leanchecker of Lean v4.36.0, gruszka `43d2d12` (susz 0.4.0), nano-lean `b5602a4`. Wall time
 and peak resident memory in MiB; `oom` is over 4 GiB, `timeout` over 60 s. Every export
 contains the checker's closure (5.05 MB, `inverse-1`); export sizes are in the manifest
-`matcert exports` writes (37.6 MB for `inverse-512`).
+`cargo xtask matcert exports` writes (37.6 MB for `inverse-512`).
 
 | export | n | certificate bytes | nitrolean | leanchecker | gruszka | nano-lean |
 | --- | ---: | ---: | --- | --- | --- | --- |
@@ -277,4 +277,4 @@ The evaluator fast paths that would help most, in order:
    131 072 entries of `A` and `B` at `n = 256`), so lower priority; modular reduction is not one
    either, as this checker reduces once per entry.
 
-Exports to reproduce these: `matcert exports --only inverse-256,nonsingular-128`.
+Exports to reproduce these: `cargo xtask matcert exports --only inverse-256,nonsingular-128`.

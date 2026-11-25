@@ -38,9 +38,7 @@ theorem, building the term directly as an `Expr` (integer literals as `Int.ofNat
 
 ## The certificates
 
-The tool in `tool/` (a small Rust binary, `matcert`; build it with
-`cargo build --release --manifest-path bench/certificates/tool/Cargo.toml`) makes them with
-`matcert gen`, from splitmix64 with a given seed, so they are synthetic and fully determined
+`cargo xtask matcert gen` makes them, from splitmix64 with a given seed, so they are synthetic and fully determined
 by the arguments:
 
 - `inverse P N SEED`: a random `N × N` matrix with entries in `[0, P)` and its inverse
@@ -56,25 +54,24 @@ Every certificate is checked by multiplication before it is written.
 `data/certificates.tsv` lists the series with each certificate's SHA-256. The kernel work
 is about `N³` multiply-adds of `Int`s.
 
-`matcert exports` builds the package, makes each certificate, checks its SHA-256, states it
+`cargo xtask matcert exports` builds the package, makes each certificate, checks its SHA-256, states it
 with `mat_cert` and exports the theorem's closure with lean4export (the toolchain and the
-lean4export commit for v4.34.0 are read from `bench/kernel-compute/common.sh`, so they are
-pinned in one place), into `bench/kernel-compute/out/certificates/` with a `manifest.tsv`.
+lean4export commit for v4.34.0 are the pins of `cargo xtask kc`, so they are pinned in one
+place), into `bench/kernel-compute/out/certificates/` with a `manifest.tsv`.
 Certificates with `N ≤ 16` are added with Lean's kernel check on; the larger ones with `debug.skipKernelTC true`. Every export contains the closure of the
 checker and its soundness proof (about 5 MB, `inverse-1`).
 
-`matcert measure` runs `bench/kernel-compute/measure.sh` on the exports (options after
-`--` go to it), and `matcert table` prints its TSV as a table, one row per export and one
-column per checker. Every subcommand has `--help`.
+`cargo xtask matcert measure` runs `cargo xtask kc measure` on the exports (same limits and
+options), and `cargo xtask matcert table` prints its TSV as a table, one row per export and
+one column per checker. Every subcommand has `--help`.
 
 ```sh
-bench/kernel-compute/build-checkers.sh
-cargo build --release --manifest-path bench/certificates/tool/Cargo.toml
-M=bench/certificates/tool/target/release/matcert
-$M exports
-$M measure                       # 60 s, 4 GiB: measure.sh's defaults
-$M measure -- --append --timeout 600 --checkers nitrolean
-$M table bench/kernel-compute/out/cert-measurements.tsv bench/kernel-compute/out/certificates/manifest.tsv
+cargo xtask kc build-checkers
+cargo xtask matcert exports
+cargo xtask matcert measure                  # 60 s, 4 GiB: the defaults of kc measure
+cargo xtask matcert measure --append --timeout 600 --checkers nitrolean --only inverse-256
+cargo xtask matcert table bench/kernel-compute/out/cert-measurements.tsv \
+  bench/kernel-compute/out/certificates/manifest.tsv
 ```
 
 ## Results

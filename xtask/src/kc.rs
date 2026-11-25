@@ -23,11 +23,11 @@ use crate::util::{
 };
 
 // Toolchains (installed with elan) and the lean4export commit that matches each.
-const TC_MAIN: &str = "leanprover/lean4:v4.34.0"; // the published project and Mathlib
+pub(crate) const TC_MAIN: &str = "leanprover/lean4:v4.34.0"; // the published project and Mathlib
 const TC_CATCHER: &str = "leanprover/lean4:v4.30.0"; // its lean/catcher subproject, and LRAT-Catcher
 const TC_CHECK: &str = "leanprover/lean4:v4.36.0"; // leanchecker, the toolchain nitrolean targets
 const LEAN4EXPORT_URL: &str = "https://github.com/leanprover/lean4export";
-const LEAN4EXPORT_434: &str = "076e8e57707e813375e8f9da8bf989799ace9680"; // "bump toolchain to v4.34.0"
+pub(crate) const LEAN4EXPORT_434: &str = "076e8e57707e813375e8f9da8bf989799ace9680"; // "bump toolchain to v4.34.0"
 const LEAN4EXPORT_430: &str = "a3e35a584f59b390667db7269cd37fca8575e4bf"; // "bump toolchain to v4.30.0"
 
 const ZIP_URL: &str = "https://zenodo.org/records/24467489/files/steinberg-c4-c9-v9.zip";
@@ -238,10 +238,10 @@ pub enum Cmd {
 pub struct Dirs {
     /// Where the exports go (default: $KC_OUT or bench/kernel-compute/out).
     #[arg(long, value_name = "DIR")]
-    out: Option<PathBuf>,
+    pub(crate) out: Option<PathBuf>,
     /// Sources and build trees (default: $KC_CACHE or bench/kernel-compute/cache).
     #[arg(long, value_name = "DIR")]
-    cache: Option<PathBuf>,
+    pub(crate) cache: Option<PathBuf>,
 }
 
 pub fn main(c: Cmd) -> Result<()> {
@@ -320,7 +320,7 @@ pub fn main(c: Cmd) -> Result<()> {
 }
 
 /// Where a command's output and messages go: ours, or a log file.
-struct Io(Option<File>);
+pub(crate) struct Io(pub(crate) Option<File>);
 
 impl Io {
     /// Standard error, or the log; also for `>&2`.
@@ -354,16 +354,16 @@ fn stderr_stdio() -> Stdio {
 }
 
 /// The context of one command: its name, directories and pin policy.
-struct Kc {
+pub(crate) struct Kc {
     name: &'static str,
     here: PathBuf,
-    cache: PathBuf,
-    out: PathBuf,
+    pub(crate) cache: PathBuf,
+    pub(crate) out: PathBuf,
     update: bool,
 }
 
 impl Kc {
-    fn new(name: &'static str, dirs: &Dirs, update: bool) -> Kc {
+    pub(crate) fn new(name: &'static str, dirs: &Dirs, update: bool) -> Kc {
         let here = root().join("bench/kernel-compute");
         let env = |v: &str| {
             std::env::var_os(v)
@@ -389,7 +389,7 @@ impl Kc {
         }
     }
 
-    fn log(&self, io: &Io, msg: &str) {
+    pub(crate) fn log(&self, io: &Io, msg: &str) {
         io.msg(&format!("{} {}: {msg}", utc_hms(), self.name));
     }
 
@@ -455,7 +455,7 @@ impl Kc {
     }
 
     /// lean4export built with the matching toolchain, in CACHE/lean4export-NAME.
-    fn build_exporter(&self, name: &str, commit: &str, tc: &str) -> Result<PathBuf> {
+    pub(crate) fn build_exporter(&self, name: &str, commit: &str, tc: &str) -> Result<PathBuf> {
         let dir = self.cache.join(format!("lean4export-{name}"));
         let exe = dir.join(".lake/build/bin/lean4export");
         if !is_executable(&exe) {
@@ -504,7 +504,7 @@ fn read_trimmed(p: &Path) -> Result<String> {
 
 /// `elan toolchain install TC` (loudly to `io` if it fails quietly), then
 /// the directory with the toolchain's lean, lake and leanchecker.
-fn tc_bin(io: &Io, tc: &str) -> Result<PathBuf> {
+pub(crate) fn tc_bin(io: &Io, tc: &str) -> Result<PathBuf> {
     let ok = Command::new("elan")
         .args(["toolchain", "install", tc])
         .stdout(Stdio::null())
@@ -549,7 +549,12 @@ fn fetch_url(url: &str, want: &str, file: &Path) -> Result<()> {
 
 /// Runs the commands in turn with their output in LOG; on a failure prints
 /// its last `tail` lines and fails with `msg`.
-fn run_logged_seq(cmds: &mut [&mut Command], log: &Path, tail: usize, msg: &str) -> Result<()> {
+pub(crate) fn run_logged_seq(
+    cmds: &mut [&mut Command],
+    log: &Path,
+    tail: usize,
+    msg: &str,
+) -> Result<()> {
     let f = File::create(log).with_context(|| format!("{}: cannot create", log.display()))?;
     for c in cmds.iter_mut() {
         let st = c
@@ -566,7 +571,7 @@ fn run_logged_seq(cmds: &mut [&mut Command], log: &Path, tail: usize, msg: &str)
 }
 
 /// Runs `cmd` with its standard output written to the file `out`.
-fn run_to_file(cmd: &mut Command, out: &Path) -> Result<()> {
+pub(crate) fn run_to_file(cmd: &mut Command, out: &Path) -> Result<()> {
     let f = File::create(out).with_context(|| format!("{}: cannot create", out.display()))?;
     util::run(cmd.stdout(f))
 }
@@ -581,7 +586,7 @@ fn words_of(p: &Path) -> Result<Vec<String>> {
 }
 
 /// `lake env ARGS...` in `dir` with an unlimited stack.
-fn lake_env(dir: &Path) -> Command {
+pub(crate) fn lake_env(dir: &Path) -> Command {
     let mut c = cmd_in("lake", dir);
     c.arg("env");
     unlimited_stack(&mut c);
@@ -1276,7 +1281,7 @@ fn build_checkers(k: &Kc, nitrolean: PathBuf) -> Result<()> {
 // measure
 
 #[allow(clippy::too_many_arguments)]
-fn measure(
+pub(crate) fn measure(
     k: &Kc,
     timeout: &str,
     mem_mib: u64,
@@ -1411,7 +1416,7 @@ fn verdict(checker: &str, status: &str, code: &str, log: &Path) -> Result<&'stat
         "nitrolean" => {
             if line_starts("accepted") {
                 "accepted"
-            } else if line_starts("rejected") {
+            } else if line_starts("rejected") || line_starts("nitrolean: rejected") {
                 "rejected"
             } else {
                 "error"
@@ -1727,6 +1732,15 @@ mod tests {
             "accepted"
         );
         assert_eq!(verdict("nitrolean", "oom", "", &log).unwrap(), "oom");
+        fs::write(
+            &log,
+            "nitrolean: rejected: declaration 'x': type mismatch\n",
+        )
+        .unwrap();
+        assert_eq!(
+            verdict("nitrolean", "exited", "1", &log).unwrap(),
+            "rejected"
+        );
         fs::write(&log, "Check FAILED\nmore\n").unwrap();
         assert_eq!(verdict("gruszka", "exited", "1", &log).unwrap(), "rejected");
         assert_eq!(

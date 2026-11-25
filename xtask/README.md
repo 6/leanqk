@@ -19,6 +19,7 @@ list every option.
 | `install-elan` | install elan from its pinned release archive (CI) |
 | `kernel-cases` | generate the kernel test cases of `tests/kernel` |
 | `kc ...` | the kernel-computation benchmarks (`bench/kernel-compute`): `fetch-zenodo`, `fetch-lrat`, `fetch-mathlib-decide`, `build-checkers`, `measure`, `summarize`, `run-limited`, `lrat-trim`, `select-decide` |
+| `matcert ...` | the matrix certificates (`bench/certificates`): `gen`, `exports`, `measure`, `table` |
 | `arena ...` | the Lean Kernel Arena benchmark (`bench/arena`): `fetch`, `run`, `report`, `pin`, `collect`, `verify` |
 | `oracle ...` | the per-declaration oracle against Lean's checker (`bench/oracle`): `build`, `run`, `reduce`, `all` |
 
