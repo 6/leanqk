@@ -227,7 +227,13 @@ impl Readback {
             }
             TState::Busy => unreachable!("reading back a thunk being evaluated"),
         };
-        self.thunks.insert(key, r);
+        if self.erased {
+            self.thunks.insert(key, r);
+        } else {
+            // The term the thunk stands for: kept with it, so that later
+            // read-backs (and memo keys) do not build it again.
+            t.1.set(Some(r));
+        }
         r
     }
 

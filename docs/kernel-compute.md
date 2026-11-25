@@ -78,7 +78,13 @@ over the checker's hash-consed term DAG:
 A thunk made from a closed term stands for that term itself. Reading back
 (`value::Readback`) builds exactly the term a value stands for. It keeps
 sharing, and reads a closed thunk back as its original term, evaluated or not,
-just as `whnf` leaves arguments unevaluated.
+just as `whnf` leaves arguments unevaluated. A thunk that has been read back keeps
+the term it stands for, so later read-backs and memo keys reuse it. This
+matters for `K`-like recursors, whose major premise is read back and its
+type inferred (below): on Mathlib's Cartan matrix determinants those
+read-backs met the same large values again and again. `cartan_A7` went
+from 14.5 s in the evaluator to 3.8 s (and from 94 to 65 million steps,
+as memo keys became known), at 237 MB instead of 111 MB.
 
 **Every step is a kernel step.** The machine only takes steps that `Tc::whnf`
 and `Tc::whnf_core` take themselves, on the terms the values stand for:
