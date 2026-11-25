@@ -43,6 +43,7 @@ use crate::strings::Overflow;
 
 mod fast;
 mod lazy;
+mod run;
 mod scan;
 
 /// The format major version this reader understands.
@@ -1491,6 +1492,17 @@ impl State {
         let mut k = l.lines;
         let mut res = Ok(());
         while pos < data.len() {
+            if l.seen_first
+                && data.get(pos + 2) == Some(&b'a')
+                && let Some(b) = self.lazy.as_deref_mut()
+            {
+                let (n, m) = b.apps(&data[pos..]);
+                pos += n;
+                k += m;
+                if pos == data.len() {
+                    break;
+                }
+            }
             k += 1;
             if l.seen_first {
                 match scan::line(&data[pos..], &mut l.us, self) {

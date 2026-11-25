@@ -221,6 +221,28 @@ impl Builder {
         true
     }
 
+    /// The application lines at the start of `s` (see `run`): how many
+    /// bytes and lines it took.
+    #[inline(never)]
+    pub(super) fn apps(&mut self, s: &[u8]) -> (usize, u64) {
+        let e = self.recs.len() as u64;
+        // Room for as many lines as fit in `s`, at 32 bytes or more each.
+        if e + s.len() as u64 / 32 >= MAX_IDS {
+            return (0, 0);
+        }
+        // A local vector, which the loop can keep in registers.
+        let mut recs = std::mem::take(&mut self.recs);
+        let r = super::run::apps(s, e, |e, f, a| {
+            if f >= e || a >= e {
+                return false;
+            }
+            recs.push(T_APP << TAG | f << ID_BITS | a);
+            true
+        });
+        self.recs = recs;
+        r
+    }
+
     /// Push a side record of `fields` with tag `t` and `flags`.
     #[inline(always)]
     fn with_side(&mut self, t: u64, flags: u64, fields: &[u32]) -> bool {
