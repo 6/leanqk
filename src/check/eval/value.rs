@@ -2,7 +2,7 @@
 //! as terms.
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use crate::expr::ExprId;
 
@@ -65,6 +65,11 @@ pub enum TState {
     Delayed(ExprId, Env),
     Busy,
     Done(V),
+    /// The proof `e` (with loose bound variables), whose environment is
+    /// not kept alive: while something else keeps it, the thunk is as
+    /// good as `Delayed`; after that, forcing it or reading it back gives
+    /// up.
+    Erased(ExprId, Weak<EnvNode>),
 }
 
 /// A thunk, and for a closed term's thunk the term itself: it is read
@@ -88,6 +93,11 @@ impl Thunk {
 
     pub fn closed_done(e: ExprId, v: V) -> Th {
         Rc::new(Thunk(RefCell::new(TState::Done(v)), Cell::new(Some(e))))
+    }
+
+    pub fn erased(e: ExprId, env: &Env) -> Th {
+        let w = env.0.as_ref().map_or_else(Weak::new, Rc::downgrade);
+        Rc::new(Thunk(RefCell::new(TState::Erased(e, w)), Cell::new(None)))
     }
 
     pub fn done(v: V) -> Th {
@@ -159,11 +169,13 @@ impl Env {
 }
 
 /// Turns values and thunks back into closed terms, keeping sharing: a
-/// thunk or value is read back once per `Readback`.
+/// thunk or value is read back once per `Readback`. If it meets an erased
+/// proof, `erased` is set and the term it built is meaningless.
 #[derive(Default)]
 pub struct Readback {
     thunks: IdMap<usize, ExprId>,
     vals: IdMap<usize, ExprId>,
+    pub erased: bool,
 }
 
 impl Readback {
@@ -201,6 +213,17 @@ impl Readback {
                 let (e, env) = (*e, env.clone());
                 drop(st);
                 self.inst(tc, e, &env)
+            }
+            TState::Erased(e, w) => {
+                let (e, w) = (*e, w.upgrade());
+                drop(st);
+                match w {
+                    Some(env) => self.inst(tc, e, &Env(Some(env))),
+                    None => {
+                        self.erased = true;
+                        e
+                    }
+                }
             }
             TState::Busy => unreachable!("reading back a thunk being evaluated"),
         };

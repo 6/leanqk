@@ -179,4 +179,18 @@ def ev_arr_fns : Array (Nat → Nat) := #[(· + 1), (· * 2)] |>.push (· + 10)
 theorem ev_arr_fn : ev_arr_fns[2]! 5 + ev_arr_fns[1]! 4 = 23 := sorry
 theorem ev_arr_fn_wrong : ev_arr_fns[2]! 5 + ev_arr_fns[1]! 4 = 24 := sorry
 
+-- Erased proofs that are needed after all: a cast over a theorem applied to
+-- a variable (a `K`-like major premise), `And.rec` on a constructed proof,
+-- and an answer holding a proof.
+theorem ev_tn (n : Nat) : (fun _ : Nat => Nat) n = Nat := rfl
+def ev_castv (n : Nat) : Nat := cast (ev_tn n) (n + 1)
+theorem ev_cast_thm : ev_castv 4 = 5 := sorry
+theorem ev_cast_thm_wrong : ev_castv 4 = 4 := sorry
+def ev_and (n : Nat) : Nat := (And.intro (Eq.refl n) (Eq.refl n) : n = n ∧ n = n).elim (fun _ _ => n + 1)
+theorem ev_and_ok : ev_and 3 = 4 := sorry
+theorem ev_and_wrong : ev_and 3 = 5 := sorry
+def ev_sub (n : Nat) : {x : Nat // x = n + 1} := ⟨n + 1, Eq.refl (n + 1)⟩
+theorem ev_sub_ok : ev_sub 3 = ⟨4, Eq.refl 4⟩ := sorry
+theorem ev_sub_wrong : (ev_sub 3).val = 3 := sorry
+
 end K

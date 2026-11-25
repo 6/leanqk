@@ -20,7 +20,7 @@
 mod nat;
 mod value;
 
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::time::Instant;
@@ -49,6 +49,8 @@ pub enum Bail {
     Limit,
     /// A thunk depends on itself.
     Loop,
+    /// An erased proof was needed; `whnf` evaluates again, keeping proofs.
+    Erased,
 }
 
 type ER<T> = Result<T, Bail>;
@@ -99,7 +101,7 @@ enum CInfo {
 static CALLS: AtomicU64 = AtomicU64::new(0);
 static HITS: AtomicU64 = AtomicU64::new(0);
 static STEPS: AtomicU64 = AtomicU64::new(0);
-static BAILS: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+static BAILS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
 static NANOS: AtomicU64 = AtomicU64::new(0);
 
 /// Giving up on a stuck term; `LEANQK_EVAL_DEBUG=1` says where.
@@ -122,7 +124,7 @@ pub fn enabled() -> bool {
 pub fn stats() -> String {
     let b = |i: usize| BAILS[i].load(Relaxed);
     format!(
-        "evaluator: {} calls, {} answered, {} steps, {:.3} s; gave up: {} stuck, {} deep, {} limit, {} loop",
+        "evaluator: {} calls, {} answered, {} steps, {:.3} s; gave up: {} stuck, {} deep, {} limit, {} loop; {} evaluated again keeping proofs",
         CALLS.load(Relaxed),
         HITS.load(Relaxed),
         STEPS.load(Relaxed),
@@ -130,7 +132,8 @@ pub fn stats() -> String {
         b(0),
         b(1),
         b(2),
-        b(3)
+        b(3),
+        b(4)
     )
 }
 
@@ -147,6 +150,13 @@ pub struct State {
     nullary: IdMap<ExprId, V>,
     /// Per constant: memo lookups and hits.
     memo: IdMap<ExprId, (u32, u32)>,
+    /// Per constant: whether it is a theorem or a constructor of a
+    /// proposition (see `is_proof`).
+    proof_heads: IdMap<ExprId, bool>,
+    /// `of_decide_eq_true` and `of_decide_eq_false`, once looked up.
+    decide_lemmas: [Option<Option<ExprId>>; 2],
+    /// Whether proofs keep their environment (see `thunk`).
+    keep_proofs: bool,
     /// `LEANQK_EVAL_PROFILE=1`: how often each constant was reached.
     profile: Option<IdMap<ExprId, u64>>,
 }
@@ -185,14 +195,17 @@ pub fn whnf(tc: &mut Tc<'_>, e: ExprId) -> Option<ExprId> {
     if s.profile.is_none() && std::env::var_os("LEANQK_EVAL_PROFILE").is_some() {
         s.profile = Some(IdMap::default());
     }
-    let r = {
-        let mut m = Machine { tc, s: &mut s };
-        let r = m.top(e);
-        if m.s.steps > 1 << 20 {
-            m.dump_profile();
-        }
-        r
-    };
+    let mut r = run(tc, &mut s, e);
+    if r == Err(Bail::Erased) {
+        // A proof was needed after all (a `K`-like recursor's major
+        // premise, say). Values computed without proofs are dropped, and
+        // the term is evaluated again with them.
+        BAILS[Bail::Erased as usize].fetch_add(1, Relaxed);
+        s.closed.clear();
+        s.keep_proofs = true;
+        r = run(tc, &mut s, e);
+        s.keep_proofs = false;
+    }
     CALLS.fetch_add(1, Relaxed);
     STEPS.fetch_add(s.steps, Relaxed);
     NANOS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
@@ -202,6 +215,15 @@ pub fn whnf(tc: &mut Tc<'_>, e: ExprId) -> Option<ExprId> {
     };
     tc.eval = Some(s);
     r.ok()
+}
+
+fn run(tc: &mut Tc<'_>, s: &mut State, e: ExprId) -> ER<ExprId> {
+    let mut m = Machine { tc, s };
+    let r = m.top(e);
+    if m.s.steps > 1 << 20 {
+        m.dump_profile();
+    }
+    r
 }
 
 impl<'a, 'e> Machine<'a, 'e> {
@@ -216,8 +238,142 @@ impl<'a, 'e> Machine<'a, 'e> {
         {
             return Err(stuck(186));
         }
+        // A decision: its proof can be a huge term, and is not needed.
+        if let Some(r) = self.decided(e, &v) {
+            return Ok(r);
+        }
         let mut rb = value::Readback::default();
-        Ok(rb.value(self.tc, &v))
+        let r = rb.value(self.tc, &v);
+        if rb.erased {
+            return Err(Bail::Erased);
+        }
+        Ok(r)
+    }
+
+    /// The answer `Decidable.isTrue p h` (or `isFalse`) for `e`, without
+    /// reading back the proof `h` (it may be erased, or a huge term): `p`
+    /// is the proposition of `e`'s type, and `h` is replaced by
+    /// `of_decide_eq_true p e (Eq.refl true)` (or `of_decide_eq_false …
+    /// false`). That is a proof of the same proposition, so by proof
+    /// irrelevance the answer is the same up to definitional equality. The
+    /// lemma is used only if its type is the expected one.
+    fn decided(&mut self, e: ExprId, v: &V) -> Option<ExprId> {
+        let Val::Ctor { c, args, .. } = &**v else {
+            return None;
+        };
+        let ExprNode::Const(cn, ls) = self.tc.st.node(*c) else {
+            return None;
+        };
+        let names = &self.tc.st.env.names;
+        let is_true = if Some(cn) == names.find_dotted("Decidable.isTrue") {
+            true
+        } else if Some(cn) == names.find_dotted("Decidable.isFalse") {
+            false
+        } else {
+            return None;
+        };
+        if args.len() != 2 || ls != LevelList::EMPTY {
+            return None;
+        }
+        let lemma = self.decide_lemma(is_true)?;
+        // The proposition, from the type of `e` (`Decidable p`): reading it
+        // back from the value may meet erased proofs too.
+        let t = self.tc.infer(e).ok()?;
+        let t = self.tc.whnf(t).ok()?;
+        let ExprNode::App(dec, p) = self.tc.st.node(t) else {
+            return None;
+        };
+        let names = &self.tc.st.env.names;
+        match self.tc.st.node(dec) {
+            ExprNode::Const(n, l)
+                if Some(n) == names.find_dotted("Decidable") && l == LevelList::EMPTY => {}
+            _ => return None,
+        }
+        let (eq, bool_, b) = (
+            names.find_dotted("Eq.refl")?,
+            names.find_dotted("Bool")?,
+            names.find_dotted(if is_true { "Bool.true" } else { "Bool.false" })?,
+        );
+        let one = self.tc.st.succ(LevelId::ZERO);
+        let one = self.tc.st.mk_list(&[one]);
+        let refl = self.tc.st.cnst(eq, one);
+        let bool_ = self.tc.st.cnst(bool_, LevelList::EMPTY);
+        let b = self.tc.st.cnst(b, LevelList::EMPTY);
+        let refl = self.tc.st.apps(refl, &[bool_, b]);
+        let h = self.tc.st.apps(lemma, &[p, e, refl]);
+        Some(self.tc.st.apps(*c, &[p, h]))
+    }
+
+    /// `of_decide_eq_true` (or `of_decide_eq_false`), if it is a theorem
+    /// of type `∀ {p : Prop} [inst : Decidable p], decide p = true → p`
+    /// (or `… = false → ¬p`).
+    fn decide_lemma(&mut self, is_true: bool) -> Option<ExprId> {
+        let i = is_true as usize;
+        if let Some(l) = self.s.decide_lemmas[i] {
+            return l;
+        }
+        let l = self.find_decide_lemma(is_true);
+        self.s.decide_lemmas[i] = Some(l);
+        l
+    }
+
+    fn find_decide_lemma(&mut self, is_true: bool) -> Option<ExprId> {
+        let names = &self.tc.st.env.names;
+        let n = names.find_dotted(if is_true {
+            "of_decide_eq_true"
+        } else {
+            "of_decide_eq_false"
+        })?;
+        let ns = [
+            "Decidable",
+            "Decidable.decide",
+            "Eq",
+            "Bool",
+            if is_true { "Bool.true" } else { "Bool.false" },
+            "Not",
+        ]
+        .map(|x| names.find_dotted(x));
+        let [Some(dec), Some(decide), Some(eq), Some(bool_), Some(b), not] = ns else {
+            return None;
+        };
+        let d = self.tc.find(n)?;
+        if !matches!(d.kind, DeclKind::Theorem { .. }) || !d.level_params.is_empty() {
+            return None;
+        }
+        let st = &mut self.tc.st;
+        let prop = st.sort(LevelId::ZERO);
+        let (b0, b1, b2) = (st.bvar(0), st.bvar(1), st.bvar(2));
+        let dec = st.cnst(dec, LevelList::EMPTY);
+        let dec_p = st.app(dec, b0);
+        let decide = st.cnst(decide, LevelList::EMPTY);
+        let decide_p = st.apps(decide, &[b1, b0]);
+        let one = st.succ(LevelId::ZERO);
+        let one = st.mk_list(&[one]);
+        let eq = st.cnst(eq, one);
+        let bool_ = st.cnst(bool_, LevelList::EMPTY);
+        let b = st.cnst(b, LevelList::EMPTY);
+        let eq = st.apps(eq, &[bool_, decide_p, b]);
+        let concl = if is_true {
+            b2
+        } else {
+            let not = st.cnst(not?, LevelList::EMPTY);
+            st.app(not, b2)
+        };
+        // The binders' names and kinds do not matter.
+        let mut t = d.ty;
+        for want in [prop, dec_p, eq] {
+            let ExprNode::Pi(_, _, dom, body) = st.node(t) else {
+                return None;
+            };
+            if dom != want {
+                return None;
+            }
+            t = body;
+        }
+        if t != concl {
+            return None;
+        }
+        Some(st.cnst(n, LevelList::EMPTY))
     }
 
     /// The shared thunk of the closed term `e`.
@@ -247,21 +403,75 @@ impl<'a, 'e> Machine<'a, 'e> {
         if let ExprNode::BVar(i) = self.tc.st.node(e) {
             return env.get(i).clone();
         }
+        if !self.s.keep_proofs && self.is_proof(e) {
+            // The proof's term, if the terms of its variables are known;
+            // else it is erased.
+            return match self.term_in(e, env, 0) {
+                Some(r) => Thunk::closed(r),
+                None => Thunk::erased(e, env),
+            };
+        }
         Thunk::delayed(e, env.clone())
     }
 
+    /// Whether the inductive type `n` is a proposition (its type ends in
+    /// `Prop`).
+    fn is_prop_inductive(&mut self, n: NameId) -> bool {
+        let Some(d) = self.tc.find(n) else {
+            return false;
+        };
+        let mut t = d.ty;
+        while let ExprNode::Pi(_, _, _, b) = self.tc.st.node(t) {
+            t = b;
+        }
+        matches!(self.tc.st.node(t), ExprNode::Sort(l) if l == LevelId::ZERO)
+    }
+
+    /// Whether `e` is a theorem or a constructor of a proposition applied
+    /// to arguments, so a proof. The machine never needs a proof's value,
+    /// only its term, and only to read back an answer or to type a
+    /// `K`-like recursor's major premise. But a proof kept with its
+    /// environment keeps everything the proof is about alive: a decision
+    /// procedure's result `isTrue h`, stored in a data structure, would
+    /// keep every step of the decision. So such a thunk is erased: it keeps
+    /// its environment only weakly, and where it is needed once that is
+    /// gone, `whnf` evaluates again, keeping proofs.
+    fn is_proof(&mut self, mut e: ExprId) -> bool {
+        while let ExprNode::App(f, _) = self.tc.st.node(e) {
+            e = f;
+        }
+        if !matches!(self.tc.st.node(e), ExprNode::Const(..)) {
+            return false;
+        }
+        if let Some(&b) = self.s.proof_heads.get(&e) {
+            return b;
+        }
+        let ExprNode::Const(n, _) = self.tc.st.node(e) else {
+            unreachable!()
+        };
+        let b = match self.tc.find(n).map(|d| d.kind) {
+            Some(DeclKind::Theorem { .. }) => true,
+            Some(DeclKind::Constructor { induct, .. }) => self.is_prop_inductive(induct),
+            _ => false,
+        };
+        self.s.proof_heads.insert(e, b);
+        b
+    }
+
     fn force(&mut self, t: &Th) -> ER<V> {
-        let (e, env) = {
+        let (e, env, erased) = {
             let mut b = t.0.borrow_mut();
             match &*b {
                 TState::Done(v) => return Ok(v.clone()),
                 TState::Busy => return Err(Bail::Loop),
-                TState::Delayed(..) => {}
+                TState::Erased(_, w) if w.strong_count() == 0 => return Err(Bail::Erased),
+                TState::Erased(..) | TState::Delayed(..) => {}
             }
-            let TState::Delayed(e, env) = std::mem::replace(&mut *b, TState::Busy) else {
-                unreachable!()
-            };
-            (e, env)
+            match std::mem::replace(&mut *b, TState::Busy) {
+                TState::Delayed(e, env) => (e, env, false),
+                TState::Erased(e, w) => (e, Env(w.upgrade()), true),
+                _ => unreachable!(),
+            }
         };
         match self.eval(e, &env) {
             Ok(v) => {
@@ -269,7 +479,11 @@ impl<'a, 'e> Machine<'a, 'e> {
                 Ok(v)
             }
             Err(b) => {
-                *t.0.borrow_mut() = TState::Delayed(e, env);
+                *t.0.borrow_mut() = if erased {
+                    TState::Erased(e, env.0.as_ref().map_or_else(Weak::new, Rc::downgrade))
+                } else {
+                    TState::Delayed(e, env)
+                };
                 Err(b)
             }
         }
@@ -309,7 +523,11 @@ impl<'a, 'e> Machine<'a, 'e> {
                 // A type: in weak head normal form already.
                 let t = if self.tc.st.has_loose_bvars(e) {
                     let mut rb = value::Readback::default();
-                    rb.inst(self.tc, e, env)
+                    let t = rb.inst(self.tc, e, env);
+                    if rb.erased {
+                        return Err(Bail::Erased);
+                    }
+                    t
                 } else {
                     e
                 };
@@ -543,6 +761,18 @@ impl<'a, 'e> Machine<'a, 'e> {
         self.origin_at(t, 0)
     }
 
+    /// `e` with its loose bound variables replaced by the terms of their
+    /// thunks in `env`, if known.
+    fn term_in(&mut self, e: ExprId, env: &Env, depth: u32) -> Option<ExprId> {
+        let n = self.tc.st.data(e).loose_bvar_range();
+        let ts: Vec<Th> = env.first(n)?.into_iter().cloned().collect();
+        let mut s = Vec::with_capacity(n as usize);
+        for t in &ts {
+            s.push(self.origin_at(t, depth + 1)?);
+        }
+        Some(self.tc.st.instantiate(e, &s))
+    }
+
     fn origin_at(&mut self, t: &Th, depth: u32) -> Option<ExprId> {
         if let Some(e) = t.1.get() {
             return Some(e);
@@ -551,20 +781,18 @@ impl<'a, 'e> Machine<'a, 'e> {
         let v = match &*b {
             TState::Done(v) => v.clone(),
             TState::Busy => return None,
-            TState::Delayed(e, env) => {
+            TState::Delayed(..) | TState::Erased(..) => {
                 // `e` with its variables replaced by their known terms.
                 if depth >= ORIGIN_DEPTH {
                     return None;
                 }
-                let (e, env) = (*e, env.clone());
+                let (e, env) = match &*b {
+                    TState::Delayed(e, env) => (*e, env.clone()),
+                    TState::Erased(e, w) => (*e, Env(Some(w.upgrade()?))),
+                    _ => unreachable!(),
+                };
                 drop(b);
-                let n = self.tc.st.data(e).loose_bvar_range();
-                let ts: Vec<Th> = env.first(n)?.into_iter().cloned().collect();
-                let mut s = Vec::with_capacity(n as usize);
-                for t in &ts {
-                    s.push(self.origin_at(t, depth + 1)?);
-                }
-                let r = self.tc.st.instantiate(e, &s);
+                let r = self.term_in(e, &env, depth)?;
                 t.1.set(Some(r));
                 return Some(r);
             }
@@ -797,6 +1025,9 @@ impl<'a, 'e> Machine<'a, 'e> {
             // use the constructor.
             let mut rb = value::Readback::default();
             let m = rb.thunk(self.tc, &major);
+            if rb.erased {
+                return Err(Bail::Erased);
+            }
             let c = self
                 .tc
                 .ctor_when_k_pub(r.induct, r.nparams, m)
