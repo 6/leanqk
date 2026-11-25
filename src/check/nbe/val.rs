@@ -517,12 +517,14 @@ impl Arena {
             _ => unreachable!(),
         };
         let mut h = hash2(tag | (a as u64) << 32, b as u64);
-        for &w in &self.sps[k..k + 2 * n] {
-            h = (h.rotate_left(5) ^ w as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+        // One step per elimination (its two words).
+        for w in self.sps[k..k + 2 * n].as_chunks::<2>().0 {
+            let x = w[0] as u64 | (w[1] as u64) << 32;
+            h = (h.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
         }
         for x in xs {
-            h = (h.rotate_left(5) ^ x.0 as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
-            h = (h.rotate_left(5) ^ NONE as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+            let x = x.0 as u64 | (NONE as u64) << 32;
+            h = (h.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
         }
         let h = h32(h);
         let Self {
