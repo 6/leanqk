@@ -61,6 +61,9 @@ const NAMES_KEEP: usize = 1 << 18;
 /// Values an arena may hold before it is dropped between declarations.
 const KEEP_VALUES: usize = 1 << 16;
 
+/// Terms read from `.olean` files the store may hold between declarations.
+const READ_KEEP: usize = 1 << 20;
+
 type SynKey = (ExprId, val::Env, val::Ls, ExprId, val::Env, val::Ls, u32);
 
 pub struct Nbe<'e> {
@@ -79,6 +82,8 @@ pub struct Nbe<'e> {
     list_cache: IdMap<(LevelList, Ls), LevelList>,
     const_type: IdMap<(NameId, LevelList), V>,
     const_value: IdMap<(NameId, LevelList), V>,
+    /// Values left in their `.olean` files, as built in the store.
+    lazy_values: IdMap<ExprId, ExprId>,
     eq_ok: IdSet<(V, V)>,
     eq_fail: IdSet<(V, V)>,
     /// Pairs found not definitionally equal.
@@ -115,6 +120,8 @@ pub struct Nbe<'e> {
     /// Terms added to `st` for names: they do not count towards its size
     /// for keeping it between declarations.
     name_exprs: usize,
+    /// Terms the store holds for values read from `.olean` files.
+    read_exprs: usize,
     /// The loose bound variables each term uses (`used_bvars`).
     bvar_use: IdMap<ExprId, u64>,
     /// `key_env` of an environment, by the variables used.
@@ -191,6 +198,7 @@ impl<'e> Nbe<'e> {
             list_cache: IdMap::default(),
             const_type: IdMap::default(),
             const_value: IdMap::default(),
+            lazy_values: IdMap::default(),
             eq_ok: IdSet::default(),
             eq_fail: IdSet::default(),
             neq: IdSet::default(),
@@ -215,6 +223,7 @@ impl<'e> Nbe<'e> {
             names: IdMap::default(),
             name_eq: IdMap::default(),
             name_exprs: 0,
+            read_exprs: 0,
             bvar_use: IdMap::default(),
             key_envs: IdMap::default(),
             decl_steps: 0,
@@ -230,8 +239,9 @@ impl<'e> Nbe<'e> {
     /// of it goes.
     pub fn begin(&mut self, limit: u32) {
         if self.a.len() > KEEP_VALUES
-            || self.st.local_exprs() > KEEP_VALUES + self.name_exprs
+            || self.st.local_exprs() > KEEP_VALUES + self.name_exprs + self.read_exprs
             || self.name_exprs > NAMES_KEEP
+            || self.read_exprs > READ_KEEP
         {
             self.reset(limit);
             return;
@@ -280,6 +290,8 @@ impl<'e> Nbe<'e> {
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;
+            self.read_exprs = 0;
+            shrink(&mut self.lazy_values);
             // Local terms go: forget what was found about them.
             self.bvar_use.retain(|e, _| !super::store::is_local(e.0));
         }
@@ -326,6 +338,33 @@ impl<'e> Nbe<'e> {
             DeclKind::Definition { value, .. } | DeclKind::Theorem { value, .. } => Some(value),
             _ => None,
         }
+    }
+
+    /// The value of the definition or theorem `d` as a term of the store
+    /// (see [`crate::env::Env::value_into`]); a value left in its file is
+    /// built once per store.
+    fn unfold_value(&mut self, d: &Decl) -> Option<ExprId> {
+        let v = Self::decl_value(d)?;
+        if !crate::env::is_lazy(v) {
+            return Some(v);
+        }
+        if let Some(&e) = self.lazy_values.get(&v) {
+            return Some(e);
+        }
+        // A malformed file is a bug of the loader, as in `Tc::value`.
+        let e = self.read_value(d).unwrap_or_else(|e| panic!("{e}"))?;
+        self.lazy_values.insert(v, e);
+        Some(e)
+    }
+
+    /// The value of `d` as a term of the store, built anew if it was left
+    /// in its file (see [`crate::env::Env::value_into`]).
+    pub fn read_value(&mut self, d: &Decl) -> Result<Option<ExprId>, String> {
+        let env = self.st.env;
+        let before = self.st.local_exprs();
+        let r = env.value_into(d, &mut self.st);
+        self.read_exprs += self.st.local_exprs() - before;
+        r
     }
 
     // ---- universe substitutions ----
