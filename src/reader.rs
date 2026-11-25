@@ -31,7 +31,8 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use num_bigint::BigUint;
 
 use crate::env::{
-    Block, BlockKind, Decl, DeclKind, Env, Hints, Meta, NameList, QuotKind, RecRule, Safety,
+    Block, BlockKind, Decl, DeclKind, Env, Hints, LAZY_BASE, Meta, NameList, QuotKind, RecRule,
+    Safety, is_lazy,
 };
 use crate::expr::{BinderInfo, ExprError, ExprId, ExprNode, LetBinder};
 use crate::idmap::IdMap;
@@ -511,11 +512,11 @@ impl scan::Sink for ToBatch<'_> {
 impl scan::Sink for State {
     #[inline(never)]
     fn app(&mut self, id: u64, f: u64, a: u64) -> R<()> {
-        if let Some(b) = self.lazy.as_deref_mut()
-            && let (Some(f), Some(a)) = (self.expr_ids.get(f), self.expr_ids.get(a))
-        {
-            let r = b.pend(id, lazy::Node::App(f, a))?;
-            return self.bind(Table::Expr, id, r);
+        if let Some(b) = self.lazy.as_deref_mut() {
+            if b.app(id, f, a) {
+                return Ok(());
+            }
+            self.eager()?;
         }
         let src = Src { text: &[], us: &[] };
         self.apply_expr(src, id, RawExpr::App(f, a))
@@ -531,24 +532,13 @@ impl scan::Sink for State {
         ty: u64,
         body: u64,
     ) -> R<()> {
-        if let Some(b) = self.lazy.as_deref_mut()
-            && let (Some(n), Some(t), Some(e)) = (
-                self.name_ids.get(name),
-                self.expr_ids.get(ty),
-                self.expr_ids.get(body),
-            )
-        {
-            let r = b.pend(
-                id,
-                lazy::Node::Bind {
-                    pi,
-                    bi,
-                    name: NameId(n),
-                    ty: t,
-                    body: e,
-                },
-            )?;
-            return self.bind(Table::Expr, id, r);
+        if let Some(b) = self.lazy.as_deref_mut() {
+            if let Some(n) = self.name_ids.get(name)
+                && b.binder(id, pi, bi, NameId(n), ty, body)
+            {
+                return Ok(());
+            }
+            self.eager()?;
         }
         let src = Src { text: &[], us: &[] };
         let node = RawExpr::Binder {
@@ -1259,7 +1249,7 @@ struct State {
     levels_buf: Vec<LevelId>,
     names_buf: Vec<NameId>,
     rules_buf: Vec<RecRule>,
-    /// With lazy proofs: the pending and stored records (see `lazy`).
+    /// With lazy proofs: a record per expression id (see `lazy`).
     lazy: Option<Box<lazy::Builder>>,
     /// Add expressions without hash-consing them (see `read_open_file`).
     append: bool,
@@ -1332,6 +1322,13 @@ impl Table {
 }
 
 #[cold]
+fn undefined<T>(t: Table, id: u64) -> R<T> {
+    bad(format!(
+        "reference to undefined {} id {id} (ids must be defined on an earlier line)",
+        t.noun()
+    ))
+}
+
 fn twice(t: Table, id: u64) -> R<()> {
     bad(format!("{} id {id} is defined twice", t.noun()))
 }
@@ -1383,10 +1380,7 @@ impl State {
         };
         match m.get(id) {
             Some(x) => Ok(x),
-            None => bad(format!(
-                "reference to undefined {} id {id} (ids must be defined on an earlier line)",
-                t.noun()
-            )),
+            None => undefined(t, id),
         }
     }
 
@@ -1417,19 +1411,19 @@ impl State {
 
     /// A declaration's term, interned.
     fn root(&mut self, id: u64) -> R<ExprId> {
-        let r = self.lookup(Table::Expr, id)?;
         match &mut self.lazy {
-            None => Ok(ExprId(r)),
-            Some(b) => b.promote(&mut self.env, self.append, r),
+            None => self.expr(id),
+            Some(b) if b.has(id) => b.promote(&mut self.env, self.append, id),
+            Some(_) => undefined(Table::Expr, id),
         }
     }
 
     /// A theorem's value: interned, or with lazy proofs, left for later.
     fn thm_value(&mut self, id: u64) -> R<ExprId> {
-        let r = self.lookup(Table::Expr, id)?;
         match &mut self.lazy {
-            None => Ok(ExprId(r)),
-            Some(b) => b.value(r),
+            None => self.expr(id),
+            Some(b) if b.has(id) => b.value(id),
+            Some(_) => undefined(Table::Expr, id),
         }
     }
 
@@ -1645,69 +1639,91 @@ impl State {
         }
     }
 
-    fn apply_expr(&mut self, src: Src<'_>, id: u64, node: RawExpr) -> R<()> {
-        if self.lazy.is_some() {
-            // Compound records wait for their declaration (see `lazy`).
-            let r = |m: &IdMap, x: u64| match m.get(x) {
-                Some(v) => Ok(v),
-                None => bad(format!(
-                    "reference to undefined expression id {x} (ids must be defined on an earlier line)"
-                )),
-            };
-            let m = &self.expr_ids;
-            let n = match node {
-                RawExpr::App(f, a) => Some(lazy::Node::App(r(m, f)?, r(m, a)?)),
-                RawExpr::Binder {
-                    pi,
-                    bi,
-                    name,
-                    ty,
-                    body,
-                } => {
-                    let name = NameId(self.lookup(Table::Name, name)?);
-                    Some(lazy::Node::Bind {
-                        pi,
-                        bi,
-                        name,
-                        ty: r(m, ty)?,
-                        body: r(m, body)?,
-                    })
+    /// With lazy proofs: add compound record `node` to the table (see
+    /// `lazy`); whether it was (else, a leaf, or the reader is eager now).
+    fn lazy_expr(&mut self, id: u64, node: RawExpr) -> R<bool> {
+        let name = |st: &State, n: u64| st.name_ids.get(n).map(NameId);
+        let ok = match node {
+            RawExpr::App(f, a) => self.lazy.as_deref_mut().expect("lazy").app(id, f, a),
+            RawExpr::Binder {
+                pi,
+                bi,
+                name: n,
+                ty,
+                body,
+            } => match name(self, n) {
+                Some(n) => self
+                    .lazy
+                    .as_deref_mut()
+                    .expect("lazy")
+                    .binder(id, pi, bi, n, ty, body),
+                None => false,
+            },
+            RawExpr::Let {
+                name: n,
+                ty,
+                value,
+                body,
+                nondep,
+            } => match name(self, n) {
+                Some(n) => {
+                    self.lazy
+                        .as_deref_mut()
+                        .expect("lazy")
+                        .let_in(id, n, [ty, value, body], nondep)
                 }
-                RawExpr::Let {
-                    name,
-                    ty,
-                    value,
-                    body,
-                    nondep,
-                } => {
-                    let name = NameId(self.lookup(Table::Name, name)?);
-                    Some(lazy::Node::Let {
-                        name,
-                        ty: r(m, ty)?,
-                        value: r(m, value)?,
-                        body: r(m, body)?,
-                        nondep,
-                    })
-                }
-                RawExpr::Proj(s, i, e) => {
-                    let s = NameId(self.lookup(Table::Name, s)?);
-                    Some(lazy::Node::Proj(s, i, r(m, e)?))
-                }
-                RawExpr::MData(inner) => {
-                    let inner = r(m, inner)?;
+                None => false,
+            },
+            RawExpr::Proj(s, i, e) => match name(self, s) {
+                Some(s) => self.lazy.as_deref_mut().expect("lazy").proj(id, s, i, e),
+                None => false,
+            },
+            RawExpr::MData(inner) => {
+                let ok = self.lazy.as_deref_mut().expect("lazy").alias(id, inner);
+                if ok {
                     self.shared_exprs += 1;
-                    self.bind(Table::Expr, id, inner)?;
-                    if inner & (lazy::PEND | lazy::STORED) != 0 {
-                        self.lazy.as_mut().expect("lazy").alias(id, inner);
-                    }
-                    return Ok(());
                 }
-                _ => None,
-            };
-            if let Some(n) = n {
-                let p = self.lazy.as_mut().expect("lazy").pend(id, n)?;
-                return self.bind(Table::Expr, id, p);
+                ok
             }
+            _ => return Ok(false),
+        };
+        if !ok {
+            self.eager()?;
+        }
+        Ok(ok)
+    }
+
+    /// Give up lazy proofs (for an export whose expression ids are not
+    /// dense): intern every record, and map each expression id to its
+    /// arena id from now on.
+    #[cold]
+    #[inline(never)]
+    fn eager(&mut self) -> R<()> {
+        let Some(b) = self.lazy.take() else {
+            return Ok(());
+        };
+        let (ids, roots) = b.into_eager(&mut self.env, self.append)?;
+        let mut m = IdMap::new(0);
+        m.reserve(ids.len());
+        for (i, &a) in ids.iter().enumerate() {
+            if m.bind(i as u64, a).is_err() {
+                return twice(Table::Expr, i as u64);
+            }
+        }
+        self.expr_ids = m;
+        for d in &mut self.env.decls {
+            if let DeclKind::Theorem { value, .. } = &mut d.kind
+                && is_lazy(*value)
+            {
+                *value = ExprId(roots[(value.0 - LAZY_BASE) as usize]);
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_expr(&mut self, src: Src<'_>, id: u64, node: RawExpr) -> R<()> {
+        if self.lazy.is_some() && self.lazy_expr(id, node)? {
+            return Ok(());
         }
         let node = match node {
             RawExpr::BVar(i) => match u32::try_from(i) {
@@ -1788,8 +1804,11 @@ impl State {
         if !fresh {
             self.shared_exprs += 1;
         }
-        if self.lazy.is_some() && e.0 >= lazy::PEND {
-            return Err(Overflow("too many expressions").into());
+        if let Some(b) = self.lazy.as_deref_mut() {
+            if b.leaf(id, e.0) {
+                return Ok(());
+            }
+            self.eager()?;
         }
         self.bind(Table::Expr, id, e.0)
     }
@@ -1812,10 +1831,10 @@ impl State {
             "meta" => bad("meta record after the first line"),
             _ => bad(format!("unknown record kind '{kind}'")),
         }?;
-        match self.lazy.as_deref_mut() {
-            Some(b) => b.flush(&mut self.expr_ids),
-            None => Ok(()),
+        if let Some(b) = self.lazy.as_deref_mut() {
+            b.decl_done();
         }
+        Ok(())
     }
 
     /// A theorem or definition the scanner read; the same steps, in the
@@ -1849,10 +1868,10 @@ impl State {
             start,
             kind: BlockKind::Single,
         });
-        match self.lazy.as_deref_mut() {
-            Some(b) => b.flush(&mut self.expr_ids),
-            None => Ok(()),
+        if let Some(b) = self.lazy.as_deref_mut() {
+            b.decl_done();
         }
+        Ok(())
     }
 
     /// A list of names, by export id.
@@ -2384,6 +2403,88 @@ mod tests {
                 d.only_a.is_empty() && d.only_b.is_empty() && d.differ.is_empty(),
                 "lazy={lazy_proofs}, threads={threads}: the reads differ"
             );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An export whose expression ids stop being dense after a theorem's
+    /// value was left lazy reads the same with lazy proofs as without
+    /// (the reader turns eager there); and a bad reference fails the same.
+    #[test]
+    fn lazy_falls_back_to_eager() {
+        let meta = r#"{"meta":{"exporter":{"name":"lean4export","version":"3.1.0"},"format":{"version":"3.1.0"}}}"#;
+        let start = [
+            r#"{"in":1,"str":{"pre":0,"str":"A"}}"#,
+            r#"{"in":2,"str":{"pre":0,"str":"x"}}"#,
+            r#"{"il":1,"succ":0}"#,
+            r#"{"ie":0,"sort":1}"#,
+            r#"{"bvar":0,"ie":1}"#,
+            r#"{"forallE":{"binderInfo":"default","body":0,"name":2,"type":0},"ie":2}"#,
+            r#"{"axiom":{"isUnsafe":false,"levelParams":[],"name":1,"type":2}}"#,
+            r#"{"in":3,"str":{"pre":0,"str":"t"}}"#,
+            r#"{"ie":3,"lam":{"binderInfo":"default","body":1,"name":2,"type":0}}"#,
+            r#"{"ie":4,"mdata":{"data":{},"expr":3}}"#,
+            r#"{"app":{"arg":4,"fn":3},"ie":5}"#,
+            r#"{"thm":{"all":[3],"levelParams":[],"name":3,"type":2,"value":4}}"#,
+            r#"{"in":4,"str":{"pre":0,"str":"u"}}"#,
+        ];
+        let dir = std::env::temp_dir().join(format!("nitrolean-eager-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let write = |name: &str, tail: &[&str]| {
+            let mut text = format!("{meta}\n");
+            for l in start.iter().chain(tail) {
+                text.push_str(l);
+                text.push('\n');
+            }
+            let p = dir.join(name);
+            std::fs::write(&p, text).expect("write");
+            p
+        };
+        let read = |p: &std::path::Path, lazy_proofs, threads| {
+            read_file_with(
+                p,
+                &Options {
+                    lazy_proofs,
+                    threads,
+                },
+            )
+        };
+        // Ids 7 and 9 (and 5's application interned by neither theorem).
+        for tail in [
+            &[r#"{"app":{"arg":3,"fn":5},"ie":7}"#][..],
+            &[r#"{"ie":9,"lam":{"binderInfo":"default","body":5,"name":2,"type":0}}"#],
+            &[r#"{"ie":9,"mdata":{"data":{},"expr":5}}"#],
+            &[r#"{"bvar":1,"ie":7}"#],
+        ] {
+            let mut tail = tail.to_vec();
+            let n = if tail[0].contains("\"ie\":7") { 7 } else { 9 };
+            let thm = format!(
+                r#"{{"thm":{{"all":[4],"levelParams":[],"name":4,"type":2,"value":{n}}}}}"#
+            );
+            tail.push(&thm);
+            let p = write("sparse.ndjson", &tail);
+            let (base, _) = read(&p, false, 1).expect("read");
+            for threads in [1, 3] {
+                let (other, _) = read(&p, true, threads).expect("read");
+                let d = crate::compare::compare(&base, &other);
+                assert!(
+                    d.only_a.is_empty() && d.only_b.is_empty() && d.differ.is_empty(),
+                    "{tail:?}, threads={threads}: the reads differ"
+                );
+                assert_eq!(d.common, 3);
+            }
+        }
+        for tail in [
+            &[r#"{"app":{"arg":3,"fn":9},"ie":6}"#][..],
+            &[r#"{"thm":{"all":[4],"levelParams":[],"name":4,"type":2,"value":6}}"#],
+            &[r#"{"app":{"arg":3,"fn":3},"ie":5}"#],
+        ] {
+            let p = write("bad.ndjson", tail);
+            let eager = read(&p, false, 1).map(|_| ()).expect_err("fails");
+            for threads in [1, 3] {
+                let lazy = read(&p, true, threads).map(|_| ()).expect_err("fails");
+                assert_eq!((lazy.line, &lazy.msg), (eager.line, &eager.msg), "{tail:?}");
+            }
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

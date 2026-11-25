@@ -1,44 +1,82 @@
 //! Theorem values left unbuilt when reading an export.
 //!
-//! An export lists every term once, children first, and a theorem's proof
-//! right before its declaration line. With lazy proofs on, the reader
-//! interns leaves (`bvar`, `sort`, `const`, literals) at once, but keeps
-//! the other expression records of the current declaration *pending*.
-//! At the declaration line, the terms its eager fields need (types,
-//! definition values, recursor rules) are interned from there; what is
-//! left (a theorem's proof, mostly) moves to a compact store of words
-//! that is never hash-consed. A later declaration that needs a stored
-//! term interns it then ("promotes" it). A theorem's value that is not in
-//! the arena is a placeholder ([`crate::env::LAZY_BASE`]) built on
-//! demand by [`crate::env::Env::value_into`].
+//! An export lists every term once, children first, and numbers its
+//! expressions densely from 0; a theorem's proof comes right before its
+//! declaration line. With lazy proofs on, the reader keeps one record of
+//! 8 bytes per expression id, in a table indexed by that id ([`Builder`]).
+//! Leaves (`bvar`, `sort`, `const`, literals) are interned at once, and
+//! their record holds their arena id. A compound record holds its
+//! children's export ids (an application's in the record itself, others'
+//! in a side table), so a line costs one push. At a declaration line, the
+//! terms its eager fields need (types, definition values, recursor rules)
+//! are interned from the table ("promoted"), and their records then hold
+//! their arena ids too. What is left (a theorem's proof, mostly) stays in
+//! the table and is never hash-consed. A theorem's value that is not in
+//! the arena is a placeholder ([`crate::env::LAZY_BASE`]) built on demand
+//! by [`crate::env::Env::value_into`].
 //!
-//! References are `u32`s: an arena id below [`PEND`], a pending record
-//! (`PEND | index`), or a stored one (`STORED | word offset`).
+//! An export whose expression ids are not dense (or that has too many for
+//! the table) cannot use it: the reader then interns every record it holds
+//! and goes on without lazy proofs ([`Builder::into_eager`]).
 
 use std::cell::RefCell;
 
 use hashbrown::HashMap;
 
-use super::{Fail, R, bad};
-use crate::env::{Env, LazyValues, TermSink};
+use super::{Fail, R};
+use crate::env::{Env, LAZY_BASE, LazyValues, TermSink};
 use crate::expr::{BinderInfo, ExprId, ExprNode, LetBinder};
-use crate::idmap::IdMap;
 use crate::name::NameId;
 use crate::strings::Overflow;
 
-/// A reference to a pending record.
-pub(super) const PEND: u32 = 1 << 30;
-/// A reference to a stored record.
-pub(super) const STORED: u32 = 2 << 30;
-const KIND: u32 = 3 << 30;
-const NONE: u32 = u32::MAX;
-/// A pending record's arena id while [`Builder::promote`] has found it
-/// needed and not yet interned it.
-const NEEDED: u32 = u32::MAX - 1;
+// A record: `DONE` and an arena id in the low 32 bits, or a tag (3 bits
+// at `TAG`) and its fields. An application's are its function's export id
+// (at `ID_BITS`) and its argument's (at 0); a binder's, let's and
+// projection's are a side table offset (low 32 bits) and their flags
+// above it; an alias's (`mdata`) is the export id it stands for, which is
+// not an alias itself.
+const DONE: u64 = 1 << 63;
+/// Set while [`Builder::promote`] has found a record needed and not yet
+/// interned it.
+const NEEDED: u64 = 1 << 62;
+const TAG: u32 = 59;
+const T_APP: u64 = 0;
+const T_LAM: u64 = 1;
+const T_PI: u64 = 2;
+const T_LET: u64 = 3;
+const T_PROJ: u64 = 4;
+const T_ALIAS: u64 = 5;
+const ID_BITS: u32 = 29;
+const ID_MASK: u64 = (1 << ID_BITS) - 1;
+/// The most expression ids the table takes.
+const MAX_IDS: u64 = 1 << ID_BITS;
 
-/// A compound expression record, with references as above.
+#[inline(always)]
+fn tag(r: u64) -> u64 {
+    r >> TAG & 7
+}
+
+fn bi_bits(bi: BinderInfo) -> u64 {
+    match bi {
+        BinderInfo::Default => 0,
+        BinderInfo::Implicit => 1,
+        BinderInfo::StrictImplicit => 2,
+        BinderInfo::InstImplicit => 3,
+    }
+}
+
+fn bits_bi(b: u64) -> BinderInfo {
+    match b & 3 {
+        0 => BinderInfo::Default,
+        1 => BinderInfo::Implicit,
+        2 => BinderInfo::StrictImplicit,
+        _ => BinderInfo::InstImplicit,
+    }
+}
+
+/// A compound record, decoded: children as export ids.
 #[derive(Clone, Copy)]
-pub(super) enum Node {
+enum Node {
     App(u32, u32),
     Bind {
         pi: bool,
@@ -58,6 +96,7 @@ pub(super) enum Node {
 }
 
 impl Node {
+    #[inline(always)]
     fn kids(&self) -> ([u32; 3], usize) {
         match *self {
             Node::App(f, a) => ([f, a, 0], 2),
@@ -68,128 +107,34 @@ impl Node {
             Node::Proj(_, _, e) => ([e, 0, 0], 1),
         }
     }
-
-    fn map(self, mut f: impl FnMut(u32) -> u32) -> Node {
-        match self {
-            Node::App(a, b) => Node::App(f(a), f(b)),
-            Node::Bind {
-                pi,
-                bi,
-                name,
-                ty,
-                body,
-            } => Node::Bind {
-                pi,
-                bi,
-                name,
-                ty: f(ty),
-                body: f(body),
-            },
-            Node::Let {
-                name,
-                ty,
-                value,
-                body,
-                nondep,
-            } => Node::Let {
-                name,
-                ty: f(ty),
-                value: f(value),
-                body: f(body),
-                nondep,
-            },
-            Node::Proj(n, i, e) => Node::Proj(n, i, f(e)),
-        }
-    }
 }
 
-// Word layout of a stored record: a head word (tag in the low 3 bits,
-// then binder info or the let's `nondep`), then the fields.
-const T_APP: u32 = 0;
-const T_LAM: u32 = 1;
-const T_PI: u32 = 2;
-const T_LET: u32 = 3;
-const T_PROJ: u32 = 4;
-/// Set in the head word of a stored record once it is interned; its
-/// arena id then replaces the record's second word.
-const DONE: u32 = 1 << 31;
-
-fn bi_bits(bi: BinderInfo) -> u32 {
-    match bi {
-        BinderInfo::Default => 0,
-        BinderInfo::Implicit => 1,
-        BinderInfo::StrictImplicit => 2,
-        BinderInfo::InstImplicit => 3,
-    }
-}
-
-fn bits_bi(b: u32) -> BinderInfo {
-    match b & 3 {
-        0 => BinderInfo::Default,
-        1 => BinderInfo::Implicit,
-        2 => BinderInfo::StrictImplicit,
-        _ => BinderInfo::InstImplicit,
-    }
-}
-
+/// Record `r` (compound, not done, not an alias), decoded.
 #[inline(always)]
-fn push_node(words: &mut Vec<u32>, n: Node) {
-    match n {
-        Node::App(f, a) => words.extend([T_APP, f, a]),
-        Node::Bind {
-            pi,
-            bi,
-            name,
-            ty,
-            body,
-        } => words.extend([
-            if pi { T_PI } else { T_LAM } | bi_bits(bi) << 3,
-            name.0,
-            ty,
-            body,
-        ]),
-        Node::Let {
-            name,
-            ty,
-            value,
-            body,
-            nondep,
-        } => words.extend([T_LET | (nondep as u32) << 3, name.0, ty, value, body]),
-        Node::Proj(n, i, e) => words.extend([T_PROJ, n.0, i, e]),
+fn decode(side: &[u32], r: u64) -> Node {
+    let t = tag(r);
+    if t == T_APP {
+        return Node::App((r >> ID_BITS & ID_MASK) as u32, (r & ID_MASK) as u32);
     }
-}
-
-fn read_node(words: &[u32], off: u32) -> Node {
-    let w = &words[off as usize..];
-    match w[0] & 7 {
-        T_APP => Node::App(w[1], w[2]),
+    let o = r as u32 as usize;
+    let flags = r >> 32;
+    match t {
         T_LAM | T_PI => Node::Bind {
-            pi: w[0] & 7 == T_PI,
-            bi: bits_bi(w[0] >> 3),
-            name: NameId(w[1]),
-            ty: w[2],
-            body: w[3],
+            pi: t == T_PI,
+            bi: bits_bi(flags),
+            name: NameId(side[o]),
+            ty: side[o + 1],
+            body: side[o + 2],
         },
         T_LET => Node::Let {
-            name: NameId(w[1]),
-            ty: w[2],
-            value: w[3],
-            body: w[4],
-            nondep: w[0] >> 3 & 1 != 0,
+            name: NameId(side[o]),
+            ty: side[o + 1],
+            value: side[o + 2],
+            body: side[o + 3],
+            nondep: flags & 1 != 0,
         },
-        _ => Node::Proj(NameId(w[1]), w[2], w[3]),
+        _ => Node::Proj(NameId(side[o]), side[o + 1], side[o + 2]),
     }
-}
-
-/// A pending record.
-#[derive(Clone, Copy)]
-struct Pend {
-    /// Its export id.
-    id: u64,
-    node: Node,
-    /// Its arena id once interned (else `NONE`, or [`NEEDED`] within
-    /// [`Builder::promote`]); at the flush, its new reference.
-    r: u32,
 }
 
 /// Intern record `n` in `env`, its children's arena ids being `ids` (in
@@ -222,24 +167,22 @@ fn add(env: &mut Env, append: bool, n: Node, ids: [u32; 3]) -> R<u32> {
     } else {
         env.exprs.intern(node, &env.levels)?.0
     };
-    if id.0 >= PEND {
+    // (Checkers' own ids start at 2^31.)
+    if id.0 >= 1 << 31 {
         return Err(Fail::from(Overflow("too many expressions")));
     }
     Ok(id.0)
 }
 
-/// The reader's side of lazy proofs.
+/// The reader's side of lazy proofs: a record per expression id.
 #[derive(Default)]
 pub(super) struct Builder {
-    words: Vec<u32>,
-    /// The records since the last declaration line: export id, record.
-    pending: Vec<Pend>,
-    /// `mdata` records among them: export id, the reference it stands for.
-    aliases: Vec<(u64, u32)>,
-    /// Per lazy value, its root reference (pending until the flush).
+    recs: Vec<u64>,
+    side: Vec<u32>,
+    /// Records from here on came after the last declaration line.
+    from: usize,
+    /// Per lazy value, its root's export id.
     roots: Vec<u32>,
-    /// Roots added since the last flush start here.
-    roots_from: usize,
     stack: Vec<u32>,
 }
 
@@ -247,87 +190,166 @@ impl Builder {
     /// A builder for an export of about `size` bytes.
     pub(super) fn with_capacity(size: u64) -> Self {
         let mut b = Builder::default();
-        // About two thirds of a real export's lines are compound
-        // expressions left stored, at about 3.5 words each; the space is
-        // only reserved, so a smaller file costs nothing.
-        b.words.reserve((size / 24).min(PEND as u64) as usize);
+        // About one expression per 56 bytes of a real export, and a side
+        // record (3 words) per 8 of them; the space is only reserved, so
+        // a smaller file costs nothing.
+        b.recs.reserve((size / 56).min(MAX_IDS) as usize);
+        b.side.reserve((size / 150).min(u32::MAX as u64) as usize);
         b
     }
 
-    /// Add a pending record; its reference.
+    /// Whether `id` is the next expression id.
     #[inline(always)]
-    pub(super) fn pend(&mut self, id: u64, n: Node) -> R<u32> {
-        let i = self.pending.len() as u32;
-        if i >= PEND {
-            return bad("too many expressions before one declaration");
+    fn next(&self, id: u64) -> bool {
+        id == self.recs.len() as u64 && id < MAX_IDS
+    }
+
+    /// Whether `id` is an expression id seen so far.
+    #[inline(always)]
+    pub(super) fn has(&self, id: u64) -> bool {
+        id < self.recs.len() as u64
+    }
+
+    /// An application record; false (and nothing added) unless `id` is
+    /// the next id and the children are earlier ones.
+    #[inline(always)]
+    pub(super) fn app(&mut self, id: u64, f: u64, a: u64) -> bool {
+        if !self.next(id) || f >= id || a >= id {
+            return false;
         }
-        self.pending.push(Pend {
-            id,
-            node: n,
-            r: NONE,
-        });
-        Ok(PEND | i)
+        self.recs.push(T_APP << TAG | f << ID_BITS | a);
+        true
     }
 
-    pub(super) fn alias(&mut self, id: u64, r: u32) {
-        self.aliases.push((id, r));
-    }
-
-    /// The arena id of reference `r`, if it is interned.
-    fn known(&self, r: u32) -> Option<u32> {
-        match r & KIND {
-            0 => Some(r),
-            PEND => {
-                let v = self.pending[(r & !KIND) as usize].r;
-                (v != NONE).then_some(v)
-            }
-            _ => {
-                let off = (r & !KIND) as usize;
-                (self.words[off] & DONE != 0).then(|| self.words[off + 1])
-            }
+    /// Push a side record of `fields` with tag `t` and `flags`.
+    #[inline(always)]
+    fn with_side(&mut self, t: u64, flags: u64, fields: &[u32]) -> bool {
+        let Ok(o) = u32::try_from(self.side.len()) else {
+            return false;
+        };
+        if o > u32::MAX - 4 {
+            return false;
         }
+        self.side.extend_from_slice(fields);
+        self.recs.push(t << TAG | flags << 32 | o as u64);
+        true
     }
 
-    fn node(&self, r: u32) -> Node {
-        if r & KIND == PEND {
-            self.pending[(r & !KIND) as usize].node
+    /// A binder record; as [`Builder::app`].
+    #[inline(always)]
+    pub(super) fn binder(
+        &mut self,
+        id: u64,
+        pi: bool,
+        bi: BinderInfo,
+        name: NameId,
+        ty: u64,
+        body: u64,
+    ) -> bool {
+        if !self.next(id) || ty >= id || body >= id {
+            return false;
+        }
+        let t = if pi { T_PI } else { T_LAM };
+        self.with_side(t, bi_bits(bi), &[name.0, ty as u32, body as u32])
+    }
+
+    /// A let record; as [`Builder::app`].
+    pub(super) fn let_in(
+        &mut self,
+        id: u64,
+        name: NameId,
+        [ty, value, body]: [u64; 3],
+        nondep: bool,
+    ) -> bool {
+        if !self.next(id) || ty >= id || value >= id || body >= id {
+            return false;
+        }
+        let f = [name.0, ty as u32, value as u32, body as u32];
+        self.with_side(T_LET, nondep as u64, &f)
+    }
+
+    /// A projection record; as [`Builder::app`].
+    pub(super) fn proj(&mut self, id: u64, s: NameId, i: u32, e: u64) -> bool {
+        if !self.next(id) || e >= id {
+            return false;
+        }
+        self.with_side(T_PROJ, 0, &[s.0, i, e as u32])
+    }
+
+    /// A leaf, interned as `arena`; as [`Builder::app`].
+    #[inline(always)]
+    pub(super) fn leaf(&mut self, id: u64, arena: u32) -> bool {
+        if !self.next(id) {
+            return false;
+        }
+        self.recs.push(DONE | arena as u64);
+        true
+    }
+
+    /// An `mdata` record, standing for `inner`; as [`Builder::app`].
+    pub(super) fn alias(&mut self, id: u64, inner: u64) -> bool {
+        if !self.next(id) || inner >= id {
+            return false;
+        }
+        let r = self.recs[inner as usize];
+        self.recs.push(if r & DONE != 0 || tag(r) == T_ALIAS {
+            r
         } else {
-            read_node(&self.words, r & !KIND)
+            T_ALIAS << TAG | inner
+        });
+        true
+    }
+
+    /// `id`, or the id it stands for if it is an alias.
+    #[inline(always)]
+    fn real(&self, id: u32) -> u32 {
+        let r = self.recs[id as usize];
+        if r & DONE == 0 && tag(r) == T_ALIAS {
+            (r & ID_MASK) as u32
+        } else {
+            id
         }
     }
 
-    /// Intern the term `r` refers to (and what it needs) in `env`.
-    pub(super) fn promote(&mut self, env: &mut Env, append: bool, r: u32) -> R<ExprId> {
-        if let Some(id) = self.known(r) {
-            return Ok(ExprId(id));
-        }
-        if r & KIND == PEND {
-            return self.promote_pending(env, append, (r & !KIND) as usize);
-        }
-        self.promote_stored(env, append, r)
+    /// The arena id of expression `id`, if it is interned.
+    #[inline(always)]
+    fn known(&self, id: u32) -> Option<u32> {
+        let r = self.recs[self.real(id) as usize];
+        (r & DONE != 0).then_some(r as u32)
     }
 
-    /// [`Builder::promote`] for pending record `i`. Pending records come
-    /// children first, so this needs no stack: a pass down from `i` marks
-    /// the records it needs (until none is left to find), and a pass up
-    /// interns them.
-    fn promote_pending(&mut self, env: &mut Env, append: bool, i: usize) -> R<ExprId> {
-        let p = &mut self.pending;
-        p[i].r = NEEDED;
+    /// Intern expression `id` (and what it needs) in `env`.
+    pub(super) fn promote(&mut self, env: &mut Env, append: bool, id: u64) -> R<ExprId> {
+        let i = self.real(id as u32);
+        if let Some(a) = self.known(i) {
+            return Ok(ExprId(a));
+        }
+        if i as usize >= self.from {
+            return self.promote_recent(env, append, i as usize);
+        }
+        self.promote_old(env, append, i)
+    }
+
+    /// [`Builder::promote`] for a record since the last declaration line.
+    /// Records come children first, so this needs no stack: a pass down
+    /// from `i` marks the recent records it needs (until none is left to
+    /// find), and a pass up interns them.
+    fn promote_recent(&mut self, env: &mut Env, append: bool, i: usize) -> R<ExprId> {
+        let from = self.from;
+        self.recs[i] |= NEEDED;
         // Records marked and not yet passed.
         let mut left = 1usize;
         let mut j = i;
         loop {
-            if p[j].r == NEEDED {
+            let r = self.recs[j];
+            if r & NEEDED != 0 {
                 left -= 1;
-                let (kids, k) = p[j].node.kids();
+                let (kids, k) = decode(&self.side, r).kids();
                 for &c in &kids[..k] {
-                    if c & KIND == PEND {
-                        let c = (c & !KIND) as usize;
-                        if p[c].r == NONE {
-                            p[c].r = NEEDED;
-                            left += 1;
-                        }
+                    let c = self.real(c) as usize;
+                    if c >= from && self.recs[c] & (DONE | NEEDED) == 0 {
+                        self.recs[c] |= NEEDED;
+                        left += 1;
                     }
                 }
                 if left == 0 {
@@ -338,136 +360,109 @@ impl Builder {
             j -= 1;
         }
         for x in j..=i {
-            if self.pending[x].r != NEEDED {
+            let r = self.recs[x];
+            if r & NEEDED == 0 {
                 continue;
             }
-            let n = self.pending[x].node;
+            let n = decode(&self.side, r & !NEEDED);
             let (kids, k) = n.kids();
             let mut ids = [0u32; 3];
             for (&c, id) in kids[..k].iter().zip(&mut ids) {
-                *id = match c & KIND {
-                    0 => c,
-                    // Marked, so interned by now.
-                    PEND => self.pending[(c & !KIND) as usize].r,
-                    _ => match self.known(c) {
-                        Some(v) => v,
-                        None => self.promote_stored(env, append, c)?.0,
-                    },
+                *id = match self.known(c) {
+                    Some(v) => v,
+                    // An old record (recent ones are interned by now).
+                    None => self.promote_old(env, append, self.real(c))?.0,
                 };
             }
-            self.pending[x].r = add(env, append, n, ids)?;
+            self.recs[x] = DONE | add(env, append, n, ids)? as u64;
         }
-        Ok(ExprId(self.pending[i].r))
+        Ok(ExprId(self.recs[i] as u32))
     }
 
-    /// [`Builder::promote`] for a stored record (which refers to nothing
-    /// pending).
-    fn promote_stored(&mut self, env: &mut Env, append: bool, r: u32) -> R<ExprId> {
+    /// [`Builder::promote`] for any record, with a stack.
+    fn promote_old(&mut self, env: &mut Env, append: bool, i: u32) -> R<ExprId> {
         let mut stack = std::mem::take(&mut self.stack);
         stack.clear();
-        stack.push(r);
+        stack.push(i);
         let res: R<()> = (|| {
             while let Some(&top) = stack.last() {
-                if self.known(top).is_some() {
+                let r = self.recs[top as usize];
+                if r & DONE != 0 {
                     stack.pop();
                     continue;
                 }
-                let n = self.node(top);
+                let n = decode(&self.side, r);
                 let (kids, k) = n.kids();
                 let mut ready = true;
                 let mut ids = [0u32; 3];
                 for (&c, id) in kids[..k].iter().zip(&mut ids) {
-                    match self.known(c) {
-                        Some(i) => *id = i,
-                        None => {
-                            stack.push(c);
-                            ready = false;
-                        }
+                    let c = self.real(c);
+                    let r = self.recs[c as usize];
+                    if r & DONE != 0 {
+                        *id = r as u32;
+                    } else {
+                        stack.push(c);
+                        ready = false;
                     }
                 }
                 if !ready {
                     continue;
                 }
-                let id = add(env, append, n, ids)?;
-                if top & KIND == PEND {
-                    self.pending[(top & !KIND) as usize].r = id;
-                } else {
-                    let off = (top & !KIND) as usize;
-                    self.words[off] |= DONE;
-                    self.words[off + 1] = id;
-                }
+                self.recs[top as usize] = DONE | add(env, append, n, ids)? as u64;
                 stack.pop();
             }
             Ok(())
         })();
         self.stack = stack;
         res?;
-        Ok(ExprId(self.known(r).expect("interned")))
+        Ok(ExprId(self.recs[i as usize] as u32))
     }
 
     /// A theorem's value: its arena id if it is interned, else a lazy
     /// placeholder.
-    pub(super) fn value(&mut self, r: u32) -> R<ExprId> {
-        if let Some(id) = self.known(r) {
-            return Ok(ExprId(id));
+    pub(super) fn value(&mut self, id: u64) -> R<ExprId> {
+        let i = self.real(id as u32);
+        if let Some(a) = self.known(i) {
+            return Ok(ExprId(a));
         }
         let k = self.roots.len() as u32;
-        if k >= u32::MAX - crate::env::LAZY_BASE {
+        if k >= u32::MAX - LAZY_BASE {
             return Err(Fail::from(Overflow("too many theorems")));
         }
-        self.roots.push(r);
-        Ok(ExprId(crate::env::LAZY_BASE + k))
+        self.roots.push(i);
+        Ok(ExprId(LAZY_BASE + k))
     }
 
-    /// At the end of a declaration: store what is still pending, and
-    /// rebind each pending export id in `ids` to its new reference.
-    pub(super) fn flush(&mut self, ids: &mut IdMap) -> R<()> {
-        // Each pending record's new reference replaces its arena id (in
-        // `r`); records only refer to earlier ones, which are done.
-        let n = self.pending.len();
-        if self.words.len() + 5 * n >= PEND as usize {
-            return Err(Fail::from(Overflow("too many stored expressions")));
-        }
-        self.words.reserve(5 * n);
-        let pend = &mut self.pending;
-        let words = &mut self.words;
-        let tr = |pend: &[Pend], r: u32| -> u32 {
-            if r & KIND == PEND {
-                pend[(r & !KIND) as usize].r
-            } else {
-                r
+    /// At the end of a declaration.
+    #[inline(always)]
+    pub(super) fn decl_done(&mut self) {
+        self.from = self.recs.len();
+    }
+
+    /// Intern every record, and give each expression id's arena id (in
+    /// order) and each lazy value's.
+    pub(super) fn into_eager(mut self, env: &mut Env, append: bool) -> R<(Vec<u32>, Vec<u32>)> {
+        // Children come first, so one pass in order does.
+        for x in 0..self.recs.len() {
+            let r = self.recs[x];
+            if r & DONE != 0 {
+                continue;
             }
-        };
-        // The same, for the records (so `pend` is not empty), without a
-        // branch: whether a child is pending is unpredictable. When it is
-        // not, the load is from a clamped index, and unused.
-        let last = n.saturating_sub(1);
-        let kid = |pend: &[Pend], r: u32| -> u32 {
-            let new = pend[((r & !KIND) as usize).min(last)].r;
-            if r & KIND == PEND { new } else { r }
-        };
-        for i in 0..n {
-            let Pend { id, node, mut r } = pend[i];
-            if r == NONE {
-                r = STORED | words.len() as u32;
-                match node {
-                    Node::App(f, a) => words.extend([T_APP, kid(pend, f), kid(pend, a)]),
-                    node => push_node(words, node.map(|c| kid(pend, c))),
-                }
-                pend[i].r = r;
+            if tag(r) == T_ALIAS {
+                self.recs[x] = self.recs[(r & ID_MASK) as usize];
+                continue;
             }
-            ids.rebind(id, r);
+            let n = decode(&self.side, r);
+            let (kids, k) = n.kids();
+            let mut ids = [0u32; 3];
+            for (&c, id) in kids[..k].iter().zip(&mut ids) {
+                *id = self.recs[c as usize] as u32;
+            }
+            self.recs[x] = DONE | add(env, append, n, ids)? as u64;
         }
-        for &(id, r) in &self.aliases {
-            ids.rebind(id, tr(pend, r));
-        }
-        for k in self.roots_from..self.roots.len() {
-            self.roots[k] = tr(pend, self.roots[k]);
-        }
-        self.pending.clear();
-        self.aliases.clear();
-        self.roots_from = self.roots.len();
-        Ok(())
+        let ids: Vec<u32> = self.recs.iter().map(|&r| r as u32).collect();
+        let roots = self.roots.iter().map(|&i| ids[i as usize]).collect();
+        Ok((ids, roots))
     }
 
     /// The source of the lazy values, once the read is done.
@@ -475,27 +470,28 @@ impl Builder {
         if self.roots.is_empty() {
             return None;
         }
-        // Stored records interned since stay where they are, marked
-        // `DONE`; building a value takes their arena ids from there.
-        self.words.shrink_to_fit();
+        // Interned records stay where they are, marked `DONE`; building
+        // a value takes their arena ids from there.
+        self.recs.shrink_to_fit();
+        self.side.shrink_to_fit();
         self.roots.shrink_to_fit();
         Some(Box::new(Stored {
-            words: self.words,
+            recs: self.recs,
+            side: self.side,
             roots: self.roots,
         }))
     }
 }
 
-/// Theorem values of an export, kept as stored records (which refer to
-/// interned terms by their arena ids, or are themselves interned and
-/// marked [`DONE`]).
+/// Theorem values of an export: the records, by expression id.
 struct Stored {
-    words: Vec<u32>,
+    recs: Vec<u64>,
+    side: Vec<u32>,
     roots: Vec<u32>,
 }
 
 thread_local! {
-    /// Each thread's memo (word offset to the sink's id) and stack.
+    /// Each thread's memo (expression id to the sink's id) and stack.
     static SCRATCH: RefCell<(HashMap<u32, ExprId>, Vec<u32>)> = RefCell::default();
 }
 
@@ -518,7 +514,7 @@ impl LazyValues for Stored {
     }
 
     fn heap_bytes(&self) -> usize {
-        self.words.capacity() * 4 + self.roots.capacity() * 4
+        self.recs.capacity() * 8 + self.side.capacity() * 4 + self.roots.capacity() * 4
     }
 }
 
@@ -530,26 +526,31 @@ impl Stored {
         memo: &mut HashMap<u32, ExprId>,
         stack: &mut Vec<u32>,
     ) -> Result<ExprId, String> {
-        // The sink's id for `r`, if known.
-        let words = &self.words;
-        let done = |memo: &HashMap<u32, ExprId>, sink: &mut dyn TermSink, r: u32| {
-            if r & KIND == 0 {
-                return Some(sink.shared_expr(ExprId(r)));
+        // The sink's id for expression `i`, if known.
+        let (recs, side) = (&self.recs, &self.side);
+        let real = |i: u32| {
+            let r = recs[i as usize];
+            if r & DONE == 0 && tag(r) == T_ALIAS {
+                (r & ID_MASK) as u32
+            } else {
+                i
             }
-            let off = (r & !KIND) as usize;
-            if words[off] & DONE != 0 {
-                return Some(sink.shared_expr(ExprId(words[off + 1])));
+        };
+        let done = |memo: &HashMap<u32, ExprId>, sink: &mut dyn TermSink, i: u32| {
+            let r = recs[real(i) as usize];
+            if r & DONE != 0 {
+                return Some(sink.shared_expr(ExprId(r as u32)));
             }
-            memo.get(&(off as u32)).copied()
+            memo.get(&real(i)).copied()
         };
         stack.push(root);
         while let Some(&top) = stack.last() {
-            let off = top & !KIND;
             if done(memo, sink, top).is_some() {
                 stack.pop();
                 continue;
             }
-            let n = read_node(&self.words, off);
+            let top = real(top);
+            let n = decode(side, recs[top as usize]);
             let (kids, k) = n.kids();
             let mut ready = true;
             for &c in &kids[..k] {
@@ -607,7 +608,7 @@ impl Stored {
                     sink.expr(ExprNode::Proj(s, i, x))
                 }
             };
-            memo.insert(off, id);
+            memo.insert(top, id);
             stack.pop();
         }
         done(memo, sink, root).ok_or_else(|| "internal: unresolved value".into())

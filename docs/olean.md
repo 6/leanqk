@@ -98,13 +98,18 @@ The NDJSON export reader (`src/reader.rs`) gives the checker the same
 interface, lazy theorem values included (`reader::Options::lazy_proofs`,
 the default for `check`; `src/reader/lazy.rs`):
 
-- Leaves (`bvar`, `sort`, `const`, literals) are added to the arena at
-  once. Other expression records stay pending until the next declaration
-  line. There, the terms the declaration needs at once (types, definition
-  values, recursor rules) are added from the pending records, and the
-  rest (a theorem's proof, mostly) moves to a compact store of words with
-  references either to arena ids or to other stored records. A later
-  declaration that needs a stored term adds it then.
+- An export numbers its expressions densely from 0, children first. The
+  reader keeps a record of 8 bytes per expression id, in a table indexed
+  by that id: a leaf (`bvar`, `sort`, `const`, literals) is added to the
+  arena at once and its record holds its arena id; a compound record holds
+  its children's export ids (an application's in the record, the others'
+  in a side table), so it costs one push. At a declaration line, the
+  terms the declaration needs at once (types, definition values, recursor
+  rules) are added to the arena from the table, and their records then
+  hold arena ids. The rest (a theorem's proof, mostly) stays in the table;
+  a later declaration that needs one of its terms adds it then. If the ids
+  are not dense, the reader adds every record to the arena and goes on
+  without lazy proofs.
 - Lines are read by a byte scanner for the fixed shapes lean4export
   writes (`src/reader/scan.rs`), with no allocation per line. It looks at
   a window of 288 bytes from the line's start; each token checks its
@@ -116,9 +121,9 @@ the default for `check`; `src/reader/lazy.rs`):
   the reader's state, declarations included. On several, each thread
   parses chunks of whole lines, and their batches are applied in file
   order on one thread.
-- A pending record is translated in two passes: one marks the records it
-  needs, the next adds them in order, so no record is visited from a
-  stack.
+- The records since the last declaration line are added in two passes:
+  one down marks the records a term needs, one up adds them in order, so
+  no stack is needed. Older records are added from a stack.
 - An export lists each term once, so expressions are added without
   hash-consing, and their cached data (`ExprData`) is filled in one pass
   over the arena before the index. The index is built at the end, on all

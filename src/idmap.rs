@@ -137,37 +137,6 @@ impl IdMap {
     }
 
     /// Whether the map is still in its zero-cost identity mode.
-    /// Change the target of a bound id.
-    #[inline(always)]
-    pub fn rebind(&mut self, id: u64, target: u32) {
-        if self.dense_mode
-            && let Some(slot) = self.dense.get_mut(id as usize)
-        {
-            *slot = target;
-            return;
-        }
-        self.rebind_slow(id, target);
-    }
-
-    #[inline(never)]
-    fn rebind_slow(&mut self, id: u64, target: u32) {
-        if !self.dense_mode {
-            if id < self.identity && target as u64 == id {
-                return;
-            }
-            self.dense.clear();
-            self.dense.extend(0..self.identity as u32);
-            self.dense_mode = true;
-        }
-        match self.dense.get_mut(id as usize) {
-            Some(slot) => *slot = target,
-            None => {
-                self.sparse.insert(id, target);
-            }
-        }
-        self.next = self.fast_next();
-    }
-
     #[cfg(test)]
     pub fn is_identity(&self) -> bool {
         !self.dense_mode
