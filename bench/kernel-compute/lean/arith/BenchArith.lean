@@ -31,7 +31,7 @@ elab "unchecked_decide" : tactic => do
 
 namespace BenchArith
 
-theorem cartan_A3_checked : (CartanMatrix.A (Fin 3)).det = 4 := by decide +kernel
+theorem cartan_A3_checked : (CartanMatrix.A 3).det = 4 := by decide +kernel
 theorem fermat_31_checked : (3 : ZMod 31) ^ 30 = 1 := by decide +kernel
 theorem qnr_31_checked : ∀ x : ZMod 31, x ^ 2 ≠ -1 := by decide +kernel
 theorem prime_101_checked : Nat.Prime 101 := by decide +kernel
@@ -39,12 +39,12 @@ theorem sumsq_30_checked : ∑ i ∈ Finset.range 30, i ^ 2 = 8555 := by decide 
 
 set_option debug.skipKernelTC true
 
-theorem cartan_A4 : (CartanMatrix.A (Fin 4)).det = 5 := by unchecked_decide
-theorem cartan_A5 : (CartanMatrix.A (Fin 5)).det = 6 := by unchecked_decide
-theorem cartan_A6 : (CartanMatrix.A (Fin 6)).det = 7 := by unchecked_decide
-theorem cartan_A7 : (CartanMatrix.A (Fin 7)).det = 8 := by unchecked_decide
-theorem cartan_A8 : (CartanMatrix.A (Fin 8)).det = 9 := by unchecked_decide
-theorem cartan_A9 : (CartanMatrix.A (Fin 9)).det = 10 := by unchecked_decide
+theorem cartan_A4 : (CartanMatrix.A 4).det = 5 := by unchecked_decide
+theorem cartan_A5 : (CartanMatrix.A 5).det = 6 := by unchecked_decide
+theorem cartan_A6 : (CartanMatrix.A 6).det = 7 := by unchecked_decide
+theorem cartan_A7 : (CartanMatrix.A 7).det = 8 := by unchecked_decide
+theorem cartan_A8 : (CartanMatrix.A 8).det = 9 := by unchecked_decide
+theorem cartan_A9 : (CartanMatrix.A 9).det = 10 := by unchecked_decide
 
 theorem fermat_101 : (3 : ZMod 101) ^ 100 = 1 := by unchecked_decide
 theorem fermat_1009 : (3 : ZMod 1009) ^ 1008 = 1 := by unchecked_decide
