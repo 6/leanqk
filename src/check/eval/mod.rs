@@ -2071,7 +2071,15 @@ impl<'a, 'e> Machine<'a, 'e> {
                 _ => return Ok(None),
             }
         }
-        Ok(Some(ArrVal::new(mk, cons, nil, ty, elems)))
+        let a = ArrVal::new(mk, cons, nil, ty, elems);
+        // The vector stands for the same term: later operations on this
+        // thunk need not walk the list again.
+        if let TState::Done(_) = &*t.0.borrow() {
+        } else {
+            return Ok(Some(a));
+        }
+        *t.0.borrow_mut() = TState::Done(Rc::new(Val::Arr(a.clone())));
+        Ok(Some(a))
     }
 
     fn is_array_mk(&mut self, v: &V) -> bool {

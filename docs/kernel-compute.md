@@ -221,7 +221,11 @@ value whose term is what unfolding the definition and reducing the list
 operation gives. The vector stands for `Array.mk α [x₀, …]`, and for example
 `List.set [x₀, …, xₙ₋₁] i v` reduces to `[x₀, …, v, …, xₙ₋₁]` for `i < n`.
 An array value that is `Array.mk` of a list is turned into a vector only if
-its spine evaluates to the end (forcing its cells, not its elements). An
+its spine evaluates to the end (forcing its cells, not its elements). The
+vector then replaces the value in that thunk, so the list is walked once:
+before, every `clauses[i]!` on LRAT-Catcher's clause array (`List.toArray`
+of the formula's clauses) walked all of them again, and `keller7-full`
+(200 545 clauses) did not finish in 1200 s. It now takes 23 s. An
 index that is not a literal below the length, or an array that is not a
 value, makes the operation unfold to its definition. A vector meeting a
 projection or a recursor is turned back into the constructor application it
