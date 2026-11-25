@@ -500,7 +500,83 @@ impl Nbe<'_> {
         self.whnf_core(u, false, true)
     }
 
+    /// Whether the arguments of two applications of the abbreviation `d`
+    /// (spines `a` and `b`) are worth comparing before unfolding: not when
+    /// `d` is an eliminator in disguise (a recursor, casesOn or matcher at
+    /// the head of its value) and they differ in something other than
+    /// neutral values or closures, which the eliminator would reduce.
+    fn probe_worth(&mut self, d: &crate::env::Decl, a: Sp, b: Sp) -> bool {
+        if self.abbrev_shape(d.name, 0) != SHAPE_ELIM {
+            return true;
+        }
+        if self.a.sp_has_proj(a) || self.a.sp_has_proj(b) {
+            return false;
+        }
+        let (mut xs, mut ys) = (Vec::new(), Vec::new());
+        if !self.a.args(a, &mut xs) || !self.a.args(b, &mut ys) || xs.len() != ys.len() {
+            return false;
+        }
+        let mut kind = 0;
+        for (&x, &y) in xs.iter().zip(&ys) {
+            if x == y {
+                continue;
+            }
+            let k = match (self.a.get(x), self.a.get(y)) {
+                (Val::Const(..) | Val::FVar(..), Val::Const(..) | Val::FVar(..)) => 1,
+                (Val::Lam(..) | Val::PiInfer(..), Val::Lam(..) | Val::PiInfer(..)) => 2,
+                _ => return false,
+            };
+            if kind != 0 && k != kind {
+                return false;
+            }
+            kind = k;
+        }
+        true
+    }
+
+    /// `SHAPE_ELIM` if the value of definition `n`, past its λs, is headed
+    /// by a recursor or (at most four definitions deep) by a definition
+    /// that is, else 0.
+    fn abbrev_shape(&mut self, n: crate::name::NameId, depth: u32) -> u8 {
+        if let Some(&k) = self.shapes.get(&n) {
+            return k;
+        }
+        let k = (|| {
+            let d = self.find(n)?;
+            let DeclKind::Definition { value, .. } = d.kind else {
+                return None;
+            };
+            if crate::env::is_lazy(value) {
+                return None;
+            }
+            let mut b = value;
+            while let ExprNode::Lam(_, _, _, x) = self.st.node(b) {
+                b = x;
+            }
+            while let ExprNode::Proj(_, _, x) = self.st.node(b) {
+                b = x;
+            }
+            while let ExprNode::App(f, _) = self.st.node(b) {
+                b = f;
+            }
+            let ExprNode::Const(h, _) = self.st.node(b) else {
+                return None;
+            };
+            match self.find(h)?.kind {
+                DeclKind::Recursor { .. } => Some(SHAPE_ELIM),
+                DeclKind::Definition { .. } if depth < 4 && h != n => {
+                    (self.abbrev_shape(h, depth + 1) == SHAPE_ELIM).then_some(SHAPE_ELIM)
+                }
+                _ => None,
+            }
+        })()
+        .unwrap_or(0);
+        self.shapes.insert(n, k);
+        k
+    }
+
     fn lazy_delta_reduction_step(&mut self, t: &mut V, s: &mut V) -> R<Step> {
+        self.tick()?;
         self.decl_steps = self.decl_steps.saturating_add(1);
         let dt = self.is_delta(*t);
         let ds = self.is_delta(*s);
@@ -536,6 +612,24 @@ impl Nbe<'_> {
                         && !self.eq_fail.contains(&pair(*t, *s))
                     {
                         if self.is_def_eq_levels(lt, ls) && self.is_def_eq_args(*t, *s)? {
+                            return Ok(Step::Equal);
+                        }
+                        self.eq_fail.insert(pair(*t, *s));
+                    } else if let (Val::Const(_, lt, tsp), Val::Const(_, ls, ssp)) =
+                        (self.a.get(*t), self.a.get(*s))
+                        && tsp != Sp::NIL
+                        && ssp != Sp::NIL
+                        && dt.name == ds.name
+                        && !matches!(decl_hints(&dt), Hints::Regular(_))
+                        && !self.eq_fail.contains(&pair(*t, *s))
+                        && self.is_def_eq_levels(lt, ls)
+                        && self.probe_worth(&dt, tsp, ssp)
+                    {
+                        // An abbreviation (an instance, a projection
+                        // function): Lean unfolds both sides, but often
+                        // the arguments agree, so they are compared first,
+                        // within a budget; out of it, both sides unfold.
+                        if self.attempt(ARGS_PROBE, |nb| nb.is_def_eq_args(*t, *s))? == Some(true) {
                             return Ok(Step::Equal);
                         }
                         self.eq_fail.insert(pair(*t, *s));
@@ -817,6 +911,13 @@ impl Nbe<'_> {
 /// Lazy delta steps after which a declaration counts as heavy, and
 /// definitional equality also goes by names (`is_def_eq`).
 pub(super) const HEAVY_STEPS: u32 = 1 << 10;
+
+/// Steps the arguments of two applications of an abbreviation may take
+/// to be found equal before both sides unfold.
+const ARGS_PROBE: u64 = 1024;
+
+/// `abbrev_shape` of an eliminator in disguise.
+const SHAPE_ELIM: u8 = 4;
 
 /// Bound on the nodes one structural comparison may visit.
 const SYN_BUDGET: u32 = 1 << 10;

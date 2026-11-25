@@ -120,6 +120,15 @@ pub struct Nbe<'e> {
     /// Terms added to `st` for names: they do not count towards its size
     /// for keeping it between declarations.
     name_exprs: usize,
+    /// Work done, in steps of evaluation and reduction (`tick`).
+    ticks: u64,
+    /// The step past which the current attempt stops (`attempt`), or
+    /// `u64::MAX` outside attempts.
+    stop: u64,
+    /// Set when an attempt ran out of steps, until it ends.
+    stopped: bool,
+    /// The shape of the value of a definition (`abbrev_shape`).
+    shapes: IdMap<NameId, u8>,
     /// Terms the store holds for values read from `.olean` files.
     read_exprs: usize,
     /// The loose bound variables each term uses (`used_bvars`).
@@ -223,6 +232,10 @@ impl<'e> Nbe<'e> {
             names: IdMap::default(),
             name_eq: IdMap::default(),
             name_exprs: 0,
+            ticks: 0,
+            stop: u64::MAX,
+            stopped: false,
+            shapes: IdMap::default(),
             read_exprs: 0,
             bvar_use: IdMap::default(),
             key_envs: IdMap::default(),
@@ -263,6 +276,38 @@ impl<'e> Nbe<'e> {
             self.a.clear_checked(v);
         }
         self.fresh = self.a.is_empty();
+    }
+
+    /// Count a step of work; inside an attempt that has used its steps,
+    /// stop it (an error that `attempt` catches).
+    #[inline]
+    pub fn tick(&mut self) -> R<()> {
+        self.ticks += 1;
+        if self.ticks > self.stop {
+            self.stopped = true;
+            return Err(KErr(String::new()));
+        }
+        Ok(())
+    }
+
+    /// `f`, given at most `budget` steps: `None` if it needed more. Inside
+    /// another attempt, `f` shares what that one has left. Only finished
+    /// results are cached, so a stopped attempt leaves only facts behind.
+    pub fn attempt<T>(&mut self, budget: u64, f: impl FnOnce(&mut Self) -> R<T>) -> R<Option<T>> {
+        if self.stop != u64::MAX {
+            return f(self).map(Some);
+        }
+        self.stop = self.ticks.saturating_add(budget);
+        let r = f(self);
+        self.stop = u64::MAX;
+        match r {
+            Ok(v) => Ok(Some(v)),
+            Err(_) if self.stopped => {
+                self.stopped = false;
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Forget everything.
