@@ -123,15 +123,19 @@ impl Nbe<'_> {
         let (slot, hit) = self.a.thunk_slot(e, env, ls);
         match hit {
             Some(t) => t,
-            None => {
-                let d = self.st.data(e);
-                let env2 = self.trim(env, d.loose_bvar_range());
-                let ls2 = if d.has_level_param() { ls } else { Ls::ID };
-                let t = self.a.mk(Val::Thunk(e, env2, ls2));
-                self.a.set_thunk_slot(slot, e, env, ls, t);
-                t
-            }
+            None => self.thunk_new(e, env, ls, slot),
         }
+    }
+
+    /// `thunk_value` not in the thunk table's `slot`.
+    #[inline(never)]
+    fn thunk_new(&mut self, e: ExprId, env: Env, ls: Ls, slot: usize) -> V {
+        let d = self.st.data(e);
+        let env2 = self.trim(env, d.loose_bvar_range());
+        let ls2 = if d.has_level_param() { ls } else { Ls::ID };
+        let t = self.a.mk(Val::Thunk(e, env2, ls2));
+        self.a.set_thunk_slot(slot, e, env, ls, t);
+        t
     }
 
     /// Whether the head of the application `e` is a constant or a bound

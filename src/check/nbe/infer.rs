@@ -542,7 +542,18 @@ impl Nbe<'_> {
     /// Check `e` in `env` and whether its type is `expected`. A λ is
     /// checked against a Π binder by binder; anything else is inferred
     /// and compared.
+    #[inline]
     pub fn check_against(&mut self, e: ExprId, env: Env, ls: Ls, expected: V) -> R<bool> {
+        if matches!(self.st.node(e), ExprNode::Lam(..)) {
+            return self.check_lambda_against(e, env, ls, expected);
+        }
+        let t = self.infer_term(e, env, ls, false)?;
+        self.is_def_eq(t, expected)
+    }
+
+    /// `check_against` of a λ.
+    #[inline(never)]
+    fn check_lambda_against(&mut self, e: ExprId, env: Env, ls: Ls, expected: V) -> R<bool> {
         if let ExprNode::Lam(bi, n, dom, body) = self.st.node(e) {
             let ex = self.force(expected);
             let ex = if matches!(self.a.get(ex), Val::Pi(..) | Val::PiInfer(..)) {

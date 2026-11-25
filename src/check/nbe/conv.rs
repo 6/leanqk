@@ -868,10 +868,17 @@ impl Nbe<'_> {
         self.is_def_eq_unit_like(tn, sn)
     }
 
+    #[inline]
     pub fn is_def_eq(&mut self, t: V, s: V) -> R<bool> {
         if t == s {
             return Ok(true);
         }
+        self.is_def_eq_memo(t, s)
+    }
+
+    /// `is_def_eq` of two different values.
+    #[inline(never)]
+    fn is_def_eq_memo(&mut self, t: V, s: V) -> R<bool> {
         if self.neq.contains(&pair(t, s)) {
             return Ok(false);
         }
