@@ -464,6 +464,7 @@ impl<'e> Nbe<'e> {
 
     // ---- universe substitutions ----
 
+    #[inline]
     pub fn inst_level(&mut self, l: LevelId, ls: Ls) -> LevelId {
         if ls == Ls::ID || !self.st.level_has_param(l) {
             return l;
@@ -471,6 +472,12 @@ impl<'e> Nbe<'e> {
         if let Some(&r) = self.level_cache.get(&(l, ls)) {
             return r;
         }
+        self.inst_level_new(l, ls)
+    }
+
+    /// `inst_level` not in its memo yet.
+    #[inline(never)]
+    fn inst_level_new(&mut self, l: LevelId, ls: Ls) -> LevelId {
         let node = self.a.ls(ls);
         let ps: Vec<NameId> = self.st.name_list(node.params).to_vec();
         let lv: Vec<LevelId> = self.st.list(node.levels).to_vec();
@@ -479,6 +486,7 @@ impl<'e> Nbe<'e> {
         r
     }
 
+    #[inline]
     pub fn inst_list(&mut self, ll: LevelList, ls: Ls) -> LevelList {
         if ls == Ls::ID || !self.st.list_has_param(ll) {
             return ll;
@@ -486,6 +494,12 @@ impl<'e> Nbe<'e> {
         if let Some(&r) = self.list_cache.get(&(ll, ls)) {
             return r;
         }
+        self.inst_list_new(ll, ls)
+    }
+
+    /// `inst_list` not in its memo yet.
+    #[inline(never)]
+    fn inst_list_new(&mut self, ll: LevelList, ls: Ls) -> LevelList {
         let node = self.a.ls(ls);
         let ps: Vec<NameId> = self.st.name_list(node.params).to_vec();
         let lv: Vec<LevelId> = self.st.list(node.levels).to_vec();
@@ -600,6 +614,12 @@ impl<'e> Nbe<'e> {
         if self.a.env_len(env) <= n {
             return env;
         }
+        self.trim_long(env, n)
+    }
+
+    /// `trim` of an environment longer than `n`.
+    #[inline(never)]
+    fn trim_long(&mut self, env: val::Env, n: u32) -> val::Env {
         if let Some(&e) = self.trim_cache.get(&(env, n)) {
             return e;
         }
