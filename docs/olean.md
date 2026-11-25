@@ -122,7 +122,9 @@ the default for `check`; `src/reader/lazy.rs`):
   their fixed text and reads their numbers, and stops at any line it does
   not take, which the scanner then reads.
 - On one thread (`--threads 1`) the scanner hands each line straight to
-  the reader's state, declarations included. On several, each thread
+  the reader's state, declarations included. The file is memory-mapped
+  and read 16 MiB of whole lines at a time; the pages of each step are
+  dropped after it, so the map does not add to peak memory. On several, each thread
   parses chunks of whole lines, and their batches are applied in file
   order on one thread.
 - The records since the last declaration line are added in two passes:

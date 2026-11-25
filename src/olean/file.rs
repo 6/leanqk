@@ -1,8 +1,9 @@
-//! Opening an `.olean` file: the memory map and the fixed header.
+//! Opening an `.olean` file: the memory map and the fixed header; and the
+//! memory map of an export file, which the reader reads through.
 //!
 //! The layout is documented in `docs/olean-format.md`. This is the only
-//! module of the crate with `unsafe` code: the memory map itself. Everything
-//! read from the map goes through bounds-checked slices.
+//! module of the crate with `unsafe` code: the memory maps themselves.
+//! Everything read from a map goes through bounds-checked slices.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -11,6 +12,48 @@ use memmap2::Mmap;
 
 use super::{Fail, OleanError};
 use crate::reader::ErrorClass;
+
+/// A read-only map of an export file, read from start to end once; the
+/// pages behind the read go back with [`Mapped::release`].
+pub(crate) struct Mapped(Mmap);
+
+impl Mapped {
+    /// Map `f`, or `None` if it cannot be mapped (the reader then reads it
+    /// with `read`).
+    #[allow(unsafe_code)]
+    pub(crate) fn new(f: &File) -> Option<Mapped> {
+        // SAFETY: the map is read-only and private, and no reference into
+        // it outlives the `Mapped`. The reader asks (like every reader of
+        // a file) that nobody changes the export while it reads it; if
+        // another program truncates it anyway, reads past the new end
+        // fault (SIGBUS) rather than return bytes.
+        let m = unsafe { Mmap::map(f) }.ok()?;
+        let _ = m.advise(memmap2::Advice::Sequential);
+        Some(Mapped(m))
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Drop the pages of bytes `from..to` from this process's memory (they
+    /// stay in the page cache, and read back the same bytes if they are
+    /// read again), so that the bytes already read do not count in the
+    /// process's memory.
+    #[allow(unsafe_code)]
+    pub(crate) fn release(&self, from: usize, to: usize) {
+        if from < to && to <= self.0.len() {
+            // SAFETY: the map is private, read-only and backed by a file
+            // nobody changes (see `new`): after `MADV_DONTNEED` its pages
+            // read back the same bytes from the file, so no reference into
+            // the map sees different contents.
+            let _ = unsafe {
+                self.0
+                    .unchecked_advise_range(memmap2::UncheckedAdvice::DontNeed, from, to - from)
+            };
+        }
+    }
+}
 
 /// The Lean release whose object layout this reader knows.
 pub const LEAN_VERSION: &str = "4.36.0";
