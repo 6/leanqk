@@ -17,6 +17,7 @@ pub mod ext;
 mod fingerprint;
 mod fingerprint_table;
 pub mod inductive;
+pub mod nbe;
 pub mod pp;
 mod quot;
 pub mod store;
@@ -33,6 +34,7 @@ use crate::name::NameId;
 
 use ext::Ext;
 use inductive::{IndDecl, IndType, RecNaming, alpha_eq};
+use nbe::Nbe;
 use store::{LOCAL, Store};
 use tc::{KErr, Mode, R, Tc, err};
 
@@ -62,6 +64,9 @@ pub struct Report {
     pub notes: Vec<String>,
 }
 
+/// Blocks a worker takes at a time.
+const CHUNK: usize = 32;
+
 /// Stack for each checker thread: the checker recurses on terms.
 const STACK_BYTES: usize = 1 << 30;
 
@@ -71,10 +76,13 @@ pub fn check_env(env: &Env) -> Result<Report, Failure> {
     check_env_jobs(env, default_jobs())
 }
 
-/// While the process holds more than this, a thread starts a new block
-/// only if no other is checking one (`NITROLEAN_MEM_BUDGET_MIB`; default
-/// 1 GiB). Some blocks take gigabytes (huge literals, long computations);
+/// While the process holds more than this beyond what it held when
+/// checking started (the environment), a thread starts a new block only if
+/// no other is checking one (`NITROLEAN_MEM_BUDGET_MIB`; default 1 GiB). Some blocks take gigabytes (huge literals, long computations);
 /// this keeps several of them from running at once.
+/// How many blocks a thread starts between looks at the process's size.
+const POLL_EVERY: u32 = 16;
+
 fn mem_budget() -> u64 {
     std::env::var("NITROLEAN_MEM_BUDGET_MIB")
         .ok()
@@ -130,7 +138,7 @@ pub fn check_env_jobs(env: &Env, jobs: usize) -> Result<Report, Failure> {
         failures: Mutex::new(Vec::new()),
         times,
         busy: AtomicUsize::new(0),
-        budget: mem_budget(),
+        budget: crate::stats::rss_bytes().unwrap_or(0) + mem_budget(),
     };
     let jobs = jobs.clamp(1, env.blocks.len().max(1));
     std::thread::scope(|s| {
@@ -182,9 +190,13 @@ struct Shared<'e> {
 impl Shared<'_> {
     /// Wait until this thread may start a block: the process is under the
     /// memory budget, or no other thread is busy. Then count it busy.
-    fn enter(&self, jobs: usize) {
+    fn enter(&self, jobs: usize, polls: &mut u32) {
         let over = || crate::stats::rss_bytes().is_some_and(|b| b > self.budget);
-        if jobs > 1 && over() {
+        // Reading the process's size costs a system call: look every few
+        // blocks, and at every block while over.
+        *polls = polls.wrapping_add(1);
+        if jobs > 1 && polls.is_multiple_of(POLL_EVERY) && over() {
+            *polls = POLL_EVERY - 1;
             let mut waited = 0u64;
             loop {
                 // Alone: go on whatever the memory.
@@ -205,18 +217,27 @@ impl Shared<'_> {
 fn worker(sh: &Shared<'_>, jobs: usize) {
     let env = sh.env;
     let mut tc = Tc::new(Store::new(env), sh.ext, 0);
+    let mut nb = Nbe::new(Store::new(env), sh.ext);
+    let mut i = 0;
+    let mut end = 0;
+    let mut polls = 0;
     loop {
-        let i = sh.next.fetch_add(1, SeqCst);
+        // Runs of consecutive blocks, so that one worker's caches see
+        // neighbouring declarations.
+        if i == end {
+            i = sh.next.fetch_add(CHUNK, SeqCst);
+            end = (i + CHUNK).min(env.blocks.len());
+        }
         // Blocks after a failure need not be checked.
         if i >= env.blocks.len() || i > sh.first_fail.load(SeqCst) {
             return;
         }
         let b = &env.blocks[i];
-        sh.enter(jobs);
+        sh.enter(jobs, &mut polls);
         let decls = env.block_decls(b);
         let first = decls.first().map(|d| d.name);
         let t0 = std::time::Instant::now();
-        let res = catch_unwind(AssertUnwindSafe(|| check_block(&mut tc, b)));
+        let res = catch_unwind(AssertUnwindSafe(|| check_block(&mut tc, &mut nb, b)));
         sh.busy.fetch_sub(1, SeqCst);
         if let (Some(w), Some(n)) = (sh.times.as_ref(), first) {
             use std::io::Write;
@@ -237,6 +258,7 @@ fn worker(sh: &Shared<'_>, jobs: usize) {
                     .unwrap_or_else(|| "internal error".into());
                 // Rebuild: the checker's state may be inconsistent.
                 tc = Tc::new(Store::new(env), sh.ext, 0);
+                nb = Nbe::new(Store::new(env), sh.ext);
                 Err((FailKind::Resource, msg))
             }
         };
@@ -251,6 +273,7 @@ fn worker(sh: &Shared<'_>, jobs: usize) {
                 .unwrap()
                 .push((i, Failure { kind, decl, msg }));
         }
+        i += 1;
     }
 }
 
@@ -265,7 +288,7 @@ fn skipped(d: &Decl) -> bool {
     }
 }
 
-fn check_block(tc: &mut Tc<'_>, b: &Block) -> R<()> {
+fn check_block(tc: &mut Tc<'_>, nb: &mut Nbe<'_>, b: &Block) -> R<()> {
     tc.reset(b.start);
     let env = tc.st.env;
     let decls = env.block_decls(b);
@@ -273,9 +296,32 @@ fn check_block(tc: &mut Tc<'_>, b: &Block) -> R<()> {
         return Ok(());
     }
     match b.kind {
+        BlockKind::Single if use_nbe(&decls[0]) => check_nbe(tc, nb, b, &decls[0]),
         BlockKind::Single => check_single(tc, &decls[0]),
         BlockKind::Inductive { types, ctors, .. } => {
             check_inductive_block(tc, decls, types as usize, ctors as usize)
+        }
+    }
+}
+
+/// Check `d` with the evaluating checker, keeping what it knows from earlier
+/// declarations. A failure, or running out of room, is decided again from
+/// nothing, so neither the verdict nor the message depends on which
+/// declarations this worker checked before. Out of room from nothing, the
+/// substituting checker decides.
+fn check_nbe(tc: &mut Tc<'_>, nb: &mut Nbe<'_>, b: &Block, d: &Decl) -> R<()> {
+    nb.begin(b.start);
+    loop {
+        let r = catch_unwind(AssertUnwindSafe(|| check_single_nbe(tc, nb, d)));
+        match r {
+            Ok(Ok(())) => return Ok(()),
+            Ok(Err(_)) | Err(_) if !nb.is_fresh() => nb.reset(b.start),
+            Ok(Err(e)) => return Err(e),
+            Err(p) if p.is::<nbe::OutOfRoom>() => {
+                nb.reset(b.start);
+                return check_single(tc, d);
+            }
+            Err(p) => std::panic::resume_unwind(p),
         }
     }
 }
@@ -321,6 +367,36 @@ fn check_value(tc: &mut Tc<'_>, d: &Decl, value: crate::expr::ExprId) -> R<()> {
         ));
     }
     Ok(())
+}
+
+/// Whether the evaluating checker takes `d`: safe axioms, definitions,
+/// theorems and opaque constants.
+fn use_nbe(d: &Decl) -> bool {
+    match d.kind {
+        DeclKind::Axiom { is_unsafe } | DeclKind::Opaque { is_unsafe, .. } => !is_unsafe,
+        DeclKind::Definition { safety, .. } => safety == Safety::Safe,
+        DeclKind::Theorem { .. } => true,
+        _ => false,
+    }
+}
+
+fn check_single_nbe(tc: &mut Tc<'_>, nb: &mut Nbe<'_>, d: &Decl) -> R<()> {
+    check_dup_lparams(tc, d)?;
+    nb.lparams = tc.st.lparams(d).to_vec();
+    nb.check_type(d.ty)?;
+    match d.kind {
+        DeclKind::Axiom { .. } => Ok(()),
+        DeclKind::Definition { value, .. } | DeclKind::Opaque { value, .. } => {
+            nb.check_value(value, d.ty)
+        }
+        DeclKind::Theorem { value, .. } => {
+            if !nb.check_is_prop(d.ty)? {
+                return err(format!("theorem type is not Prop: {}", tc.pp(d.ty)));
+            }
+            nb.check_value(value, d.ty)
+        }
+        _ => unreachable!(),
+    }
 }
 
 fn check_single(tc: &mut Tc<'_>, d: &Decl) -> R<()> {

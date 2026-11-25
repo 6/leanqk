@@ -1,0 +1,372 @@
+//! Evaluation of terms to values, application and projection.
+
+use crate::env::DeclKind;
+use crate::expr::{ExprId, ExprNode};
+use crate::level::LevelList;
+use crate::name::NameId;
+
+use super::val::{Elim, Env, Ls, Sp, V, Val};
+use super::{BOTTOM, Nbe};
+
+/// How many first-order applications inside one another an argument is
+/// evaluated through before the rest is left as thunks (see `thunk`).
+const EAGER_DEPTH: u32 = 16;
+
+impl Nbe<'_> {
+    /// The value of `e` with its loose bound variables given by `env` and
+    /// its universe parameters substituted by `ls`. The result is a head
+    /// form (never a thunk): β-redexes at the head are reduced, constants
+    /// are not unfolded.
+    pub fn eval(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        let d = self.st.data(e);
+        let env = self.trim(env, d.loose_bvar_range());
+        let ls = if d.has_level_param() { ls } else { Ls::ID };
+        match self.st.node(e) {
+            ExprNode::BVar(i) => match self.a.lookup(env, i) {
+                Some(v) => self.force(v),
+                None => self.bottom(Sp::NIL),
+            },
+            ExprNode::Sort(l) => {
+                let l = self.inst_level(l, ls);
+                self.a.mk(Val::Sort(l))
+            }
+            ExprNode::Const(n, lv) => {
+                let lv = self.inst_list(lv, ls);
+                self.a.mk(Val::Const(n, lv, Sp::NIL))
+            }
+            ExprNode::App(..) => {
+                let base = self.terms.len();
+                let mut f = e;
+                while let ExprNode::App(g, a) = self.st.node(f) {
+                    self.terms.push(a);
+                    f = g;
+                }
+                let h = self.eval(f, env, ls);
+                let vbase = self.vargs.len();
+                for k in (base..self.terms.len()).rev() {
+                    let a = self.terms[k];
+                    let av = self.thunk(a, env, ls);
+                    self.vargs.push(av);
+                }
+                self.terms.truncate(base);
+                let r = self.apply_n(h, vbase);
+                self.vargs.truncate(vbase);
+                r
+            }
+            ExprNode::Lam(..) => self.a.mk(Val::Lam(e, env, ls)),
+            ExprNode::Pi(..) => self.a.mk(Val::Pi(e, env, ls)),
+            ExprNode::Let(h, b) => {
+                let lb = self.st.let_binder(h);
+                let v = self.thunk(lb.value, env, ls);
+                let env2 = self.a.cons(env, v);
+                self.eval(b, env2, ls)
+            }
+            ExprNode::NatSmall(lo, hi) => self.a.mk(Val::Nat(lo, hi)),
+            ExprNode::NatBig(b) => {
+                let n = self.st.big(b).clone();
+                self.nat(n)
+            }
+            ExprNode::Str(s) => self.a.mk(Val::Str(s)),
+            ExprNode::Proj(s, i, x) => {
+                let xv = self.eval(x, env, ls);
+                self.proj(xv, s, i)
+            }
+            ExprNode::FVar(k) => self.a.mk(Val::FVar(k, Sp::NIL)),
+        }
+    }
+
+    /// `e` in `env`, unevaluated unless that is as cheap as a thunk.
+    pub fn thunk(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        match self.st.node(e) {
+            ExprNode::BVar(i) => match self.a.lookup(env, i) {
+                Some(v) => v,
+                None => self.bottom(Sp::NIL),
+            },
+            ExprNode::Sort(_)
+            | ExprNode::Const(..)
+            | ExprNode::Lam(..)
+            | ExprNode::Pi(..)
+            | ExprNode::NatSmall(..)
+            | ExprNode::NatBig(_)
+            | ExprNode::Str(_)
+            | ExprNode::FVar(_) => self.eval(e, env, ls),
+            // A first-order application evaluates to a neutral without
+            // reducing anything: build it now, so that the same term reached
+            // in different environments is the same value.
+            _ => {
+                let d = self.st.data(e);
+                let env = self.trim(env, d.loose_bvar_range());
+                let ls = if d.has_level_param() { ls } else { Ls::ID };
+                let t = self.a.mk(Val::Thunk(e, env, ls));
+                let f = self.a.r(t).forced;
+                if f != super::val::NONE {
+                    return V(f);
+                }
+                if self.eager_depth < EAGER_DEPTH
+                    && matches!(self.st.node(e), ExprNode::App(..))
+                    && self.neutral_head(e, env)
+                {
+                    // Memoized through the thunk: terms are DAGs. Only so
+                    // deep, so that a long first-order term rebuilt in many
+                    // environments costs its top, not all of it.
+                    self.eager_depth += 1;
+                    let v = self.force(t);
+                    self.eager_depth -= 1;
+                    return v;
+                }
+                t
+            }
+        }
+    }
+
+    /// Whether the head of the application `e` is a constant or a bound
+    /// variable whose (already known) value is a neutral, so that
+    /// evaluating `e` reduces nothing.
+    fn neutral_head(&self, e: ExprId, env: Env) -> bool {
+        let mut f = e;
+        while let ExprNode::App(g, _) = self.st.node(f) {
+            f = g;
+        }
+        match self.st.node(f) {
+            ExprNode::Const(..) | ExprNode::FVar(_) => true,
+            ExprNode::BVar(i) => match self.a.lookup(env, i) {
+                Some(v) => {
+                    let f = self.a.r(v).forced;
+                    let v = if f != super::val::NONE { V(f) } else { v };
+                    matches!(self.a.get(v), Val::Const(..) | Val::FVar(..))
+                }
+                None => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// The head form of `v`.
+    #[inline]
+    pub fn force(&mut self, v: V) -> V {
+        match self.a.get(v) {
+            Val::Thunk(e, env, ls) => {
+                let f = self.a.r(v).forced;
+                if f != super::val::NONE {
+                    return V(f);
+                }
+                let r = self.eval(e, env, ls);
+                self.a.rm(v).forced = r.0;
+                r
+            }
+            _ => v,
+        }
+    }
+
+    pub fn bottom(&mut self, sp: Sp) -> V {
+        self.a.mk(Val::FVar(BOTTOM, sp))
+    }
+
+    /// `f a`.
+    pub fn apply(&mut self, f: V, a: V) -> V {
+        let f = self.force(f);
+        match self.a.get(f) {
+            Val::Lam(t, env, ls) => {
+                let ExprNode::Lam(_, _, _, body) = self.st.node(t) else {
+                    unreachable!()
+                };
+                let env2 = self.a.cons(env, a);
+                self.eval(body, env2, ls)
+            }
+            Val::Const(n, l, sp) => {
+                let sp = self.a.snoc(sp, Elim::Arg(a));
+                self.a.mk(Val::Const(n, l, sp))
+            }
+            Val::FVar(k, sp) => {
+                let sp = self.a.snoc(sp, Elim::Arg(a));
+                self.a.mk(Val::FVar(k, sp))
+            }
+            _ => {
+                let sp = self.a.snoc(Sp::NIL, Elim::Arg(a));
+                self.bottom(sp)
+            }
+        }
+    }
+
+    pub fn apply_all(&mut self, f: V, args: &[V]) -> V {
+        let base = self.vargs.len();
+        self.vargs.extend_from_slice(args);
+        let r = self.apply_n(f, base);
+        self.vargs.truncate(base);
+        r
+    }
+
+    /// `f` applied to `self.vargs[base..]`, which it leaves in place: the
+    /// binders of a closure are entered together and a neutral gets the
+    /// whole spine, so no partial application is built.
+    pub fn apply_n(&mut self, mut f: V, base: usize) -> V {
+        let end = self.vargs.len();
+        let mut i = base;
+        while i < end {
+            f = self.force(f);
+            match self.a.get(f) {
+                Val::Lam(t, mut env, ls) => {
+                    let mut body = t;
+                    while i < end
+                        && let ExprNode::Lam(_, _, _, b) = self.st.node(body)
+                    {
+                        env = self.a.cons(env, self.vargs[i]);
+                        body = b;
+                        i += 1;
+                    }
+                    f = self.eval(body, env, ls);
+                }
+                Val::Const(n, l, mut sp) => {
+                    while i < end {
+                        sp = self.a.snoc(sp, Elim::Arg(self.vargs[i]));
+                        i += 1;
+                    }
+                    return self.a.mk(Val::Const(n, l, sp));
+                }
+                Val::FVar(k, mut sp) => {
+                    while i < end {
+                        sp = self.a.snoc(sp, Elim::Arg(self.vargs[i]));
+                        i += 1;
+                    }
+                    return self.a.mk(Val::FVar(k, sp));
+                }
+                _ => {
+                    let mut sp = Sp::NIL;
+                    while i < end {
+                        sp = self.a.snoc(sp, Elim::Arg(self.vargs[i]));
+                        i += 1;
+                    }
+                    return self.bottom(sp);
+                }
+            }
+        }
+        f
+    }
+
+    pub fn apply_elim(&mut self, f: V, e: Elim) -> V {
+        match e {
+            Elim::Arg(a) => self.apply(f, a),
+            Elim::Proj(s, i) => self.proj(f, s, i),
+        }
+    }
+
+    pub fn apply_elims(&mut self, mut f: V, es: &[Elim]) -> V {
+        for &e in es {
+            f = self.apply_elim(f, e);
+        }
+        f
+    }
+
+    /// Apply the eliminations of `sp` to `f`.
+    pub fn apply_spine(&mut self, f: V, sp: Sp) -> V {
+        if sp == Sp::NIL {
+            return f;
+        }
+        let mut es = self.take_elims();
+        self.a.elims(sp, &mut es);
+        let base = self.vargs.len();
+        let mut f = f;
+        for &e in &es {
+            match e {
+                Elim::Arg(a) => self.vargs.push(a),
+                Elim::Proj(s, i) => {
+                    f = self.apply_n(f, base);
+                    self.vargs.truncate(base);
+                    f = self.proj(f, s, i);
+                }
+            }
+        }
+        let r = self.apply_n(f, base);
+        self.vargs.truncate(base);
+        self.put_elims(es);
+        r
+    }
+
+    /// The field `i` of the constructor application `c`, if it is one of
+    /// the structure `s` (Lean's `reduce_proj_core` after `whnf`).
+    pub fn ctor_field(&mut self, c: V, s: NameId, i: u32) -> Option<V> {
+        let Val::Const(mk, _, sp) = self.a.get(c) else {
+            return None;
+        };
+        let d = self.find(mk)?;
+        let DeclKind::Constructor {
+            induct, num_params, ..
+        } = d.kind
+        else {
+            return None;
+        };
+        if induct != s {
+            return None;
+        }
+        let k = (num_params + i) as usize;
+        if k >= self.a.sp_len(sp) as usize {
+            return None;
+        }
+        let mut args = Vec::new();
+        if !self.a.args(sp, &mut args) {
+            return None;
+        }
+        args.get(k).copied()
+    }
+
+    /// The projection `v.i` of the structure `s`: the field if `v` is a
+    /// constructor application, else a neutral.
+    pub fn proj(&mut self, v: V, s: NameId, i: u32) -> V {
+        let v = self.force(v);
+        match self.a.get(v) {
+            Val::Const(..) => {
+                if let Some(f) = self.ctor_field(v, s, i) {
+                    return self.force(f);
+                }
+                let Val::Const(n, l, sp) = self.a.get(v) else {
+                    unreachable!()
+                };
+                let sp = self.a.snoc(sp, Elim::Proj(s, i));
+                self.a.mk(Val::Const(n, l, sp))
+            }
+            Val::FVar(k, sp) => {
+                let sp = self.a.snoc(sp, Elim::Proj(s, i));
+                self.a.mk(Val::FVar(k, sp))
+            }
+            Val::Str(_) => match self.string_lit_to_constructor(v) {
+                Ok(c) => self.proj(c, s, i),
+                Err(_) => {
+                    let sp = self.a.snoc(Sp::NIL, Elim::Proj(s, i));
+                    self.bottom(sp)
+                }
+            },
+            _ => {
+                let sp = self.a.snoc(Sp::NIL, Elim::Proj(s, i));
+                self.bottom(sp)
+            }
+        }
+    }
+
+    /// The value of constant `n` at levels `ls`.
+    pub fn cnst(&mut self, n: NameId, ls: LevelList) -> V {
+        self.a.mk(Val::Const(n, ls, Sp::NIL))
+    }
+
+    /// The type of constant `d` at levels `ls`.
+    pub fn const_type(&mut self, d: &crate::env::Decl, ls: LevelList) -> V {
+        if let Some(&t) = self.const_type.get(&(d.name, ls)) {
+            return t;
+        }
+        let s = self.decl_ls(d, ls);
+        let t = self.thunk(d.ty, Env::NIL, s);
+        let t = self.force(t);
+        self.const_type.insert((d.name, ls), t);
+        t
+    }
+
+    /// The value of the definition `d` at levels `ls`.
+    pub fn const_value(&mut self, d: &crate::env::Decl, value: ExprId, ls: LevelList) -> V {
+        if let Some(&t) = self.const_value.get(&(d.name, ls)) {
+            return t;
+        }
+        let s = self.decl_ls(d, ls);
+        let t = self.eval(value, Env::NIL, s);
+        self.const_value.insert((d.name, ls), t);
+        t
+    }
+}

@@ -8,12 +8,15 @@ it gives the same verdicts as the kernel's own reduction.
 
 ## Where it is used
 
-There is one hook, in `Tc::whnf` (`src/check/tc.rs`). After the cache lookup,
-`whnf(e)` of a term `e` with no free and no loose bound variables first asks
-the evaluator (`eval::whnf`). If the evaluator answers with a term `r`, `whnf`
-caches it and returns it. If not, `whnf` goes on exactly as before. Nothing
-else in the checker calls the evaluator. Definitional equality reaches it
-through `whnf`. For example, `decide P =?= true` reduces `decide P` with
+There are two hooks. In `Tc::whnf` (`src/check/tc.rs`), after the cache
+lookup, `whnf(e)` of a term `e` with no free and no loose bound variables first
+asks the evaluator (`eval::whnf`). If the evaluator answers with a term `r`,
+`whnf` caches it and returns it. If not, `whnf` goes on exactly as before. The
+evaluating checker's `whnf` (`src/check/nbe/whnf.rs`) does the same for a
+value with no free variables, once `whnf_core` leaves it at a definition to
+unfold: the value is read back to a term (`src/check/nbe/closed.rs`), and the
+evaluator's answer is evaluated back into a value. Nothing else in the checker
+calls the evaluator. Definitional equality reaches it through `whnf`. For example, `decide P =?= true` reduces `decide P` with
 `whnf`, as Lean's kernel does.
 
 `NITROLEAN_EVAL=0` turns the evaluator off. `nitrolean check --stats` prints how
