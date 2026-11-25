@@ -297,12 +297,40 @@ impl Exprs {
     /// Intern a node. Its children must already be interned here, and its
     /// levels in `levels`.
     pub fn intern(&mut self, node: ExprNode, levels: &Levels) -> Result<(ExprId, bool), ExprError> {
+        self.add(node, levels, false)
+    }
+
+    /// Add a node without hash-consing it: lookups do not see it until
+    /// [`Exprs::index`]. For a reader that knows its input lists each
+    /// term once (and checks that when indexing).
+    pub fn append(&mut self, node: ExprNode, levels: &Levels) -> Result<ExprId, ExprError> {
+        Ok(self.add(node, levels, true)?.0)
+    }
+
+    /// Index every node, on `threads` threads; if two are equal, a pair
+    /// of their ids (the later, the earlier).
+    pub fn index(&mut self, threads: usize) -> Result<(), (ExprId, ExprId)> {
+        self.arena
+            .index(threads)
+            .map_err(|(a, b)| (ExprId(a), ExprId(b)))
+    }
+
+    fn add(
+        &mut self,
+        node: ExprNode,
+        levels: &Levels,
+        unindexed: bool,
+    ) -> Result<(ExprId, bool), ExprError> {
         if let ExprNode::BVar(i) = node
             && i >= ExprData::MAX_RANGE
         {
             return Err(ExprError::BVarTooLarge(i as u64));
         }
-        let (id, fresh) = self.arena.intern(node)?;
+        let (id, fresh) = if unindexed {
+            (self.arena.push_unindexed(node)?, true)
+        } else {
+            self.arena.intern(node)?
+        };
         if fresh {
             let d = match node {
                 ExprNode::BVar(i) => ExprData::new(i + 1, false),
