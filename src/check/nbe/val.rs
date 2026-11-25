@@ -189,7 +189,14 @@ pub struct Arena {
     envtable: HashTable<(u32, u32)>,
     lss: Vec<LsNode>,
     lstable: HashTable<(u32, u32)>,
+    /// Recently made constants and sorts with no arguments, by a hash of
+    /// their name and levels (direct-mapped, in front of `vtable`): the
+    /// value of a constant is made at every occurrence.
+    heads: Vec<(u32, u32, V)>,
 }
+
+/// Slots of `Arena::heads`.
+const HEADS: usize = 1 << 12;
 
 impl Default for Arena {
     fn default() -> Self {
@@ -224,6 +231,7 @@ impl Arena {
                 levels: LevelList::EMPTY,
             }],
             lstable: HashTable::new(),
+            heads: vec![(NONE, NONE, V(NONE)); HEADS],
         }
     }
 
@@ -249,6 +257,7 @@ impl Arena {
         self.envtable.clear();
         self.lss.truncate(1);
         self.lstable.clear();
+        self.heads.fill((NONE, NONE, V(NONE)));
     }
 
     pub fn is_empty(&self) -> bool {
@@ -301,6 +310,30 @@ impl Arena {
     #[inline]
     pub fn clear_checked(&mut self, v: V) {
         self.vals[v.0 as usize].flags &= !CHECKED;
+    }
+
+    /// `mk(Val::Const(n, l, Sp::NIL))`.
+    #[inline]
+    pub fn cnst(&mut self, n: NameId, l: LevelList) -> V {
+        self.head(n.0, l.0, Val::Const(n, l, Sp::NIL))
+    }
+
+    /// `mk(Val::Sort(l))`.
+    #[inline]
+    pub fn sort(&mut self, l: LevelId) -> V {
+        self.head(NONE - 1, l.0, Val::Sort(l))
+    }
+
+    #[inline]
+    fn head(&mut self, a: u32, b: u32, val: Val) -> V {
+        let i = (hash2(a as u64, b as u64) >> 52) as usize & (HEADS - 1);
+        let (x, y, v) = self.heads[i];
+        if x == a && y == b {
+            return v;
+        }
+        let v = self.mk(val);
+        self.heads[i] = (a, b, v);
+        v
     }
 
     pub fn mk(&mut self, val: Val) -> V {

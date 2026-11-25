@@ -28,11 +28,11 @@ impl Nbe<'_> {
             },
             ExprNode::Sort(l) => {
                 let l = self.inst_level(l, ls);
-                self.a.mk(Val::Sort(l))
+                self.a.sort(l)
             }
             ExprNode::Const(n, lv) => {
                 let lv = self.inst_list(lv, ls);
-                self.a.mk(Val::Const(n, lv, Sp::NIL))
+                self.a.cnst(n, lv)
             }
             ExprNode::App(..) => {
                 self.ticks += 1;
