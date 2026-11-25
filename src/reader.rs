@@ -646,7 +646,12 @@ fn finish(
         let t = std::time::Instant::now();
         dup = match st.env.names.index(threads, &mut scratch) {
             Err((a, b)) => Some((a.0, b.0)),
-            Ok(()) => st.env.exprs.index(threads, &mut scratch).err().map(|(a, b)| (a.0, b.0)),
+            Ok(()) => st
+                .env
+                .exprs
+                .index(threads, &mut scratch)
+                .err()
+                .map(|(a, b)| (a.0, b.0)),
         };
         INDEX_NS.store(
             t.elapsed().as_nanos() as u64,

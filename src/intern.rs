@@ -687,3 +687,36 @@ pub const SHARDS: usize = 64;
 pub fn shard_of(h: u64) -> usize {
     (h >> 51) as usize & (SHARDS - 1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::name::{NameId, NameNode};
+
+    fn names(n: u64) -> Big<NameNode> {
+        let mut b = Big::new("names");
+        for i in 0..n {
+            b.push_unindexed(NameNode::Num(NameId(0), i)).expect("room");
+        }
+        b
+    }
+
+    /// Indexing on one thread (in hash order) and on several finds every
+    /// node, and the same duplicate.
+    #[test]
+    fn index_finds_all_and_duplicates() {
+        for threads in [1, 3] {
+            let mut b = names(300_000);
+            b.index(threads, &mut Vec::new()).expect("no duplicates");
+            for i in (0..300_000).step_by(7) {
+                assert_eq!(b.find(&NameNode::Num(NameId(0), i)), Some(i as u32));
+            }
+            assert_eq!(b.find(&NameNode::Num(NameId(1), 0)), None);
+            // A node listed twice, far apart.
+            let mut b = names(300_000);
+            b.push_unindexed(NameNode::Num(NameId(0), 12_345))
+                .expect("room");
+            assert_eq!(b.index(threads, &mut vec![7; 10]), Err((300_000, 12_345)));
+        }
+    }
+}
