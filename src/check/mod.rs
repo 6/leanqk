@@ -102,9 +102,9 @@ fn check_env_here(env: &Env) -> Result<Report, Failure> {
     }
     let ext = Ext::new(env);
     let mut tc = Tc::new(Store::new(env), &ext, 0);
-    // `LEANQK_DECL_TIMES=FILE`: write each block's first name and check
+    // `NITROLEAN_DECL_TIMES=FILE`: write each block's first name and check
     // time (seconds) to FILE, for benchmarks.
-    let mut times = std::env::var_os("LEANQK_DECL_TIMES")
+    let mut times = std::env::var_os("NITROLEAN_DECL_TIMES")
         .and_then(|p| std::fs::File::create(p).ok())
         .map(std::io::LineWriter::new);
     for b in &env.blocks {

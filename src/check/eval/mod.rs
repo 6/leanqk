@@ -104,20 +104,20 @@ static STEPS: AtomicU64 = AtomicU64::new(0);
 static BAILS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
 static NANOS: AtomicU64 = AtomicU64::new(0);
 
-/// Giving up on a stuck term; `LEANQK_EVAL_DEBUG=1` says where.
+/// Giving up on a stuck term; `NITROLEAN_EVAL_DEBUG=1` says where.
 #[cold]
 fn stuck(at: u32) -> Bail {
     static DEBUG: OnceLock<bool> = OnceLock::new();
-    if *DEBUG.get_or_init(|| std::env::var_os("LEANQK_EVAL_DEBUG").is_some()) {
+    if *DEBUG.get_or_init(|| std::env::var_os("NITROLEAN_EVAL_DEBUG").is_some()) {
         eprintln!("evaluator: stuck at eval/mod.rs:{at}");
     }
     Bail::Stuck
 }
 
-/// Whether the evaluator is on (`LEANQK_EVAL=0` turns it off, to compare).
+/// Whether the evaluator is on (`NITROLEAN_EVAL=0` turns it off, to compare).
 pub fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("LEANQK_EVAL").map_or(true, |v| v != "0"))
+    *ON.get_or_init(|| std::env::var("NITROLEAN_EVAL").map_or(true, |v| v != "0"))
 }
 
 /// One line about what the evaluator did, for `--stats`.
@@ -157,7 +157,7 @@ pub struct State {
     decide_lemmas: [Option<Option<ExprId>>; 2],
     /// Whether proofs keep their environment (see `thunk`).
     keep_proofs: bool,
-    /// `LEANQK_EVAL_PROFILE=1`: how often each constant was reached.
+    /// `NITROLEAN_EVAL_PROFILE=1`: how often each constant was reached.
     profile: Option<IdMap<ExprId, u64>>,
 }
 
@@ -192,7 +192,7 @@ pub fn whnf(tc: &mut Tc<'_>, e: ExprId) -> Option<ExprId> {
     let t0 = Instant::now();
     s.depth = 0;
     s.steps = 0;
-    if s.profile.is_none() && std::env::var_os("LEANQK_EVAL_PROFILE").is_some() {
+    if s.profile.is_none() && std::env::var_os("NITROLEAN_EVAL_PROFILE").is_some() {
         s.profile = Some(IdMap::default());
     }
     let mut r = run(tc, &mut s, e);
@@ -1052,7 +1052,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             _ => {}
         }
         let Val::Ctor { c, args: margs, .. } = &*mv else {
-            if std::env::var_os("LEANQK_EVAL_DEBUG").is_some() {
+            if std::env::var_os("NITROLEAN_EVAL_DEBUG").is_some() {
                 let mut rb = value::Readback::default();
                 let x = rb.value(self.tc, &mv);
                 eprintln!(

@@ -16,10 +16,10 @@ else in the checker calls the evaluator. Definitional equality reaches it
 through `whnf`. For example, `decide P =?= true` reduces `decide P` with
 `whnf`, as Lean's kernel does.
 
-`LEANQK_EVAL=0` turns the evaluator off. `leanqk check --stats` prints how
+`NITROLEAN_EVAL=0` turns the evaluator off. `nitrolean check --stats` prints how
 often it was called, how often it answered, how many steps it took and why it
-gave up. `LEANQK_EVAL_DEBUG=1` says where it got stuck and
-`LEANQK_EVAL_PROFILE=1` which constants it reached most.
+gave up. `NITROLEAN_EVAL_DEBUG=1` says where it got stuck and
+`NITROLEAN_EVAL_PROFILE=1` which constants it reached most.
 
 ## How it evaluates
 
@@ -130,7 +130,7 @@ structure, both arguments of a built-in operation, the quotient argument of
 terminate where `whnf` does not finish in practice, because shared thunks are
 never evaluated twice.
 
-**Structure eta.** For a recursor on a structure, leanqk's `whnf` expands
+**Structure eta.** For a recursor on a structure, nitrolean's `whnf` expands
 the major premise by eta before reducing it (a deliberate divergence, see
 `corpus/divergences.md`). The evaluator instead evaluates the major premise,
 as Lean v4.36.0's kernel does. If the major premise is stuck, the evaluator
