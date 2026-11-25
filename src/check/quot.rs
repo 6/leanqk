@@ -84,16 +84,20 @@ impl Tc<'_> {
 
     /// Check one of the quotient declarations.
     pub fn check_quot(&mut self, d: &Decl, kind: QuotKind) -> R<()> {
-        let Some(q) = self.ext.quot else {
-            return err("unexpected quotient declaration");
+        let q = self.ext.quot;
+        let (want_name, needs): (_, &[NameId]) = match (kind, q) {
+            (QuotKind::Type, _) => {
+                let Some(quot) = self.st.env.names.find_dotted("Quot") else {
+                    return err("unexpected quotient declaration");
+                };
+                (quot, &[])
+            }
+            (QuotKind::Ctor, Some(q)) => (q.mk, &[q.quot]),
+            (QuotKind::Lift, Some(q)) => (q.lift, &[q.quot]),
+            (QuotKind::Ind, Some(q)) => (q.ind, &[q.quot, q.mk]),
+            _ => return err("unexpected quotient declaration"),
         };
         let eq = self.check_eq_type()?;
-        let want_name = match kind {
-            QuotKind::Type => q.quot,
-            QuotKind::Ctor => q.mk,
-            QuotKind::Lift => q.lift,
-            QuotKind::Ind => q.ind,
-        };
         if d.name != want_name {
             return err(format!(
                 "quotient declaration '{}' must be named '{}'",
@@ -107,11 +111,6 @@ impl Tc<'_> {
             return err("quotient declaration with unexpected universe parameters");
         }
         // The declarations a quotient's type mentions come first.
-        let needs: &[NameId] = match kind {
-            QuotKind::Type => &[],
-            QuotKind::Ctor | QuotKind::Lift => &[q.quot],
-            QuotKind::Ind => &[q.quot, q.mk],
-        };
         for &n in needs {
             match self.find(n) {
                 Some(Decl {
@@ -144,13 +143,13 @@ impl Tc<'_> {
             QuotKind::Ctor => {
                 let r = self.local(rel, false);
                 let a = self.local(alpha, false);
-                let qc = self.st.cnst(q.quot, ul);
+                let qc = self.st.cnst(needs[0], ul);
                 let qr = self.st.apps(qc, &[alpha, r]);
                 self.mk_pi(&[alpha, r, a], qr)
             }
             QuotKind::Lift => {
                 let r = self.local(rel, true);
-                let qc = self.st.cnst(q.quot, ul);
+                let qc = self.st.cnst(needs[0], ul);
                 let qr = self.st.apps(qc, &[alpha, r]);
                 let v = self.st.param(lps[1]);
                 let vl = self.st.mk_list(&[v]);
@@ -173,12 +172,12 @@ impl Tc<'_> {
             }
             QuotKind::Ind => {
                 let r = self.local(rel, true);
-                let qc = self.st.cnst(q.quot, ul);
+                let qc = self.st.cnst(needs[0], ul);
                 let qr = self.st.apps(qc, &[alpha, r]);
                 let bty = self.arrow(qr, prop);
                 let beta = self.local(bty, true);
                 let a = self.local(alpha, false);
-                let mkc = self.st.cnst(q.mk, ul);
+                let mkc = self.st.cnst(needs[1], ul);
                 let mka = self.st.apps(mkc, &[alpha, r, a]);
                 let bmk = self.st.app(beta, mka);
                 let all = self.mk_pi(&[a], bmk);
