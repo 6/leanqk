@@ -57,6 +57,9 @@ impl Nbe<'_> {
         let Val::Const(c, l, sp) = self.a.get(v) else {
             unreachable!()
         };
+        if !self.a.sp_has_proj(sp) && !self.may_reduce_rec(c) {
+            return Ok(v);
+        }
         let mut es = self.take_elims();
         self.a.elims(sp, &mut es);
         let p = es
@@ -103,6 +106,22 @@ impl Nbe<'_> {
             c = self.whnf(x)?;
         }
         Ok(self.ctor_field(c, s, i))
+    }
+
+    /// Whether `c` is a recursor or a quotient's lift or induction.
+    fn may_reduce_rec(&self, c: NameId) -> bool {
+        if let Some(q) = self.ext.quot.as_ref()
+            && (c == q.lift || c == q.ind)
+        {
+            return true;
+        }
+        matches!(
+            self.find(c),
+            Some(Decl {
+                kind: DeclKind::Recursor { .. },
+                ..
+            })
+        )
     }
 
     fn reduce_recursor(

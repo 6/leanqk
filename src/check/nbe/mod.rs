@@ -108,6 +108,9 @@ pub struct Nbe<'e> {
     canon_fvar: IdMap<(V, V, u32), u32>,
     elims: Vec<Vec<val::Elim>>,
     terms: Vec<ExprId>,
+    /// Declarations found by name, a direct-mapped front for the
+    /// environment's table: (name, index), or `NONE` names.
+    found: Box<[std::cell::Cell<(u32, u32)>]>,
     vargs: Vec<V>,
     /// Nesting of eager argument evaluation (see `thunk`).
     eager_depth: u32,
@@ -150,6 +153,10 @@ pub struct Nbe<'e> {
     /// Lazy delta steps in this declaration.
     pub(crate) decl_steps: u32,
 }
+
+/// The log of the number of slots in the table of declarations found by
+/// name.
+const FOUND_BITS: u32 = 12;
 
 /// Empty `c`, dropping its storage if it is large: clearing a table costs
 /// its capacity, and one big declaration should not slow down every later
@@ -236,6 +243,9 @@ impl<'e> Nbe<'e> {
             canon_fvar: IdMap::default(),
             elims: Vec::new(),
             terms: Vec::new(),
+            found: (0..1 << FOUND_BITS)
+                .map(|_| std::cell::Cell::new((val::NONE, 0)))
+                .collect(),
             vargs: Vec::new(),
             eager_depth: 0,
             closed_eval: super::eval::enabled(),
@@ -399,7 +409,15 @@ impl<'e> Nbe<'e> {
     /// The declaration named `n`, if it is visible.
     pub fn find(&self, n: NameId) -> Option<Decl> {
         let env = self.st.env;
-        let &i = env.by_name.get(&n)?;
+        let slot = &self.found[(n.0.wrapping_mul(0x9e37_79b9) >> (32 - FOUND_BITS)) as usize];
+        let (k, i) = slot.get();
+        let i = if k == n.0 {
+            i
+        } else {
+            let &i = env.by_name.get(&n)?;
+            slot.set((n.0, i));
+            i
+        };
         (i < self.limit).then(|| env.decls[i as usize])
     }
 
@@ -585,16 +603,17 @@ impl<'e> Nbe<'e> {
         if let Some(&e) = self.trim_cache.get(&(env, n)) {
             return e;
         }
-        let mut vs = Vec::with_capacity(n as usize);
+        let base = self.vargs.len();
         let mut cur = env;
         for _ in 0..n {
-            vs.push(self.a.env_head(cur));
+            self.vargs.push(self.a.env_head(cur));
             cur = self.a.env_tail(cur);
         }
         let mut r = val::Env::NIL;
-        for &v in vs.iter().rev() {
-            r = self.a.cons(r, v);
+        for k in (base..self.vargs.len()).rev() {
+            r = self.a.cons(r, self.vargs[k]);
         }
+        self.vargs.truncate(base);
         self.trim_cache.insert((env, n), r);
         r
     }

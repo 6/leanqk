@@ -446,10 +446,33 @@ impl Nbe<'_> {
     }
 
     fn infer_app(&mut self, e: ExprId, env: Env, ls: Ls, infer_only: bool) -> R<V> {
-        let mut args = Vec::new();
-        let f = self.st.spine(e, &mut args);
+        // The arguments go on the `terms` stack, which calls below leave
+        // as they found it (or with more on top, after an error).
+        let base = self.terms.len();
+        let mut f = e;
+        while let ExprNode::App(g, a) = self.st.node(f) {
+            self.terms.push(a);
+            f = g;
+        }
+        let n = self.terms.len() - base;
+        self.terms[base..].reverse();
+        let r = self.infer_app_args(f, base, n, env, ls, infer_only);
+        self.terms.truncate(base);
+        r
+    }
+
+    fn infer_app_args(
+        &mut self,
+        f: ExprId,
+        base: usize,
+        n: usize,
+        env: Env,
+        ls: Ls,
+        infer_only: bool,
+    ) -> R<V> {
         let mut ft = self.infer_term(f, env, ls, infer_only)?;
-        for &a in &args {
+        for k in base..base + n {
+            let a = self.terms[k];
             ft = self.ensure_pi(ft)?;
             let av = self.thunk(a, env, ls);
             if !infer_only {
