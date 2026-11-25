@@ -12,7 +12,7 @@
 //! (checked by differential tests) is that when this returns an item, the
 //! general path yields the same one.
 
-use super::{Comp, Item, R, RawExpr, RawLevel};
+use super::{Comp, Fail, Item, R, RawExpr, RawLevel};
 use crate::env::{Hints, Safety};
 use crate::expr::BinderInfo;
 
@@ -48,6 +48,21 @@ pub(super) trait Sink {
     fn decl(&mut self, _d: &Decl, _us: &[u64]) -> Option<R<()>> {
         None
     }
+
+    /// Keep the failure of one of the above, for the caller of [`line`].
+    fn fail(&mut self, f: Fail);
+}
+
+/// Whether `r` is a success; if not, its failure goes to `sink`.
+#[inline(always)]
+fn ok<S: Sink>(sink: &mut S, r: R<()>) -> bool {
+    match r {
+        Ok(()) => true,
+        Err(f) => {
+            sink.fail(f);
+            false
+        }
+    }
 }
 
 /// Bytes of the window a line is scanned from: a record the scanner
@@ -62,6 +77,7 @@ const MASK: usize = 255;
 /// bounds check. A position past [`MASK`] would read the wrong bytes, so
 /// [`C::eol`] declines the line then (positions only grow); and it
 /// declines a line that would end past `len`, the bytes really there.
+#[derive(Clone, Copy)]
 struct C<'a> {
     /// The rest of the input.
     s: &'a [u8],
@@ -154,7 +170,9 @@ impl C<'_> {
             let c = self.at(8);
             if c.is_ascii_digit() {
                 if self.at(9).is_ascii_digit() {
-                    return self.nat_slow();
+                    let (v, n) = nat_slow(self.w, self.p)?;
+                    self.p += n;
+                    return Some(v);
                 }
                 self.p += 9;
                 return Some(d * 10 + (c - b'0') as u64);
@@ -162,26 +180,6 @@ impl C<'_> {
         }
         self.p += (n8 / 8) as usize;
         Some(d)
-    }
-
-    /// [`C::nat`] a digit at a time.
-    #[cold]
-    #[inline(never)]
-    fn nat_slow(&mut self) -> Option<u64> {
-        let mut v: u64 = 0;
-        let mut n = 0;
-        while self.at(n).is_ascii_digit() {
-            if n == 19 {
-                return None;
-            }
-            v = v * 10 + (self.at(n) - b'0') as u64;
-            n += 1;
-        }
-        if n == 0 || (n > 1 && self.at(0) == b'0') {
-            return None;
-        }
-        self.p += n;
-        Some(v)
     }
 
     /// The contents of a string without escapes or control characters
@@ -257,6 +255,7 @@ impl C<'_> {
 impl C<'_> {
     /// A list of numbers (the opening bracket is already read), pushed to
     /// `us`: the range they take there.
+    #[inline(always)]
     fn nats(&mut self, us: &mut Vec<u64>) -> Option<(usize, usize)> {
         let start = us.len();
         if !self.opt(b"]") {
@@ -276,7 +275,9 @@ impl C<'_> {
 
     /// The fields of a theorem or definition after `{"thm":` or
     /// `{"def":`, and the end of the line.
-    fn decl(&mut self, thm: bool, us: &mut Vec<u64>) -> Option<Decl> {
+    /// (This takes the cursor by value, so that the caller's stays in
+    /// registers; the position after the line is the second result.)
+    fn decl(mut self, thm: bool, us: &mut Vec<u64>) -> Option<(Decl, usize)> {
         us.clear();
         self.lit(b"{\"all\":[")?;
         let all = self.nats(us)?;
@@ -316,7 +317,7 @@ impl C<'_> {
         let value = self.nat()?;
         self.lit(b"}}")?;
         self.eol()?;
-        Some(Decl {
+        let d = Decl {
             thm,
             all,
             level_params,
@@ -325,15 +326,38 @@ impl C<'_> {
             value,
             hints,
             safety,
-        })
+        };
+        Some((d, self.p))
     }
+}
+
+/// [`C::nat`] a digit at a time, from `p` (at most [`MASK`]): the value
+/// and the number of digits.
+#[cold]
+#[inline(never)]
+fn nat_slow(w: &[u8; W], p: usize) -> Option<(u64, usize)> {
+    let w = &w[p.min(MASK)..];
+    let mut v: u64 = 0;
+    let mut n = 0;
+    while w[n].is_ascii_digit() {
+        if n == 19 {
+            return None;
+        }
+        v = v * 10 + (w[n] - b'0') as u64;
+        n += 1;
+    }
+    if n == 0 || (n > 1 && w[0] == b'0') {
+        return None;
+    }
+    Some((v, n))
 }
 
 /// Read the record at the start of `s` (a line, and maybe more input
 /// after it), and give it to `sink`. On success, the length of the line,
-/// newline included, and what the sink returned. `us` is scratch space.
+/// newline included, and whether the sink took it (if not, it was given
+/// the failure). `us` is scratch space.
 #[inline(always)]
-pub(super) fn line<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option<(usize, R<()>)> {
+pub(super) fn line<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option<(usize, bool)> {
     match s.first_chunk::<W>() {
         Some(w) => line_in(C { s, w, p: 0 }, us, sink),
         None => line_padded(s, us, sink),
@@ -343,14 +367,14 @@ pub(super) fn line<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option
 /// [`line`] near the end of the input, with the window padded.
 #[cold]
 #[inline(never)]
-fn line_padded<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option<(usize, R<()>)> {
+fn line_padded<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option<(usize, bool)> {
     let mut w = [0u8; W];
     w[..s.len()].copy_from_slice(s);
     line_in(C { s, w: &w, p: 0 }, us, sink)
 }
 
 #[inline(always)]
-fn line_in<S: Sink>(mut c: C<'_>, us: &mut Vec<u64>, sink: &mut S) -> Option<(usize, R<()>)> {
+fn line_in<S: Sink>(mut c: C<'_>, us: &mut Vec<u64>, sink: &mut S) -> Option<(usize, bool)> {
     let s = c.s;
     c.lit(b"{\"")?;
     let item = match c.at(0) {
@@ -363,7 +387,8 @@ fn line_in<S: Sink>(mut c: C<'_>, us: &mut Vec<u64>, sink: &mut S) -> Option<(us
             let id = c.nat()?;
             c.lit(b"}")?;
             c.eol()?;
-            return Some((c.p, sink.app(id, f, a)));
+            let r = sink.app(id, f, a);
+            return Some((c.p, ok(sink, r)));
         }
         b'f' => {
             c.lit(b"forallE\":{")?;
@@ -372,7 +397,8 @@ fn line_in<S: Sink>(mut c: C<'_>, us: &mut Vec<u64>, sink: &mut S) -> Option<(us
             let id = c.nat()?;
             c.lit(b"}")?;
             c.eol()?;
-            return Some((c.p, sink.binder(id, true, bi, name, ty, body)));
+            let r = sink.binder(id, true, bi, name, ty, body);
+            return Some((c.p, ok(sink, r)));
         }
         b'c' => {
             c.lit(b"const\":{\"name\":")?;
@@ -396,8 +422,10 @@ fn line_in<S: Sink>(mut c: C<'_>, us: &mut Vec<u64>, sink: &mut S) -> Option<(us
             } else {
                 c.lit(b"def\":")?;
             }
-            let d = c.decl(thm, us)?;
-            return sink.decl(&d, us).map(|r| (c.p, r));
+            let (d, p) = c.decl(thm, us)?;
+            c.p = p;
+            let r = sink.decl(&d, us)?;
+            return Some((c.p, ok(sink, r)));
         }
         b'b' => {
             c.lit(b"bvar\":")?;
@@ -420,7 +448,8 @@ fn line_in<S: Sink>(mut c: C<'_>, us: &mut Vec<u64>, sink: &mut S) -> Option<(us
                         let (bi, name, ty, body) = c.binder()?;
                         c.lit(b"}")?;
                         c.eol()?;
-                        return Some((c.p, sink.binder(id, false, bi, name, ty, body)));
+                        let r = sink.binder(id, false, bi, name, ty, body);
+                        return Some((c.p, ok(sink, r)));
                     }
                     b'l' => {
                         c.lit(b"letE\":{\"body\":")?;
@@ -538,5 +567,6 @@ fn line_in<S: Sink>(mut c: C<'_>, us: &mut Vec<u64>, sink: &mut S) -> Option<(us
         _ => return None,
     };
     c.eol()?;
-    Some((c.p, sink.item(item, s, us)))
+    let r = sink.item(item, s, us);
+    Some((c.p, ok(sink, r)))
 }
