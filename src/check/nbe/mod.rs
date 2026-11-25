@@ -413,7 +413,10 @@ impl<'e> Nbe<'e> {
             shrink(&mut self.lazy_values);
             self.case_shapes.forget_terms();
             // Local terms go: forget what was found about them.
-            self.bvar_use.retain(|e, _| !super::store::is_local(e.0));
+            {
+                let st = &self.st;
+                self.bvar_use.retain(|e, _| !st.is_local_expr(*e));
+            }
         }
         shrink(&mut self.bigs);
         shrink(&mut self.big_table);

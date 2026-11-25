@@ -48,3 +48,12 @@ codegen-units = 1
 inherits = "release"
 lto = false
 codegen-units = 16
+
+# The release build with debug assertions on: the arenas' unchecked reads
+# check their bounds again (see src/slab.rs). CI checks the corpus with it.
+[profile.release-da]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
+lto = false
+codegen-units = 16

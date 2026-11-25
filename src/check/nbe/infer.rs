@@ -357,7 +357,7 @@ impl Nbe<'_> {
             && !d.has_loose_bvars()
             && !d.has_fvar()
             && ls == Ls::ID
-            && !super::super::store::is_local(e.0);
+            && !self.st.is_local_expr(e);
         let ck = if closed {
             let k = (
                 e,

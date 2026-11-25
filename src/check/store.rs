@@ -2,7 +2,11 @@
 //! read-only and shared, plus a private overlay for the names, levels,
 //! expressions and declarations built while checking.
 //!
-//! Ids with the top bit set refer to the overlay. A node is looked up in
+//! Names, levels, lets and big literals of the overlay have ids with the
+//! top bit set. Expressions are different: the overlay's are in blocks of
+//! ids the environment's arena lends above its own (see `crate::slab`), so
+//! that a node or its data is read with one load, whoever made it
+//! ([`Store::is_local_expr`] tells the two apart). A node is looked up in
 //! the environment's arena before it is added to the overlay (only when
 //! all its children are environment ids: otherwise it cannot be there), so
 //! every term still has exactly one id and id equality stays structural
@@ -17,9 +21,10 @@ use num_bigint::BigUint;
 
 use crate::env::{Decl, Env, NameList, RecRule, RuleList};
 use crate::expr::{BigId, BinderInfo, ExprData, ExprId, ExprNode, LetBinder, LetId, big_hash};
-use crate::intern::Interner;
+use crate::intern::{Interner, Node};
 use crate::level::{LevelId, LevelList, LevelNode, list_hash};
 use crate::name::{NameId, NameNode};
+use crate::slab::{BLOCK, Block, Reader};
 use crate::strings::StrId;
 
 /// The bit that marks an overlay id.
@@ -44,6 +49,11 @@ impl NatUnfoldLimit {
         "resource limit: too much unary reduction of large Nat literals";
 }
 
+/// Raised (likewise) when the stores checking at once have used up the
+/// expression ids above the environment's: they share 2^31 ids.
+pub const EXPR_IDS_MSG: &str =
+    "nitrolean: resource limit: the declarations being checked built more than 2^31 terms in all";
+
 fn local_id(i: u32) -> u32 {
     assert!(i < LOCAL, "{OVERFLOW_MSG}");
     i | LOCAL
@@ -61,8 +71,14 @@ pub struct Store<'e> {
     list_ends: Vec<u32>,
     list_hp: Vec<bool>,
     list_table: HashTable<u32>,
-    exprs: Interner<ExprNode>,
-    edata: Vec<ExprData>,
+    /// Expression nodes and their data, the environment's and this
+    /// store's own alike: one array each (see `crate::slab`).
+    nodes: Reader<'e, ExprNode>,
+    edata: Reader<'e, ExprData>,
+    /// The environment's expressions are the ids below this; the store's
+    /// own are in its blocks, above.
+    env_exprs: u32,
+    exprs: LocalExprs<'e>,
     lets: Interner<LetBinder>,
     bigs: Vec<BigUint>,
     big_table: HashTable<u32>,
@@ -72,6 +88,28 @@ pub struct Store<'e> {
     pub(crate) memo: IdMap<(ExprId, u32), ExprId>,
     /// `univ::normalize`'s results (see `NORM_MEMO`).
     pub(crate) norm_memo: IdMap<LevelId, LevelId>,
+}
+
+/// The overlay's expressions: blocks of ids lent by the environment's
+/// arena, filled in order, and a table of the ones hash-consed.
+struct LocalExprs<'e> {
+    blocks: Vec<Block<'e, ExprNode, ExprData>>,
+    /// Slots used in the last block ([`BLOCK`] before the first block,
+    /// so that the next push takes one).
+    fill: u32,
+    count: usize,
+    table: HashTable<u32>,
+}
+
+impl Default for LocalExprs<'_> {
+    fn default() -> Self {
+        LocalExprs {
+            blocks: Vec::new(),
+            fill: BLOCK,
+            count: 0,
+            table: HashTable::new(),
+        }
+    }
 }
 
 impl<'e> Store<'e> {
@@ -93,8 +131,10 @@ impl<'e> Store<'e> {
             list_ends: Vec::new(),
             list_hp: Vec::new(),
             list_table: HashTable::new(),
-            exprs: Interner::new("too many expressions"),
-            edata: Vec::new(),
+            nodes: env.exprs.node_reader(),
+            edata: env.exprs.data_reader(),
+            env_exprs: env.exprs.len() as u32,
+            exprs: LocalExprs::default(),
             lets: Interner::new("too many let binders"),
             bigs: Vec::new(),
             big_table: HashTable::new(),
@@ -107,7 +147,15 @@ impl<'e> Store<'e> {
 
     /// Drop the overlay. Every overlay id becomes invalid.
     pub fn clear(&mut self) {
+        // The first block of expression ids is kept for the next
+        // declaration.
+        let mut blocks = std::mem::take(&mut self.exprs.blocks);
+        blocks.truncate(1);
         *self = self.fresh();
+        if !blocks.is_empty() {
+            self.exprs.fill = 0;
+        }
+        self.exprs.blocks = blocks;
     }
 
     pub(super) fn fresh(&self) -> Self {
@@ -134,7 +182,27 @@ impl<'e> Store<'e> {
 
     /// Number of overlay expressions.
     pub fn local_exprs(&self) -> usize {
-        self.exprs.len()
+        self.exprs.count
+    }
+
+    /// Whether `e` is one of the overlay's expressions (the other ids of
+    /// expressions are the environment's).
+    #[inline]
+    pub fn is_local_expr(&self, e: ExprId) -> bool {
+        e.0 >= self.env_exprs
+    }
+
+    /// Whether `e` can be read: an environment id, or one of the overlay's
+    /// (for debug assertions).
+    fn readable(&self, e: ExprId) -> bool {
+        let n = self.exprs.blocks.len();
+        e.0 < self.env_exprs
+            || self
+                .exprs
+                .blocks
+                .iter()
+                .enumerate()
+                .any(|(k, b)| b.contains(e.0) && (k + 1 < n || e.0 - b.first() < self.exprs.fill))
     }
 
     // ---- names ----
@@ -345,20 +413,22 @@ impl<'e> Store<'e> {
 
     #[inline]
     pub fn node(&self, e: ExprId) -> ExprNode {
-        if is_local(e.0) {
-            *self.exprs.get(e.0 & !LOCAL)
-        } else {
-            self.env.exprs.get(e)
-        }
+        debug_assert!(
+            self.readable(e),
+            "expression id {} is not this store's",
+            e.0
+        );
+        self.nodes.get(e.0)
     }
 
     #[inline]
     pub fn data(&self, e: ExprId) -> ExprData {
-        if is_local(e.0) {
-            self.edata[(e.0 & !LOCAL) as usize]
-        } else {
-            self.env.exprs.data(e)
-        }
+        debug_assert!(
+            self.readable(e),
+            "expression id {} is not this store's",
+            e.0
+        );
+        self.edata.get(e.0)
     }
 
     #[inline]
@@ -387,17 +457,18 @@ impl<'e> Store<'e> {
         }
     }
 
-    fn all_global(node: &ExprNode) -> bool {
+    fn all_global(&self, node: &ExprNode) -> bool {
         let g = |x: u32| !is_local(x);
+        let ge = |e: ExprId| e.0 < self.env_exprs;
         match *node {
             ExprNode::BVar(_) | ExprNode::NatSmall(..) | ExprNode::Str(_) => true,
             ExprNode::Sort(l) => g(l.0),
             ExprNode::Const(n, ls) => g(n.0) && g(ls.0),
-            ExprNode::App(f, a) => g(f.0) && g(a.0),
-            ExprNode::Lam(_, n, t, b) | ExprNode::Pi(_, n, t, b) => g(n.0) && g(t.0) && g(b.0),
-            ExprNode::Let(h, b) => g(h.0) && g(b.0),
+            ExprNode::App(f, a) => ge(f) && ge(a),
+            ExprNode::Lam(_, n, t, b) | ExprNode::Pi(_, n, t, b) => g(n.0) && ge(t) && ge(b),
+            ExprNode::Let(h, b) => g(h.0) && ge(b),
             ExprNode::NatBig(b) => g(b.0),
-            ExprNode::Proj(n, _, e) => g(n.0) && g(e.0),
+            ExprNode::Proj(n, _, e) => g(n.0) && ge(e),
             ExprNode::FVar(_) => false,
         }
     }
@@ -405,7 +476,7 @@ impl<'e> Store<'e> {
     /// The id of `node`, adding it to the overlay if it is new.
     #[inline]
     pub fn mk(&mut self, node: ExprNode) -> ExprId {
-        if Self::all_global(&node)
+        if self.all_global(&node)
             && let Some(e) = self.env.exprs.find(&node)
         {
             return e;
@@ -416,19 +487,47 @@ impl<'e> Store<'e> {
     /// `node` with an id of its own, not looked up or indexed (see
     /// [`crate::env::TermSink::expr_owned`]).
     pub fn mk_owned(&mut self, node: ExprNode) -> ExprId {
-        let i = self.exprs.push_unindexed(node).expect("expressions");
         let d = self.data_of(node);
-        self.edata.push(d);
-        ExprId(local_id(i))
+        self.push_local(node, d)
     }
 
     fn mk_local(&mut self, node: ExprNode) -> ExprId {
-        let (i, fresh) = self.exprs.intern(node).expect("expressions");
-        if fresh {
-            let d = self.data_of(node);
-            self.edata.push(d);
+        let h = node.hash();
+        let nodes = self.nodes;
+        if let Some(&id) = self.exprs.table.find(h, |&id| nodes.get(id).same(&node)) {
+            return ExprId(id);
         }
-        ExprId(local_id(i))
+        let d = self.data_of(node);
+        let e = self.push_local(node, d);
+        self.exprs
+            .table
+            .insert_unique(h, e.0, |&id| nodes.get(id).hash());
+        e
+    }
+
+    /// Add `node`, with data `d`, to the overlay's arrays (not its table).
+    #[inline]
+    fn push_local(&mut self, node: ExprNode, d: ExprData) -> ExprId {
+        if self.exprs.fill == BLOCK {
+            self.new_block();
+        }
+        let slot = self.exprs.fill;
+        let Some(b) = self.exprs.blocks.last_mut() else {
+            unreachable!("a block")
+        };
+        b.put(slot, node, d);
+        self.exprs.fill = slot + 1;
+        self.exprs.count += 1;
+        ExprId(b.first() + slot)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn new_block(&mut self) {
+        // Checked in every build: an id never wraps into another store's.
+        let b = self.env.exprs.take_block().expect(EXPR_IDS_MSG);
+        self.exprs.blocks.push(b);
+        self.exprs.fill = 0;
     }
 
     /// The data of a node whose children are known.
@@ -510,7 +609,7 @@ impl<'e> Store<'e> {
         let LetBinder {
             name, ty, value, ..
         } = b;
-        let h = if !is_local(name.0) && !is_local(ty.0) && !is_local(value.0) {
+        let h = if !is_local(name.0) && !self.is_local_expr(ty) && !self.is_local_expr(value) {
             self.env.exprs.find_let(&b)
         } else {
             None
@@ -708,5 +807,35 @@ impl crate::env::TermSink for Store<'_> {
 
     fn nat_big(&mut self, n: BigUint) -> ExprId {
         self.nat(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Running out of expression ids is a clear error, in every build.
+    #[test]
+    fn out_of_expression_ids() {
+        let env = Env::new();
+        let mut held = Vec::new();
+        while let Some(b) = env.exprs.take_block() {
+            held.push(b);
+        }
+        assert!(!held.is_empty());
+        let mut st = Store::new(&env);
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| st.bvar(0)))
+            .expect_err("no ids left");
+        let msg = err
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| err.downcast_ref::<&str>().copied());
+        assert_eq!(msg, Some(EXPR_IDS_MSG));
+        // Ids given back are lent again.
+        drop(held.pop());
+        let mut st = Store::new(&env);
+        let e = st.bvar(0);
+        assert!(st.is_local_expr(e));
+        assert_eq!(st.node(e), ExprNode::BVar(0));
     }
 }

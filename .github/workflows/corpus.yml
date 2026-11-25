@@ -93,6 +93,13 @@ jobs:
         continue-on-error: ${{ vars.CORPUS_REQUIRED != 'true' }}
         run: cargo xtask corpus --results corpus-results.tsv
 
+      # The same with debug assertions on: the arenas' unchecked reads
+      # check their bounds (see src/slab.rs).
+      - name: Run the corpus with debug assertions
+        run: |
+          cargo build --profile release-da --locked
+          cargo xtask corpus --nitrolean target/release-da/nitrolean -q --results corpus-results-da.tsv
+
       - name: Upload the results
         if: always()
         uses: actions/upload-artifact@v7
@@ -101,4 +108,5 @@ jobs:
           path: |
             corpus-parse.tsv
             corpus-results.tsv
+            corpus-results-da.tsv
           if-no-files-found: ignore

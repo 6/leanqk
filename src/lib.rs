@@ -32,5 +32,6 @@ pub mod level;
 pub mod name;
 pub mod olean;
 pub mod reader;
+mod slab;
 pub mod stats;
 pub mod strings;
