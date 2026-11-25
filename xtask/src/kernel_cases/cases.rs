@@ -2546,6 +2546,22 @@ fn eval_cases(v: &mut Cases) {
     );
     eval(
         v,
+        "eval-select",
+        "K.ev_select",
+        "accept",
+        "ite, dite and decide pick a branch: a function applied further, a value, a closed term",
+        &[],
+    );
+    eval(
+        v,
+        "eval-select-wrong",
+        "K.ev_select_wrong",
+        "reject",
+        "the same, off by one",
+        &[],
+    );
+    eval(
+        v,
         "eval-arr-vers",
         "K.ev_arr_vers",
         "accept",

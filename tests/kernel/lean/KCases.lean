@@ -184,6 +184,11 @@ theorem ev_arr_vers :
 theorem ev_arr_vers_wrong :
     (let a := ev_arr 10; let b := a.set! 2 7; let c := b.push 5; let d := a.set! 2 8
      a[2]! + b[2]! + c[10]! + d[2]! + c.size + a.size + b[2]! + a[2]!) = 57 := sorry
+def ev_sel (n : Nat) : Nat :=
+  (if n % 2 = 0 then (· + 1) else (· * 3)) n + (if _ : n < 5 then n + 100 else 7) +
+    (if decide (n = 3) then 1000 else 0) + (dite (n = 4) (fun _ => 20) (fun _ => 30))
+theorem ev_select : ((List.range 10).map ev_sel).foldl (· + ·) 0 = 1935 := sorry
+theorem ev_select_wrong : ((List.range 10).map ev_sel).foldl (· + ·) 0 = 1936 := sorry
 def ev_arr_hist : List (Array Nat) :=
   (List.range 20).foldl (fun vs i => match vs with
     | v :: _ => (if i % 3 == 0 then v.push i else v.set! (i % 7) (i + 100)) :: vs

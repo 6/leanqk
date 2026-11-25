@@ -410,6 +410,19 @@ million and the evaluator's time from 5.0 to 4.0 s. On lrat06 they go from
 81 to 52 million steps (4.8 to 3.9 s). On `cartan_A7` they go from 65 to 42
 million steps (3.8 to 3.1 s).
 
+A definition can also apply a definition of that shape (`C`) to exactly its
+arguments (`cases_compose`). `ite`, `dite` and `decide` do: each is
+`fun … h … => Decidable.casesOn h m₀ m₁`. When the major premise is a
+variable and each minor premise `C` selects is a variable `x_l` (applied to
+the fields), or `fun fields => t` with `t` closed or a variable `x_l`, the
+definition goes straight to `t` or `x_l` too. That is what unfolding it, then
+`C`, and reducing gives. `if c then a else b` at a decided `c` is then one
+step instead of four. The test `eval-select` picks branches of `ite`,
+`dite` and `decide`, one of them a function applied further. On lrat06
+the steps go from 51.5 to 43.6 million (3.45 to 3.10 s in the evaluator),
+on lrat05 from 11.0 to 9.5 million, on `cartan_A7` from 41.3 to 37.3
+million (2.82 to 2.65 s).
+
 ## Built-in operations of several Lean versions
 
 The fingerprint table (`src/check/fingerprint_table.rs`, written by
@@ -427,7 +440,7 @@ out of memory.
 
 ## Tests
 
-`xtask/src/kernel_cases/cases.rs` has 82 `eval*` cases. Each is a claim proved by
+`xtask/src/kernel_cases/cases.rs` has 84 `eval*` cases. Each is a claim proved by
 `Eq.refl`, so only reduction decides it, and nearly every one has a false
 twin. The 27 `eval434-*` cases are exported from Lean v4.34.0, where the
 `DecidableEq` fast paths apply. They cover:

@@ -99,6 +99,10 @@ enum Minor {
     /// `z_j t₁ … tₙ`: the `j`-th binder past the inductive hypotheses
     /// applied to closed terms.
     Extra(u32, Vec<ExprId>),
+    /// A closed term, whatever the fields (only in `cases_compose`).
+    Closed(ExprId),
+    /// Argument `l` itself, whatever the fields (only in `cases_compose`).
+    Var(usize),
 }
 
 /// What a constant (with its levels) does in the machine.
@@ -1465,6 +1469,11 @@ impl<'a, 'e> Machine<'a, 'e> {
                     let f = self.force(&rest[*j as usize])?;
                     (f, ts.iter().map(|&t| self.closed(t)).collect())
                 }
+                Minor::Closed(t) => {
+                    let t = self.closed(*t);
+                    (self.force(&t)?, Vec::new())
+                }
+                Minor::Var(l) => (self.force(&args[*l])?, Vec::new()),
             };
             a.extend(tail);
             return self.apply_n(f, a);
@@ -1497,8 +1506,10 @@ impl<'a, 'e> Machine<'a, 'e> {
         if !matches!(self.tc.st.node(h), ExprNode::Const(..)) {
             return None;
         }
-        let CInfo::Rec(r) = self.info(h) else {
-            return None;
+        let r = match self.info(h) {
+            CInfo::Rec(r) => r,
+            CInfo::Cases(ci, _) => return self.cases_compose(k, &a, &ci),
+            _ => return None,
         };
         if r.k || !r.single || a.len() != r.major_idx + 1 {
             return None;
@@ -1551,6 +1562,59 @@ impl<'a, 'e> Machine<'a, 'e> {
                 Minor::Extra((ne - 1 - b) as u32, ma)
             };
             rules.push((cn, nf as u32, ne as u32, minor));
+        }
+        Some(CasesInfo {
+            arity: k,
+            major,
+            rules,
+        })
+    }
+
+    /// `Some` if the body of `v = fun x₀ … xₖ₋₁ => C a₀ … aₙ` applies a
+    /// definition `C` of the shape of a `casesOn` (`ci`) to exactly its
+    /// arguments, the major premise is a variable `xⱼ`, and each minor
+    /// premise `C` selects is a variable `x_l` (applied to the fields), or
+    /// `fun y₁ … y_f => t` (`f` the fields) with `t` closed or a variable
+    /// `x_l`. Unfolding `v`, then `C`, then reducing gives that minor
+    /// premise applied to the fields, so `t` or `x_l`. `ite`, `dite` and
+    /// `decide` are of this shape (over `Decidable.casesOn`).
+    fn cases_compose(&mut self, k: usize, a: &[ExprId], ci: &CasesInfo) -> Option<CasesInfo> {
+        if a.len() != ci.arity {
+            return None;
+        }
+        let st = &self.tc.st;
+        let outer = |x: ExprId, under: usize| -> Option<usize> {
+            match st.node(x) {
+                ExprNode::BVar(j) if (j as usize) >= under && (j as usize) - under < k => {
+                    Some(k - 1 - (j as usize - under))
+                }
+                _ => None,
+            }
+        };
+        let major = outer(a[ci.major], 0)?;
+        let mut rules = Vec::with_capacity(ci.rules.len());
+        for (cn, nf, e, m) in &ci.rules {
+            let (Minor::Arg(l), 0) = (m, *e) else {
+                return None;
+            };
+            let x = a[*l];
+            let minor = if let Some(l) = outer(x, 0) {
+                Minor::Arg(l)
+            } else {
+                let mut b = x;
+                for _ in 0..*nf {
+                    let ExprNode::Lam(_, _, _, body) = st.node(b) else {
+                        return None;
+                    };
+                    b = body;
+                }
+                if !st.has_loose_bvars(b) {
+                    Minor::Closed(b)
+                } else {
+                    Minor::Var(outer(b, *nf as usize)?)
+                }
+            };
+            rules.push((*cn, *nf, 0, minor));
         }
         Some(CasesInfo {
             arity: k,
