@@ -233,6 +233,13 @@ impl State {
 /// back its proof `h`, as `isTrue` and `isFalse` are (`decided`).
 const DECIDED_INTRO: bool = true;
 
+/// Whether a proof's term is built when its thunk is made. Most proofs are
+/// never read back (decisions are answered without theirs), and building
+/// their terms by substitution cost more on Lean's own library than the
+/// evaluator saved; a proof read back after its environment is gone makes
+/// the run start again keeping proofs.
+const EAGER_PROOF_TERMS: bool = false;
+
 const MEMO_TRIAL: u32 = 256;
 const MEMO_RATIO: u32 = 32;
 
@@ -572,10 +579,14 @@ impl<'a, 'e> Machine<'a, 'e> {
         Thunk::delayed(e, env.clone())
     }
 
-    /// The proof's term, if the terms of its variables are known; else it
-    /// is erased.
+    /// The proof's term, if the terms of its variables are known and
+    /// `EAGER_PROOF_TERMS`; else it is erased (its term is built if it is
+    /// read back while its environment lives).
     #[inline(never)]
     fn proof_thunk(&mut self, e: ExprId, env: &Env) -> Th {
+        if !EAGER_PROOF_TERMS {
+            return Thunk::erased(e, env);
+        }
         match self.term_in(e, env, 0) {
             Some(r) => Thunk::closed(r),
             None => Thunk::erased(e, env),
