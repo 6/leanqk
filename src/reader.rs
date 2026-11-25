@@ -42,6 +42,7 @@ use crate::strings::Overflow;
 
 mod fast;
 mod lazy;
+mod scan;
 
 /// The format major version this reader understands.
 pub const FORMAT_MAJOR: &str = "3";
@@ -242,6 +243,9 @@ fn read_regular(
             produce_parallel(f, size, parsers, full, empty)
         });
     }
+    if threads == 1 {
+        return read_single(f, st);
+    }
     use std::io::{Seek, SeekFrom};
     let mut f = f.try_clone().map_err(|e| ReadError {
         line: 0,
@@ -389,6 +393,78 @@ impl Batch {
     fn text(&self, a: u32, b: u32) -> &str {
         &self.text[a as usize..b as usize]
     }
+
+    fn src(&self) -> Src<'_> {
+        Src {
+            text: self.text.as_bytes(),
+            us: &self.us,
+        }
+    }
+
+    /// Add an item read by [`scan::line`] from `line`, copying its text
+    /// into the batch.
+    fn push_scanned(&mut self, line: &[u8], item: Item) -> R<()> {
+        let mut copy = |a: u32, b: u32| -> R<(u32, u32)> {
+            match std::str::from_utf8(&line[a as usize..b as usize]) {
+                Ok(t) => self.push_text(t),
+                Err(_) => bad("internal error: scanned text is not UTF-8"),
+            }
+        };
+        let item = match item {
+            Item::Name {
+                id,
+                pre,
+                comp: Comp::Str(a, b),
+            } => {
+                let (a, b) = copy(a, b)?;
+                Item::Name {
+                    id,
+                    pre,
+                    comp: Comp::Str(a, b),
+                }
+            }
+            Item::Expr {
+                id,
+                node: RawExpr::Nat(a, b),
+            } => {
+                let (a, b) = copy(a, b)?;
+                Item::Expr {
+                    id,
+                    node: RawExpr::Nat(a, b),
+                }
+            }
+            Item::Expr {
+                id,
+                node: RawExpr::Str(a, b),
+            } => {
+                let (a, b) = copy(a, b)?;
+                Item::Expr {
+                    id,
+                    node: RawExpr::Str(a, b),
+                }
+            }
+            other => other,
+        };
+        self.items.push(item);
+        Ok(())
+    }
+}
+
+/// Where the text and level ranges of an item point: a batch's buffers,
+/// or (for [`scan::line`]) the input line and a level list.
+#[derive(Clone, Copy)]
+struct Src<'a> {
+    text: &'a [u8],
+    us: &'a [u64],
+}
+
+impl<'a> Src<'a> {
+    fn text(&self, a: u32, b: u32) -> R<&'a str> {
+        match std::str::from_utf8(&self.text[a as usize..b as usize]) {
+            Ok(t) => Ok(t),
+            Err(_) => bad("internal error: item text is not UTF-8"),
+        }
+    }
 }
 
 fn run<B: BufRead + Send>(st: State, r: B) -> Result<(Env, ReadStats), ReadError> {
@@ -396,32 +472,78 @@ fn run<B: BufRead + Send>(st: State, r: B) -> Result<(Env, ReadStats), ReadError
 }
 
 fn run_with(
-    mut st: State,
+    st: State,
     produce: impl FnOnce(SyncSender<Batch>, Receiver<Batch>) + Send,
 ) -> Result<(Env, ReadStats), ReadError> {
-    let res = run_inner(&mut st, produce);
+    finish(st, |st| {
+        let (full_tx, full_rx) = mpsc::sync_channel::<Batch>(4);
+        let (empty_tx, empty_rx) = mpsc::sync_channel::<Batch>(8);
+        std::thread::scope(|s| {
+            s.spawn(move || produce(full_tx, empty_rx));
+            st.consume(full_rx, empty_tx)
+        })
+    })
+}
+
+/// Run `read` on `st`, then complete the environment and the totals.
+fn finish(
+    mut st: State,
+    read: impl FnOnce(&mut State) -> Result<ReadStats, ReadError>,
+) -> Result<(Env, ReadStats), ReadError> {
+    let res = read(&mut st);
+    let id_map_bytes =
+        st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
     if let Some(b) = st.lazy.take() {
         st.env.lazy = b.finish();
     }
-    let stats = res?;
+    let mut stats = res?;
+    stats.shared_exprs = st.shared_exprs;
+    stats.id_map_bytes = id_map_bytes;
     Ok((st.env, stats))
 }
 
-fn run_inner(
-    st: &mut State,
-    produce: impl FnOnce(SyncSender<Batch>, Receiver<Batch>) + Send,
-) -> Result<ReadStats, ReadError> {
-    let (full_tx, full_rx) = mpsc::sync_channel::<Batch>(4);
-    let (empty_tx, empty_rx) = mpsc::sync_channel::<Batch>(8);
-    let res = std::thread::scope(|s| {
-        s.spawn(move || produce(full_tx, empty_rx));
-        st.consume(full_rx, empty_tx)
-    });
-    let mut stats = res?;
-    stats.shared_exprs = st.shared_exprs;
-    stats.id_map_bytes =
-        st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
-    Ok(stats)
+/// Read a regular file on this thread alone: blocks of whole lines are
+/// read into one buffer, and each line is scanned and applied at once.
+fn read_single(f: &File, st: State) -> Result<(Env, ReadStats), ReadError> {
+    use std::os::unix::fs::FileExt;
+    const BLOCK: usize = 1 << 20;
+    finish(st, |st| {
+        let mut lines = Lines::default();
+        let mut buf = vec![0u8; BLOCK];
+        // Bytes in `buf`, and the file offset after them.
+        let (mut have, mut off) = (0usize, 0u64);
+        loop {
+            if have == buf.len() {
+                // A line longer than the buffer.
+                buf.resize(buf.len() * 2, 0);
+            }
+            let n = loop {
+                match f.read_at(&mut buf[have..], off) {
+                    Ok(n) => break n,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) => {
+                        return Err(ReadError {
+                            line: lines.lines + 1,
+                            class: ErrorClass::Io,
+                            msg: format!("read error: {e}"),
+                        });
+                    }
+                }
+            };
+            have += n;
+            off += n as u64;
+            if n == 0 {
+                st.lines(&mut lines, &buf[..have])?;
+                return st.end_lines(lines);
+            }
+            // Apply the whole lines, and keep the start of the last one.
+            if let Some(p) = buf[..have].iter().rposition(|&b| b == b'\n') {
+                st.lines(&mut lines, &buf[..p + 1])?;
+                buf.copy_within(p + 1..have, 0);
+                have -= p + 1;
+            }
+        }
+    })
 }
 
 /// Time the interning stage waited for batches (for
@@ -560,6 +682,25 @@ fn parse_chunk(
     let mut lines = 0u64;
     let mut bytes = 0u64;
     while pos < buf.len() {
+        if seen_first {
+            let u = batch.us.len();
+            if let Some((item, n)) = scan::line(&buf[pos..], &mut batch.us) {
+                lines += 1;
+                bytes += n as u64;
+                if let Err(f) = batch.push_scanned(&buf[pos..], item) {
+                    batch.end = Some(Err(ReadError {
+                        line: lines,
+                        class: f.class,
+                        msg: f.msg,
+                    }));
+                    break;
+                }
+                batch.lines.push(lines);
+                pos += n;
+                continue;
+            }
+            batch.us.truncate(u);
+        }
         let next = match buf[pos..].iter().position(|&b| b == b'\n') {
             Some(p) => pos + p + 1,
             None => buf.len(),
@@ -637,6 +778,15 @@ fn produce<B: BufRead>(mut r: B, full: SyncSender<Batch>, empty: Receiver<Batch>
 
 /// Parse one line into at most one item.
 fn parse_line(tape: &mut Tape, buf: &[u8], batch: &mut Batch, seen_first: &mut bool) -> R<()> {
+    if *seen_first {
+        let u = batch.us.len();
+        if let Some((item, n)) = scan::line(buf, &mut batch.us)
+            && n == buf.len()
+        {
+            return batch.push_scanned(buf, item);
+        }
+        batch.us.truncate(u);
+    }
     let line = match std::str::from_utf8(buf) {
         Ok(s) => s,
         Err(e) => return bad(format!("invalid UTF-8 at column {}", e.valid_up_to() + 1)),
@@ -939,6 +1089,19 @@ struct State {
     append: bool,
 }
 
+/// The state of [`State::lines`] between blocks of input.
+#[derive(Default)]
+struct Lines {
+    tape: Tape,
+    /// For lines the scanner leaves to the other parsers.
+    batch: Batch,
+    us: Vec<u64>,
+    seen_first: bool,
+    seen_meta: bool,
+    lines: u64,
+    bytes: u64,
+}
+
 /// The single-constant declaration records.
 #[derive(Clone, Copy)]
 enum Single {
@@ -1105,6 +1268,81 @@ impl State {
         Ok(())
     }
 
+    /// Apply an item of `batch`: intern it, or read the record of a raw
+    /// line (the meta record first).
+    fn item(&mut self, tape: &mut Tape, batch: &Batch, item: Item, seen_meta: &mut bool) -> R<()> {
+        match item {
+            Item::Raw(a, b) => {
+                let line = batch.text(a, b);
+                parse_object(tape, line).and_then(|(doc, members)| {
+                    if *seen_meta {
+                        self.decl_record(doc, members)
+                    } else {
+                        *seen_meta = true;
+                        self.meta(doc, members)
+                    }
+                })
+            }
+            _ => self.apply(batch.src(), item),
+        }
+    }
+
+    /// Apply `data`, whole lines (the last one may lack its newline only
+    /// at the end of the input).
+    fn lines(&mut self, l: &mut Lines, data: &[u8]) -> Result<(), ReadError> {
+        let fail = |line: u64, f: Fail| ReadError {
+            line,
+            class: f.class,
+            msg: f.msg,
+        };
+        let mut pos = 0;
+        l.bytes += data.len() as u64;
+        while pos < data.len() {
+            l.lines += 1;
+            let rest = &data[pos..];
+            if l.seen_first {
+                l.us.clear();
+                if let Some((item, n)) = scan::line(rest, &mut l.us) {
+                    let src = Src {
+                        text: rest,
+                        us: &l.us,
+                    };
+                    self.apply(src, item).map_err(|f| fail(l.lines, f))?;
+                    pos += n;
+                    continue;
+                }
+            }
+            let n = match rest.iter().position(|&b| b == b'\n') {
+                Some(p) => p + 1,
+                None => rest.len(),
+            };
+            l.batch.clear();
+            parse_line(&mut l.tape, &rest[..n], &mut l.batch, &mut l.seen_first)
+                .map_err(|f| fail(l.lines, f))?;
+            for &item in &l.batch.items {
+                self.item(&mut l.tape, &l.batch, item, &mut l.seen_meta)
+                    .map_err(|f| fail(l.lines, f))?;
+            }
+            pos += n;
+        }
+        Ok(())
+    }
+
+    fn end_lines(&mut self, l: Lines) -> Result<ReadStats, ReadError> {
+        if !l.seen_meta {
+            return Err(ReadError {
+                line: 0,
+                class: ErrorClass::Malformed,
+                msg: "empty input: expected the meta record".into(),
+            });
+        }
+        Ok(ReadStats {
+            lines: l.lines,
+            bytes: l.bytes,
+            ..ReadStats::default()
+        })
+    }
+
     /// The interning stage.
     fn consume(
         &mut self,
@@ -1128,20 +1366,7 @@ impl State {
                 });
             };
             for (k, item) in batch.items.iter().enumerate() {
-                let res = match *item {
-                    Item::Raw(a, b) => {
-                        let line = batch.text(a, b);
-                        parse_object(&mut tape, line).and_then(|(doc, members)| {
-                            if seen_meta {
-                                self.decl_record(doc, members)
-                            } else {
-                                seen_meta = true;
-                                self.meta(doc, members)
-                            }
-                        })
-                    }
-                    _ => self.apply(&batch, *item),
-                };
+                let res = self.item(&mut tape, &batch, *item, &mut seen_meta);
                 if let Err(f) = res {
                     return Err(ReadError {
                         line: batch.lines[k],
@@ -1171,13 +1396,13 @@ impl State {
     }
 
     /// Resolve and intern a name, level or expression item.
-    fn apply(&mut self, batch: &Batch, item: Item) -> R<()> {
+    fn apply(&mut self, src: Src<'_>, item: Item) -> R<()> {
         match item {
             Item::Name { id, pre, comp } => {
                 let pre = self.name(pre)?;
                 let node = match comp {
                     Comp::Str(a, b) => {
-                        NameNode::Str(pre, self.env.names.strings.intern(batch.text(a, b))?)
+                        NameNode::Str(pre, self.env.names.strings.intern(src.text(a, b)?)?)
                     }
                     Comp::Num(n) => NameNode::Num(pre, n),
                 };
@@ -1194,12 +1419,12 @@ impl State {
                 let (l, _) = self.env.levels.intern(node)?;
                 self.bind(Table::Level, id, l.0)
             }
-            Item::Expr { id, node } => self.apply_expr(batch, id, node),
+            Item::Expr { id, node } => self.apply_expr(src, id, node),
             Item::Raw(..) => bad("internal error: unexpected raw line"),
         }
     }
 
-    fn apply_expr(&mut self, batch: &Batch, id: u64, node: RawExpr) -> R<()> {
+    fn apply_expr(&mut self, src: Src<'_>, id: u64, node: RawExpr) -> R<()> {
         if self.lazy.is_some() {
             // Compound records wait for their declaration (see `lazy`).
             let r = |m: &IdMap, x: u64| match m.get(x) {
@@ -1274,7 +1499,7 @@ impl State {
                 let mut buf = std::mem::take(&mut self.levels_buf);
                 buf.clear();
                 let mut res = Ok(());
-                for &u in &batch.us[a as usize..b as usize] {
+                for &u in &src.us[a as usize..b as usize] {
                     match self.level(u) {
                         Ok(l) => buf.push(l),
                         Err(e) => {
@@ -1320,12 +1545,12 @@ impl State {
             }
             RawExpr::Proj(name, idx, e) => ExprNode::Proj(self.name(name)?, idx, self.expr(e)?),
             RawExpr::Nat(a, b) => {
-                let Some(n) = parse_nat_lit(batch.text(a, b)) else {
+                let Some(n) = parse_nat_lit(src.text(a, b)?) else {
                     return bad("expr.natVal must be a string of decimal digits");
                 };
                 self.env.exprs.nat_node(n)?
             }
-            RawExpr::Str(a, b) => ExprNode::Str(self.env.names.strings.intern(batch.text(a, b))?),
+            RawExpr::Str(a, b) => ExprNode::Str(self.env.names.strings.intern(src.text(a, b)?)?),
             RawExpr::MData(inner) => {
                 // Metadata is kernel-irrelevant: bind the id to the inner
                 // expression.
@@ -1640,9 +1865,25 @@ mod tests {
         }
     }
 
+    /// Check the contract of [`scan::line`] on one line; returns whether
+    /// it took the line.
+    fn scanned_as_general(line: &str) -> bool {
+        let mut b = Batch::default();
+        let Some((item, n)) = scan::line(line.as_bytes(), &mut b.us) else {
+            return false;
+        };
+        assert_eq!(n, line.len(), "line: {line}");
+        assert!(b.push_scanned(line.as_bytes(), item).is_ok());
+        let fast = describe(&b, b.items[0]);
+        let general_line = line.strip_suffix('\n').unwrap_or(line);
+        assert_eq!(general(general_line), Ok(Some(fast)), "line: {line}");
+        true
+    }
+
     /// Check the fast-path contract on one line; returns whether the fast
-    /// path took it.
+    /// path took it. The scanner is checked on it too.
     fn same_as_general(line: &str) -> bool {
+        scanned_as_general(line);
         let mut b = Batch::default();
         let Some(item) = fast::parse(line, &mut b) else {
             return false;
@@ -1716,6 +1957,125 @@ mod tests {
         for l in declined {
             assert!(!same_as_general(l), "fast path should decline: {l}");
         }
+    }
+
+    #[test]
+    fn scanner_agrees_with_general_path() {
+        let taken = [
+            r#"{"in":1,"str":{"pre":0,"str":"Nat"}}"#,
+            r#"{"in":7,"num":{"i":12,"pre":3}}"#,
+            r#"{"il":1,"succ":0}"#,
+            r#"{"il":3,"max":[1,2]}"#,
+            r#"{"il":3,"imax":[1,2]}"#,
+            r#"{"il":4,"param":9}"#,
+            r#"{"ie":0,"sort":1}"#,
+            r#"{"bvar":0,"ie":1}"#,
+            r#"{"const":{"name":1,"us":[]},"ie":1}"#,
+            r#"{"const":{"name":1,"us":[1,2,3]},"ie":2}"#,
+            r#"{"app":{"arg":2,"fn":1},"ie":3}"#,
+            "{\"app\":{\"arg\":2,\"fn\":1},\"ie\":3}\n",
+            r#"{"app":{"arg":123456789,"fn":12345678},"ie":1234567890123}"#,
+            r#"{"app":{"arg":0,"fn":10},"ie":9999999999999999999}"#,
+            r#"{"ie":4,"lam":{"binderInfo":"default","body":3,"name":4,"type":0}}"#,
+            r#"{"ie":4,"lam":{"binderInfo":"strictImplicit","body":3,"name":4,"type":0}}"#,
+            r#"{"forallE":{"binderInfo":"instImplicit","body":3,"name":4,"type":0},"ie":5}"#,
+            r#"{"forallE":{"binderInfo":"implicit","body":3,"name":4,"type":0},"ie":5}"#,
+            r#"{"ie":6,"letE":{"body":1,"name":2,"nondep":false,"type":3,"value":4}}"#,
+            r#"{"ie":6,"letE":{"body":1,"name":2,"nondep":true,"type":3,"value":4}}"#,
+            r#"{"ie":7,"proj":{"idx":0,"struct":3,"typeName":1}}"#,
+            r#"{"ie":8,"natVal":"123456789012345678901234567890"}"#,
+            r#"{"ie":9,"strVal":"héllo"}"#,
+            r#"{"ie":9,"strVal":""}"#,
+        ];
+        for l in taken {
+            assert!(scanned_as_general(l), "scanner should take: {l}");
+        }
+        let declined = [
+            r#"{"in":1,"str":{"pre":0,"str":"a\"b"}}"#,
+            r#"{"ie":8,"natVal":"12a"}"#,
+            r#"{"ie":8,"natVal":""}"#,
+            r#"{"bvar":01,"ie":1}"#,
+            r#"{"bvar":00000000001,"ie":1}"#,
+            r#"{"bvar":1.0,"ie":1}"#,
+            r#"{"bvar":1e3,"ie":1}"#,
+            r#"{"bvar":-1,"ie":1}"#,
+            r#"{"bvar":18446744073709551616,"ie":1}"#,
+            r#"{"bvar":1,"ie":1} "#,
+            "{\"bvar\":1,\"ie\":1}\r\n",
+            r#"{"bvar":1,"ie":1}}"#,
+            r#"{"bvar":1,"ie":1"#,
+            r#"{"app":{"arg":2,"fn":1}, "ie":3}"#,
+            r#"{"ie":3,"app":{"fn":1,"arg":2}}"#,
+            r#"{"ie":4,"lam":{"binderInfo":"weird","body":3,"name":4,"type":0}}"#,
+            r#"{"ie":7,"proj":{"idx":4294967296,"struct":3,"typeName":1}}"#,
+            r#"{"il":3,"max":[1]}"#,
+            r#"{"il":3,"max":[1,2,3]}"#,
+            r#"{"ie":1,"mdata":{"data":{},"expr":0}}"#,
+            r#"{"const":{"name":1,"us":[1,]},"ie":1}"#,
+            r#"{"axiom":{"name":1,"levelParams":[],"type":0,"isUnsafe":false}}"#,
+            r#"{}"#,
+        ];
+        for l in declined {
+            assert!(!scanned_as_general(l), "scanner should decline: {l}");
+        }
+    }
+
+    /// Reading on one thread (the scanner, applied line by line) and on
+    /// several (batches) gives the same environment.
+    #[test]
+    fn one_thread_matches_several() {
+        let path = std::env::var_os("NITROLEAN_EXPORT");
+        let dir = std::env::temp_dir().join(format!("nitrolean-read-{}", std::process::id()));
+        let path = match path {
+            Some(p) => std::path::PathBuf::from(p),
+            None => {
+                let mut text = String::new();
+                text.push_str(r#"{"meta":{"exporter":{"name":"lean4export","version":"3.1.0"},"format":{"version":"3.1.0"}}}"#);
+                text.push('\n');
+                for l in [
+                    r#"{"in":1,"str":{"pre":0,"str":"A"}}"#,
+                    r#"{"in":2,"str":{"pre":0,"str":"x"}}"#,
+                    r#"{"il":1,"succ":0}"#,
+                    r#"{"ie":0,"sort":1}"#,
+                    r#"{"bvar":0,"ie":1}"#,
+                    r#"{"forallE":{"binderInfo":"default","body":0,"name":2,"type":0},"ie":2}"#,
+                    r#"{"axiom":{"isUnsafe":false,"levelParams":[],"name":1,"type":2}}"#,
+                    r#"{"in":3,"str":{"pre":0,"str":"t"}}"#,
+                    r#"{"ie":3,"lam":{"binderInfo":"default","body":1,"name":2,"type":0}}"#,
+                    r#"{"ie":4,"mdata":{"data":{},"expr":3}}"#,
+                    r#"{"thm":{"all":[3],"levelParams":[],"name":3,"type":2,"value":4}}"#,
+                ] {
+                    text.push_str(l);
+                    text.push('\n');
+                }
+                std::fs::create_dir_all(&dir).expect("temp dir");
+                let p = dir.join("small.ndjson");
+                std::fs::write(&p, text).expect("write");
+                p
+            }
+        };
+        let read = |lazy_proofs, threads| {
+            read_file_with(
+                &path,
+                &Options {
+                    lazy_proofs,
+                    threads,
+                },
+            )
+            .expect("read")
+        };
+        // The comparison builds the lazy values of its second argument.
+        let (base, stats) = read(false, 1);
+        for (lazy_proofs, threads) in [(false, 3), (true, 1), (true, 3)] {
+            let (other, s) = read(lazy_proofs, threads);
+            assert_eq!((s.lines, s.bytes), (stats.lines, stats.bytes));
+            let d = crate::compare::compare(&base, &other);
+            assert!(
+                d.only_a.is_empty() && d.only_b.is_empty() && d.differ.is_empty(),
+                "lazy={lazy_proofs}, threads={threads}: the reads differ"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Differential check of every line of a real export. Run with
