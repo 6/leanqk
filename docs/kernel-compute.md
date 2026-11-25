@@ -356,6 +356,14 @@ term `c p₁ … pₖ`. The test `eval-methods` applies `+` through 20 instances
 built from a number (more than the 8 kept), an instance passed as an
 argument and an instance whose field is computed.
 
+A field such as `instHMul`'s is itself `fun a b => Mul.mul a b`. When the
+value kept is a closure `fun x₁ … xₘ => g x₁ … xₘ` whose body `g` does not
+use the `xᵢ`, and the method is applied to at least `m` more arguments, the
+value of `g` is kept instead (`eta_head`, up to four times over). The two
+are equal by eta, and applying the closure would evaluate `g` at once
+anyway. So `x * y` at `Int` goes from `HMul.hMul` straight to `Int.mul`. On
+`nonsingular-128` the steps go from 54.0 to 49.7 million.
+
 On a 40 × 40 and a 60 × 60 integer matrix product mod 65521, the steps go
 from 8.8 to 6.4 million and the evaluator's time from 0.55 to 0.49 s.
 

@@ -927,14 +927,14 @@ impl<'a, 'e> Machine<'a, 'e> {
                 FAST[4].fetch_add(1, Relaxed);
                 f
             }
-            None => self.method_miss(c, v, args)?,
+            None => self.method_miss(c, v, args, rest.len())?,
         };
         self.apply_n(f, rest)
     }
 
     #[inline(never)]
-    fn method_miss(&mut self, c: ExprId, v: ExprId, args: Vec<Th>) -> ER<V> {
-        let f = match self.closed_app(c, &args) {
+    fn method_miss(&mut self, c: ExprId, v: ExprId, args: Vec<Th>, rest: usize) -> ER<V> {
+        let mut f = match self.closed_app(c, &args) {
             Some(key) => {
                 let t = self.closed(key);
                 self.force(&t)?
@@ -945,6 +945,12 @@ impl<'a, 'e> Machine<'a, 'e> {
                 self.apply(u, args.clone())?
             }
         };
+        for _ in 0..4 {
+            match self.eta_head(&f, rest)? {
+                Some(g) => f = g,
+                None => break,
+            }
+        }
         let es = self.s.methods.entry(c).or_default();
         let e = (args.into_boxed_slice(), f.clone());
         if es.len() < METHOD_CACHE {
@@ -955,6 +961,41 @@ impl<'a, 'e> Machine<'a, 'e> {
             es.push(e);
         }
         Ok(f)
+    }
+
+    /// The value of `g` if `f` is `fun x₁ … xₘ => g x₁ … xₘ` where `g` does
+    /// not use the `xᵢ` and `m ≤ n`: then `f` applied to `n` arguments is
+    /// `g` applied to them, and `g` is evaluated as soon as `f` is. A
+    /// method such as `HMul.hMul` at `instHMul` is `fun a b => Mul.mul a b`,
+    /// so this goes straight to the multiplication.
+    fn eta_head(&mut self, f: &V, n: usize) -> ER<Option<V>> {
+        let Val::Clo { lam, env } = &**f else {
+            return Ok(None);
+        };
+        let st = &self.tc.st;
+        let mut b = *lam;
+        let mut m = 0u32;
+        while let ExprNode::Lam(_, _, _, body) = st.node(b) {
+            m += 1;
+            b = body;
+        }
+        if m as usize > n {
+            return Ok(None);
+        }
+        let mut g = b;
+        for j in 0..m {
+            match st.node(g) {
+                ExprNode::App(h, a) if matches!(st.node(a), ExprNode::BVar(i) if i == j) => g = h,
+                _ => return Ok(None),
+            }
+        }
+        if (0..m).any(|j| st.has_loose_bvar(g, j)) {
+            return Ok(None);
+        }
+        let g = self.tc.st.lower_loose(g, m, m);
+        let env = env.clone();
+        let t = self.thunk(g, &env);
+        Ok(Some(self.force(&t)?))
     }
 
     /// The term `c a₁ … aₙ`, if every argument's term is known.
