@@ -121,8 +121,10 @@ pub struct Memo {
     decl_names: Vec<u64>,
     stamp: Vec<u32>,
     epoch: u32,
-    /// Used instead of the dense array when decoding one value lazily.
-    sparse: Option<hashbrown::HashMap<u64, u32>>,
+    /// When decoding one value lazily: entries are valid where their
+    /// stamp is the current epoch (instead of their bit), so the arrays
+    /// are reused without clearing.
+    stamped: bool,
     /// (first address, end address, first entry) of each part.
     parts: Vec<(u64, u64, usize)>,
 }
@@ -142,15 +144,25 @@ const MAX_LOCAL: u32 = 1 << 30;
 impl Memo {
     /// Reset for `heap`, keeping the allocations.
     pub fn reset(&mut self, heap: &Heap<'_>) {
-        if let Some(m) = &mut self.sparse {
-            m.clear();
-            return;
-        }
         self.parts.clear();
         let mut n = 0usize;
         for (lo, hi) in heap.ranges() {
             self.parts.push((lo, hi, n));
             n += ((hi - lo) / 8) as usize;
+        }
+        if self.stamped {
+            if self.vals.len() < n {
+                self.vals.resize(n, 0);
+            }
+            if self.stamp.len() < n {
+                self.stamp.resize(n, 0);
+            }
+            self.epoch = self.epoch.wrapping_add(1);
+            if self.epoch == 0 {
+                self.stamp.fill(0);
+                self.epoch = 1;
+            }
+            return;
         }
         self.bits.clear();
         self.bits.resize(n / 64 + 1, 0);
@@ -196,22 +208,24 @@ impl Memo {
         None
     }
 
-    /// A memo for decoding a few objects of a big module: a hash map.
-    pub fn sparse() -> Self {
+    /// A memo for decoding a few objects of a module at a time, reused
+    /// across modules (see `stamped`).
+    pub fn stamped() -> Self {
         Memo {
-            sparse: Some(hashbrown::HashMap::new()),
+            stamped: true,
             ..Memo::default()
         }
     }
 
     #[inline]
     fn get(&self, kind: Kind, addr: u64) -> Option<u32> {
-        if let Some(m) = &self.sparse {
-            let v = *m.get(&addr)?;
-            return (v >> 30 == kind as u32).then_some(v & (MAX_LOCAL - 1));
-        }
         let k = self.slot(addr)?;
-        if self.bits[k / 64] >> (k % 64) & 1 == 0 {
+        let valid = if self.stamped {
+            self.stamp[k] == self.epoch
+        } else {
+            self.bits[k / 64] >> (k % 64) & 1 != 0
+        };
+        if !valid {
             return None;
         }
         let v = self.vals[k];
@@ -221,12 +235,12 @@ impl Memo {
     #[inline]
     fn insert(&mut self, kind: Kind, addr: u64, id: u32) {
         debug_assert!(id < MAX_LOCAL);
-        if let Some(m) = &mut self.sparse {
-            m.insert(addr, (kind as u32) << 30 | id);
-            return;
-        }
         if let Some(k) = self.slot(addr) {
-            self.bits[k / 64] |= 1 << (k % 64);
+            if self.stamped {
+                self.stamp[k] = self.epoch;
+            } else {
+                self.bits[k / 64] |= 1 << (k % 64);
+            }
             self.vals[k] = (kind as u32) << 30 | id;
         }
     }
@@ -265,9 +279,14 @@ impl<'h, 'a> Decoder<'h, 'a> {
     }
 
     /// A decoder that reuses `memo`'s allocations.
-    pub fn with_memo(heap: &'h Heap<'a>, mut memo: Memo) -> Self {
+    pub fn with_memo(heap: &'h Heap<'a>, memo: Memo) -> Self {
+        Self::reusing(heap, memo, Tape::default())
+    }
+
+    /// A decoder that reuses `memo`'s and `tape`'s allocations.
+    pub fn reusing(heap: &'h Heap<'a>, mut memo: Memo, mut tape: Tape) -> Self {
         memo.reset(heap);
-        let mut tape = Tape::default();
+        tape.clear();
         tape.names.push(NameNode::Anon);
         tape.levels.push(LevelNode::Zero);
         tape.level_ends.push(0);
@@ -1126,6 +1145,11 @@ impl<'h, 'a> Decoder<'h, 'a> {
         })
     }
 
+    /// The memo and the tape, for reuse.
+    pub fn into_parts(self) -> (Memo, Tape) {
+        (self.memo, self.tape)
+    }
+
     pub fn finish(mut self) -> Tape {
         let t = &mut self.tape;
         // Name 0 (anonymous) is layer 0 and needs no interning; the rest
@@ -1167,6 +1191,46 @@ impl<'h, 'a> Decoder<'h, 'a> {
 }
 
 impl Tape {
+    /// Empty, keeping the allocations.
+    fn clear(&mut self) {
+        let Tape {
+            strs,
+            names,
+            levels,
+            level_pool,
+            level_ends,
+            exprs,
+            lets,
+            bigs,
+            name_pool,
+            rules,
+            decls,
+            imports,
+            is_module,
+            name_order,
+            expr_order,
+            lazy,
+            lazy_refs,
+        } = self;
+        strs.clear();
+        names.clear();
+        levels.clear();
+        level_pool.clear();
+        level_ends.clear();
+        exprs.clear();
+        lets.clear();
+        bigs.clear();
+        name_pool.clear();
+        rules.clear();
+        decls.clear();
+        imports.clear();
+        *is_module = false;
+        *name_order = Layers::default();
+        *expr_order = Layers::default();
+        lazy.clear();
+        lazy_refs.clear();
+    }
+
     pub fn level_list(&self, l: LevelList) -> &[LevelId] {
         let i = l.0 as usize;
         let start = if i == 0 {

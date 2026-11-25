@@ -106,6 +106,13 @@ impl StrPool {
         &self.bytes[a..b]
     }
 
+    /// Empty, keeping the allocations (not for a pool with late strings).
+    pub fn clear(&mut self) {
+        self.bytes.clear();
+        self.ends.clear();
+        self.table.clear();
+    }
+
     /// Allow [`StrPool::intern_late`].
     pub fn enable_late(&mut self) {
         self.late.get_or_insert_with(|| Box::new(Late::new()));

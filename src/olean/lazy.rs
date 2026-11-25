@@ -8,7 +8,7 @@
 //! decoding of one term, with a hash-map memo instead of the module-wide
 //! array, and the same checks.
 
-use super::decode::{Decoder, Memo};
+use super::decode::{Decoder, Memo, Tape};
 use super::file::OleanFile;
 use super::obj::Heap;
 use crate::env::{Env, LazyValues, TermSink};
@@ -37,9 +37,34 @@ impl LazyValues for OleanValues {
             |f: &super::Fail| format!("{}: {}", parts[parts.len() - 1].path.display(), f.msg);
         let refs: Vec<&OleanFile> = parts.iter().collect();
         let heap = Heap::new(&refs).map_err(|f| path(&f))?;
-        let mut d = Decoder::with_memo(&heap, Memo::sparse());
-        let root = d.expr(ptr, holder).map_err(|f| path(&f))?;
-        let t = &d.tape;
+        let (memo, tape) = SCRATCH
+            .with(|s| s.take())
+            .unwrap_or_else(|| (Memo::stamped(), Tape::default()));
+        let mut d = Decoder::reusing(&heap, memo, tape);
+        let res = d.expr(ptr, holder).map_err(|f| path(&f));
+        let (memo, tape) = d.into_parts();
+        let res = res.and_then(|root| build(env, &tape, root, sink));
+        SCRATCH.with(|s| s.set(Some((memo, tape))));
+        res
+    }
+
+    fn count(&self) -> usize {
+        self.handles.len()
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.handles.capacity() * 24 + self.modules.capacity() * 24
+    }
+}
+
+thread_local! {
+    /// Each thread's decoding buffers, reused from value to value.
+    static SCRATCH: std::cell::Cell<Option<(Memo, Tape)>> = const { std::cell::Cell::new(None) };
+}
+
+/// Build a decoded value (the tape's expression `root`) in `sink`.
+fn build(env: &Env, t: &Tape, root: ExprId, sink: &mut dyn TermSink) -> Result<ExprId, String> {
+    {
         let strs = t.strs.len() as u32;
         let strs: Vec<StrId> = (0..strs)
             .map(|i| env.names.strings.intern_late(t.str(StrId(i))))
@@ -116,13 +141,5 @@ impl LazyValues for OleanValues {
             exprs.push(id);
         }
         Ok(exprs[root.index()])
-    }
-
-    fn count(&self) -> usize {
-        self.handles.len()
-    }
-
-    fn heap_bytes(&self) -> usize {
-        self.handles.capacity() * 24 + self.modules.capacity() * 24
     }
 }
