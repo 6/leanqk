@@ -282,6 +282,34 @@ impl IdTable {
         }
     }
 
+    /// Add `id` with hash `h` unless an id for which `eq` holds is
+    /// present (then that id); there must be room. For a table only this
+    /// thread sees.
+    #[inline]
+    pub fn insert_unique(
+        &mut self,
+        h: u64,
+        mut eq: impl FnMut(u32) -> bool,
+        id: u32,
+    ) -> Option<u32> {
+        let tag = tag_of(h);
+        let mut line = self.line(h);
+        loop {
+            for s in &mut self.slots[line * LINE..line * LINE + LINE] {
+                let v = s.get_mut();
+                if *v == 0 {
+                    *v = tag | id as u64;
+                    *self.len.get_mut() += 1;
+                    return None;
+                }
+                if *v & !0xffff_ffff == tag && eq(*v as u32) {
+                    return Some(*v as u32);
+                }
+            }
+            line = if line + 1 == self.lines { 0 } else { line + 1 };
+        }
+    }
+
     /// The id with hash `h` for which `eq` holds, or else the id `make`
     /// returns, added; several threads may call this at once. `make` is
     /// called at most once, before the id is published, and the flag says
@@ -442,8 +470,11 @@ impl<T: Node> Big<T> {
         T: Sync,
     {
         let n = self.nodes.len();
-        let table = IdTable::with_capacity(n);
         let threads = threads.clamp(1, n.div_ceil(1 << 16).max(1));
+        if threads == 1 {
+            return self.index_here();
+        }
+        let table = IdTable::with_capacity(n);
         let nodes = &self.nodes;
         let dup = std::sync::Mutex::new(None);
         let next = std::sync::atomic::AtomicUsize::new(0);
@@ -494,6 +525,35 @@ impl<T: Node> Big<T> {
             return Err(d);
         }
         table.add_len(n);
+        self.table = table;
+        Ok(())
+    }
+
+    /// [`Big::index`] on this thread.
+    fn index_here(&mut self) -> Result<(), (u32, u32)> {
+        let n = self.nodes.len();
+        let mut table = IdTable::with_capacity(n);
+        let nodes = &self.nodes;
+        // Hash a group of nodes and touch their lines first, so that the
+        // cache misses overlap.
+        const GROUP: usize = 32;
+        let mut hs = [0u64; GROUP];
+        let mut acc = 0u64;
+        for g in (0..n).step_by(GROUP) {
+            let k = GROUP.min(n - g);
+            for (i, h) in hs[..k].iter_mut().enumerate() {
+                *h = nodes.get((g + i) as u32).hash();
+                acc = acc.wrapping_add(table.touch(*h));
+            }
+            std::hint::black_box(acc);
+            for (i, &h) in hs[..k].iter().enumerate() {
+                let id = (g + i) as u32;
+                let node = nodes.get(id);
+                if let Some(old) = table.insert_unique(h, |o| nodes.get(o).same(node), id) {
+                    return Err((id, old));
+                }
+            }
+        }
         self.table = table;
         Ok(())
     }
