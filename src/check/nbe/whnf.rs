@@ -470,7 +470,7 @@ impl Nbe<'_> {
             return Some(V(m));
         }
         let d = self.is_delta(v)?;
-        let value = Self::decl_value(&d)?;
+        let value = self.unfold_value(&d)?;
         let Val::Const(_, ls, sp) = self.a.get(v) else {
             unreachable!()
         };

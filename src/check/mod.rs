@@ -384,18 +384,17 @@ fn check_single_nbe(tc: &mut Tc<'_>, nb: &mut Nbe<'_>, d: &Decl) -> R<()> {
     check_dup_lparams(tc, d)?;
     nb.lparams = tc.st.lparams(d).to_vec();
     nb.check_type(d.ty)?;
-    match d.kind {
-        DeclKind::Axiom { .. } => Ok(()),
-        DeclKind::Definition { value, .. } | DeclKind::Opaque { value, .. } => {
-            nb.check_value(value, d.ty)
-        }
-        DeclKind::Theorem { value, .. } => {
-            if !nb.check_is_prop(d.ty)? {
-                return err(format!("theorem type is not Prop: {}", tc.pp(d.ty)));
-            }
-            nb.check_value(value, d.ty)
-        }
-        _ => unreachable!(),
+    if let DeclKind::Theorem { .. } = d.kind
+        && !nb.check_is_prop(d.ty)?
+    {
+        return err(format!("theorem type is not Prop: {}", tc.pp(d.ty)));
+    }
+    // A value left in its file is built in the store for this check only:
+    // nothing else unfolds the declaration being checked.
+    match nb.read_value(d) {
+        Ok(Some(value)) => nb.check_value(value, d.ty),
+        Ok(None) => Ok(()),
+        Err(e) => err(format!("malformed value: {e}")),
     }
 }
 
