@@ -189,8 +189,10 @@ pub(super) struct Builder {
     side: Vec<u32>,
     /// Records from here on came after the last declaration line.
     from: usize,
-    /// Per lazy value, its root's export id.
+    /// Per lazy value, its root's export id, and the first record of its
+    /// declaration's lines (or the root, if that is older).
     roots: Vec<u32>,
+    starts: Vec<u32>,
     stack: Vec<u32>,
     /// For [`Builder::exprs`] (see `run`).
     ids: super::run::Ids,
@@ -518,6 +520,7 @@ impl Builder {
             return Err(Fail::from(Overflow("too many theorems")));
         }
         self.roots.push(i);
+        self.starts.push(i.min(self.from as u32));
         Ok(ExprId(LAZY_BASE + k))
     }
 
@@ -563,11 +566,43 @@ impl Builder {
         self.recs.shrink_to_fit();
         self.side.shrink_to_fit();
         self.roots.shrink_to_fit();
+        self.starts.shrink_to_fit();
         Some(Box::new(Stored {
             recs: self.recs,
             side: self.side,
             roots: self.roots,
+            starts: self.starts,
         }))
+    }
+}
+
+/// Node `n` in `sink`, its children being `ids` (in [`Node::kids`]'s order).
+fn make(sink: &mut dyn TermSink, n: Node, ids: [ExprId; 3]) -> ExprId {
+    match n {
+        Node::App(..) => sink.expr(ExprNode::App(ids[0], ids[1])),
+        Node::Bind { pi, bi, name, .. } => {
+            let name = sink.shared_name(name);
+            let (t, b) = (ids[0], ids[1]);
+            sink.expr(if pi {
+                ExprNode::Pi(bi, name, t, b)
+            } else {
+                ExprNode::Lam(bi, name, t, b)
+            })
+        }
+        Node::Let { name, nondep, .. } => {
+            let name = sink.shared_name(name);
+            let binder = LetBinder {
+                name,
+                ty: ids[0],
+                value: ids[1],
+                nondep,
+            };
+            sink.let_in(binder, ids[2])
+        }
+        Node::Proj(s, i, _) => {
+            let s = sink.shared_name(s);
+            sink.expr(ExprNode::Proj(s, i, ids[0]))
+        }
     }
 }
 
@@ -632,24 +667,40 @@ struct Stored {
     recs: Vec<u64>,
     side: Vec<u32>,
     roots: Vec<u32>,
+    starts: Vec<u32>,
 }
 
+/// Each thread's working space for [`Stored::decode`].
+#[derive(Default)]
+struct Scratch {
+    /// Per record of the value's own range, from its start: [`UNSEEN`],
+    /// [`WANTED`] or the sink's id.
+    own: Vec<u32>,
+    /// Older records (from other declarations): the sink's ids, and the
+    /// stack that builds them.
+    memo: HashMap<u32, ExprId>,
+    stack: Vec<u32>,
+}
+
+/// Marks in [`Scratch::own`] (never ids: those are below [`LAZY_BASE`]).
+const UNSEEN: u32 = u32::MAX;
+const WANTED: u32 = u32::MAX - 1;
+
 thread_local! {
-    /// Each thread's memo (expression id to the sink's id) and stack.
-    static SCRATCH: RefCell<(HashMap<u32, ExprId>, Vec<u32>)> = RefCell::default();
+    static SCRATCH: RefCell<Scratch> = RefCell::default();
 }
 
 impl LazyValues for Stored {
     fn decode(&self, _env: &Env, k: u32, sink: &mut dyn TermSink) -> Result<ExprId, String> {
-        let &root = self
-            .roots
-            .get(k as usize)
-            .ok_or("internal: no such lazy value")?;
+        let (Some(&root), Some(&start)) = (self.roots.get(k as usize), self.starts.get(k as usize))
+        else {
+            return Err("internal: no such lazy value".into());
+        };
         SCRATCH.with(|s| {
-            let (memo, stack) = &mut *s.borrow_mut();
-            memo.clear();
-            stack.clear();
-            self.build(root, sink, memo, stack)
+            let s = &mut *s.borrow_mut();
+            s.memo.clear();
+            s.stack.clear();
+            self.build_own(root, start, sink, s)
         })
     }
 
@@ -658,11 +709,90 @@ impl LazyValues for Stored {
     }
 
     fn heap_bytes(&self) -> usize {
-        self.recs.capacity() * 8 + self.side.capacity() * 4 + self.roots.capacity() * 4
+        self.recs.capacity() * 8
+            + self.side.capacity() * 4
+            + (self.roots.capacity() + self.starts.capacity()) * 4
     }
 }
 
 impl Stored {
+    /// The record an id stands for (an alias's target).
+    #[inline(always)]
+    fn real(&self, i: u32) -> u32 {
+        let r = self.recs[i as usize];
+        if r & DONE == 0 && tag(r) == T_ALIAS {
+            (r & ID_MASK) as u32
+        } else {
+            i
+        }
+    }
+
+    /// Value `root` (a real record), whose own records are those from
+    /// `start` on: in two passes over them, as the reader adds recent
+    /// records (see `Builder::promote_recent`). One down marks the records
+    /// it needs, one up builds them in order (children first). Older
+    /// records are built by [`Stored::build`].
+    fn build_own(
+        &self,
+        root: u32,
+        start: u32,
+        sink: &mut dyn TermSink,
+        s: &mut Scratch,
+    ) -> Result<ExprId, String> {
+        let recs = &self.recs;
+        if recs[root as usize] & DONE != 0 {
+            return Ok(sink.shared_expr(ExprId(recs[root as usize] as u32)));
+        }
+        let n = (root - start) as usize + 1;
+        s.own.clear();
+        s.own.resize(n, UNSEEN);
+        s.own[n - 1] = WANTED;
+        let mut left = 1usize;
+        let mut j = root;
+        loop {
+            if s.own[(j - start) as usize] == WANTED {
+                left -= 1;
+                let (kids, k) = decode(&self.side, recs[j as usize]).kids();
+                for &c in &kids[..k] {
+                    let c = self.real(c);
+                    if c >= start && recs[c as usize] & DONE == 0 {
+                        let m = &mut s.own[(c - start) as usize];
+                        if *m == UNSEEN {
+                            *m = WANTED;
+                            left += 1;
+                        }
+                    }
+                }
+                if left == 0 {
+                    break;
+                }
+            }
+            // A marked record is left, below `j`.
+            j -= 1;
+        }
+        for x in j..=root {
+            if s.own[(x - start) as usize] != WANTED {
+                continue;
+            }
+            let n = decode(&self.side, recs[x as usize]);
+            let (kids, k) = n.kids();
+            let mut ids = [ExprId(0); 3];
+            for (&c, id) in kids[..k].iter().zip(&mut ids) {
+                let c = self.real(c);
+                let r = recs[c as usize];
+                *id = if r & DONE != 0 {
+                    sink.shared_expr(ExprId(r as u32))
+                } else if c >= start {
+                    ExprId(s.own[(c - start) as usize])
+                } else {
+                    self.build(c, sink, &mut s.memo, &mut s.stack)?
+                };
+            }
+            s.own[(x - start) as usize] = make(sink, n, ids).0;
+        }
+        Ok(ExprId(s.own[n - 1]))
+    }
+
     fn build(
         &self,
         root: u32,
@@ -670,16 +800,9 @@ impl Stored {
         memo: &mut HashMap<u32, ExprId>,
         stack: &mut Vec<u32>,
     ) -> Result<ExprId, String> {
-        // The sink's id for expression `i`, if known.
         let (recs, side) = (&self.recs, &self.side);
-        let real = |i: u32| {
-            let r = recs[i as usize];
-            if r & DONE == 0 && tag(r) == T_ALIAS {
-                (r & ID_MASK) as u32
-            } else {
-                i
-            }
-        };
+        let real = |i: u32| self.real(i);
+        // The sink's id for expression `i`, if known.
         let done = |memo: &HashMap<u32, ExprId>, sink: &mut dyn TermSink, i: u32| {
             let r = recs[real(i) as usize];
             if r & DONE != 0 {
@@ -706,52 +829,11 @@ impl Stored {
             if !ready {
                 continue;
             }
-            let mut e = |c: u32| done(memo, sink, c).expect("built");
-            let id = match n {
-                Node::App(f, a) => {
-                    let (f, a) = (e(f), e(a));
-                    sink.expr(ExprNode::App(f, a))
-                }
-                Node::Bind {
-                    pi,
-                    bi,
-                    name,
-                    ty,
-                    body,
-                } => {
-                    let (t, b) = (e(ty), e(body));
-                    let name = sink.shared_name(name);
-                    sink.expr(if pi {
-                        ExprNode::Pi(bi, name, t, b)
-                    } else {
-                        ExprNode::Lam(bi, name, t, b)
-                    })
-                }
-                Node::Let {
-                    name,
-                    ty,
-                    value,
-                    body,
-                    nondep,
-                } => {
-                    let (t, v, b) = (e(ty), e(value), e(body));
-                    let name = sink.shared_name(name);
-                    sink.let_in(
-                        LetBinder {
-                            name,
-                            ty: t,
-                            value: v,
-                            nondep,
-                        },
-                        b,
-                    )
-                }
-                Node::Proj(s, i, x) => {
-                    let x = e(x);
-                    let s = sink.shared_name(s);
-                    sink.expr(ExprNode::Proj(s, i, x))
-                }
-            };
+            let mut ids = [ExprId(0); 3];
+            for (&c, id) in kids[..k].iter().zip(&mut ids) {
+                *id = done(memo, sink, c).expect("built");
+            }
+            let id = make(sink, n, ids);
             memo.insert(top, id);
             stack.pop();
         }
