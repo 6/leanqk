@@ -629,10 +629,14 @@ fn finish(
     for m in [&mut st.name_ids, &mut st.level_ids, &mut st.expr_ids] {
         *m = IdMap::new(0);
     }
-    if let Some(b) = st.lazy.take() {
-        st.env.lazy = b.finish();
-    }
     let mut stats = res?;
+    if let Some(b) = st.lazy.take() {
+        st.env.lazy = b.finish(&mut st.env, st.append).map_err(|e| ReadError {
+            line: 0,
+            class: e.class,
+            msg: e.msg,
+        })?;
+    }
     stats.shared_exprs = st.shared_exprs;
     stats.id_map_bytes = id_map_bytes;
     let mut dup = None;

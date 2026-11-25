@@ -193,6 +193,10 @@ pub(super) struct Builder {
     /// declaration's lines (or the root, if that is older).
     roots: Vec<u32>,
     starts: Vec<u32>,
+    /// Lazy values whose root is a record of an earlier declaration.
+    old_roots: Vec<u32>,
+    /// Where each declaration's records start (but the last's).
+    bounds: Vec<u32>,
     stack: Vec<u32>,
     /// For [`Builder::exprs`] (see `run`).
     ids: super::run::Ids,
@@ -521,12 +525,18 @@ impl Builder {
         }
         self.roots.push(i);
         self.starts.push(i.min(self.from as u32));
+        if (i as usize) < self.from {
+            self.old_roots.push(i);
+        }
         Ok(ExprId(LAZY_BASE + k))
     }
 
     /// At the end of a declaration.
     #[inline(always)]
     pub(super) fn decl_done(&mut self) {
+        if self.from != self.recs.len() {
+            self.bounds.push(self.from as u32);
+        }
         self.from = self.recs.len();
     }
 
@@ -556,23 +566,57 @@ impl Builder {
         Ok((ids, roots))
     }
 
-    /// The source of the lazy values, once the read is done.
-    pub(super) fn finish(mut self) -> Option<Box<dyn LazyValues>> {
-        if self.roots.is_empty() {
-            return None;
+    /// Intern the records that a later declaration's records use (and
+    /// the roots of values older than their declarations), so that each
+    /// record left is used by its own declaration's value alone: built
+    /// once here, not again for every value that uses it.
+    fn promote_shared(&mut self, env: &mut Env, append: bool) -> R<()> {
+        self.bounds.push(self.from as u32);
+        let bounds = std::mem::take(&mut self.bounds);
+        for w in bounds.windows(2) {
+            let (lo, hi) = (w[0], w[1]);
+            for x in lo..hi {
+                let r = self.recs[x as usize];
+                if r & DONE != 0 || tag(r) == T_ALIAS {
+                    continue;
+                }
+                let (kids, k) = decode(&self.side, r).kids();
+                for &c in &kids[..k] {
+                    if c < lo {
+                        let c = self.real(c);
+                        if self.recs[c as usize] & DONE == 0 {
+                            self.promote_old(env, append, c)?;
+                        }
+                    }
+                }
+            }
         }
+        for i in std::mem::take(&mut self.old_roots) {
+            if self.recs[i as usize] & DONE == 0 {
+                self.promote_old(env, append, i)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The source of the lazy values, once the read is done.
+    pub(super) fn finish(mut self, env: &mut Env, append: bool) -> R<Option<Box<dyn LazyValues>>> {
+        if self.roots.is_empty() {
+            return Ok(None);
+        }
+        self.promote_shared(env, append)?;
         // Interned records stay where they are, marked `DONE`; building
         // a value takes their arena ids from there.
         self.recs.shrink_to_fit();
         self.side.shrink_to_fit();
         self.roots.shrink_to_fit();
         self.starts.shrink_to_fit();
-        Some(Box::new(Stored {
+        Ok(Some(Box::new(Stored {
             recs: self.recs,
             side: self.side,
             roots: self.roots,
             starts: self.starts,
-        }))
+        })))
     }
 }
 
