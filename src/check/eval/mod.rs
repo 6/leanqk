@@ -229,6 +229,10 @@ impl State {
 
 /// A constant is memoized while at least one lookup in `MEMO_RATIO` hits,
 /// judged after `MEMO_TRIAL` lookups.
+/// Whether a decision `Decidable.intro p b h` is answered without reading
+/// back its proof `h`, as `isTrue` and `isFalse` are (`decided`).
+const DECIDED_INTRO: bool = true;
+
 const MEMO_TRIAL: u32 = 256;
 const MEMO_RATIO: u32 = 32;
 
@@ -382,7 +386,8 @@ impl<'a, 'e> Machine<'a, 'e> {
         Ok(r)
     }
 
-    /// The answer `Decidable.isTrue p h` (or `isFalse`) for `e`, without
+    /// The answer `Decidable.isTrue p h` (or `isFalse`, or `Decidable.intro
+    /// p b h`) for `e`, without
     /// reading back the proof `h` (it may be erased, or a huge term): `p`
     /// is the proposition of `e`'s type, and `h` is replaced by
     /// `of_decide_eq_true p e (Eq.refl true)` (or `of_decide_eq_false …
@@ -397,14 +402,37 @@ impl<'a, 'e> Machine<'a, 'e> {
             return None;
         };
         let names = &self.tc.st.env.names;
-        let is_true = if Some(cn) == names.find_dotted("Decidable.isTrue") {
+        // `Decidable.intro p b h` (a structure since Lean v4.36): `h`
+        // proves `Bool.Reflects b p`, which is `p` or `¬p` as `b` is
+        // `true` or `false`.
+        let intro = DECIDED_INTRO && Some(cn) == names.find_dotted("Decidable.intro");
+        let is_true = if intro {
+            if args.len() != 3 || ls != LevelList::EMPTY {
+                return None;
+            }
+            let b = self.force(&args[1]).ok()?;
+            let Val::Ctor { c: bc, .. } = &*b else {
+                return None;
+            };
+            let ExprNode::Const(bn, _) = self.tc.st.node(*bc) else {
+                return None;
+            };
+            let names = &self.tc.st.env.names;
+            if Some(bn) == names.find_dotted("Bool.true") {
+                true
+            } else if Some(bn) == names.find_dotted("Bool.false") {
+                false
+            } else {
+                return None;
+            }
+        } else if Some(cn) == names.find_dotted("Decidable.isTrue") {
             true
         } else if Some(cn) == names.find_dotted("Decidable.isFalse") {
             false
         } else {
             return None;
         };
-        if args.len() != 2 || ls != LevelList::EMPTY {
+        if !intro && (args.len() != 2 || ls != LevelList::EMPTY) {
             return None;
         }
         let lemma = self.decide_lemma(is_true)?;
@@ -433,6 +461,9 @@ impl<'a, 'e> Machine<'a, 'e> {
         let b = self.tc.st.cnst(b, LevelList::EMPTY);
         let refl = self.tc.st.apps(refl, &[bool_, b]);
         let h = self.tc.st.apps(lemma, &[p, e, refl]);
+        if intro {
+            return Some(self.tc.st.apps(*c, &[p, b, h]));
+        }
         Some(self.tc.st.apps(*c, &[p, h]))
     }
 
