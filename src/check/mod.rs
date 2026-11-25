@@ -257,7 +257,7 @@ fn worker(sh: &Shared<'_>, jobs: usize) {
             );
         }
         let res = match res {
-            Ok(r) => r.map_err(|e| (FailKind::Rejected, e.0)),
+            Ok(r) => r.map_err(|e| (FailKind::Rejected, *e.0)),
             Err(p) => {
                 let msg = p
                     .downcast_ref::<String>()
@@ -578,7 +578,7 @@ fn check_inductive_block(tc: &mut Tc<'_>, decls: &[Decl], ntypes: usize, nctors:
 
 fn compare_decl(tc: &Tc<'_>, g: &Decl, x: &Decl) -> R<()> {
     let bad = |what: &str| -> R<()> {
-        Err(KErr(format!(
+        Err(KErr::new(format!(
             "'{}' does not match the declaration derived from its inductive type ({what})",
             tc.show(x.name)
         )))

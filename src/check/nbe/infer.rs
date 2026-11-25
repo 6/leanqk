@@ -14,7 +14,7 @@ use super::val::{Elim, Env, Ls, Sp, V, Val};
 use super::{BOTTOM, Nbe};
 
 fn err<T>(msg: impl Into<String>) -> R<T> {
-    Err(KErr(msg.into()))
+    Err(KErr::new(msg.into()))
 }
 
 impl Nbe<'_> {
@@ -217,7 +217,7 @@ impl Nbe<'_> {
     fn proj_error(&mut self, x: V, s: NameId, i: u32) -> KErr {
         let e = self.readback(x);
         let e = self.st.proj(s, i, e);
-        KErr(format!("invalid projection {}", self.pp_term(e)))
+        KErr::new(format!("invalid projection {}", self.pp_term(e)))
     }
 
     /// The type of `x.idx` (of the structure `sname`), given the type `xt`

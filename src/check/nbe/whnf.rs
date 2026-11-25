@@ -428,7 +428,9 @@ impl Nbe<'_> {
             unreachable!()
         };
         let (Some(zero), Some(succ)) = (self.ext.nat_zero, self.ext.nat_succ) else {
-            return Err(KErr("a `Nat` literal needs the prelude's `Nat`".into()));
+            return Err(KErr::new(
+                "a `Nat` literal needs the prelude's `Nat`".into(),
+            ));
         };
         if n == BigUint::ZERO {
             return Ok(self.cnst(zero, LevelList::EMPTY));
@@ -444,7 +446,7 @@ impl Nbe<'_> {
             unreachable!()
         };
         let Some(x) = self.ext.string() else {
-            return Err(KErr(
+            return Err(KErr::new(
                 "a `String` literal needs the prelude's `String`".into(),
             ));
         };
@@ -514,7 +516,7 @@ impl Nbe<'_> {
 
     fn nat_size_ok(v: &BigUint) -> R<()> {
         if v.bits().div_ceil(8) > NAT_MAX_BYTES {
-            return Err(KErr(
+            return Err(KErr::new(
                 "the kernel refused a `Nat` numeral because its size exceeds the maximum".into(),
             ));
         }
@@ -529,7 +531,7 @@ impl Nbe<'_> {
         };
         match n {
             Some(n) => Ok(self.cnst(n, LevelList::EMPTY)),
-            None => Err(KErr("`Bool` is missing".into())),
+            None => Err(KErr::new("`Bool` is missing".into())),
         }
     }
 
@@ -621,7 +623,7 @@ impl Nbe<'_> {
             NatOp::Xor => x ^ y,
             NatOp::Pow => {
                 let Ok(k) = u32::try_from(&y) else {
-                    return Err(KErr(
+                    return Err(KErr::new(
                         "the kernel refused to evaluate `Nat.pow` because its second argument does not fit in a 32-bit unsigned integer".into(),
                     ));
                 };
@@ -629,7 +631,7 @@ impl Nbe<'_> {
                     && k != 0
                     && x.bits().div_ceil(8) > NAT_MAX_BYTES / k as u64
                 {
-                    return Err(KErr(
+                    return Err(KErr::new(
                         "the kernel refused to evaluate `Nat.pow` because the result would exceed the maximum numeral size".into(),
                     ));
                 }
@@ -640,12 +642,12 @@ impl Nbe<'_> {
                     BigUint::ZERO
                 } else {
                     let Ok(k) = u32::try_from(&y) else {
-                        return Err(KErr(
+                        return Err(KErr::new(
                             "the kernel refused to evaluate `Nat.shiftLeft` because its second argument does not fit in a 32-bit unsigned integer".into(),
                         ));
                     };
                     if x.bits().div_ceil(8) + k as u64 / 8 + 1 > NAT_MAX_BYTES {
-                        return Err(KErr(
+                        return Err(KErr::new(
                             "the kernel refused a `Nat` numeral because its size exceeds the maximum".into(),
                         ));
                     }

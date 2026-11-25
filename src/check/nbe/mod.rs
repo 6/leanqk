@@ -322,7 +322,7 @@ impl<'e> Nbe<'e> {
         self.ticks += 1;
         if self.ticks > self.stop {
             self.stopped = true;
-            return Err(KErr(String::new()));
+            return Err(KErr::new(String::new()));
         }
         Ok(())
     }
@@ -424,7 +424,7 @@ impl<'e> Nbe<'e> {
     pub fn get(&self, n: NameId) -> R<Decl> {
         match self.find(n) {
             Some(d) => Ok(d),
-            None => Err(KErr(format!("unknown constant '{}'", self.st.show(n)))),
+            None => Err(KErr::new(format!("unknown constant '{}'", self.st.show(n)))),
         }
     }
 

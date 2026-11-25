@@ -22,12 +22,19 @@ use super::univ;
 
 /// A kernel error: the declaration being checked is rejected.
 #[derive(Debug, Clone)]
-pub struct KErr(pub String);
+pub struct KErr(pub Box<String>);
+
+impl KErr {
+    /// Boxed, so that a result of the checker fits in two registers.
+    pub fn new(msg: String) -> Self {
+        KErr(Box::new(msg))
+    }
+}
 
 pub type R<T> = Result<T, KErr>;
 
 pub fn err<T>(msg: impl Into<String>) -> R<T> {
-    Err(KErr(msg.into()))
+    Err(KErr::new(msg.into()))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -624,7 +631,7 @@ impl<'e> Tc<'e> {
     }
 
     fn proj_error(&self, e: ExprId) -> KErr {
-        KErr(format!("invalid projection {}", self.pp(e)))
+        KErr::new(format!("invalid projection {}", self.pp(e)))
     }
 
     fn infer_proj(
