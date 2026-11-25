@@ -15,6 +15,14 @@ pub fn peak_rss_bytes() -> Option<u64> {
     Some(kb * 1024)
 }
 
+/// Current resident set size of this process in bytes, where the platform
+/// reports it (Linux: `/proc/self/statm`, in pages of 4 KiB).
+pub fn rss_bytes() -> Option<u64> {
+    let s = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let pages: u64 = s.split_whitespace().nth(1)?.parse().ok()?;
+    Some(pages * 4096)
+}
+
 /// Format a byte count with a binary unit.
 pub fn human_bytes(b: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];

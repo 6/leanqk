@@ -59,6 +59,10 @@ enum Command {
         /// Threads for loading .olean files (default: all cores).
         #[arg(long, default_value_t = 0)]
         threads: usize,
+        /// Threads for checking declarations (default: NITROLEAN_JOBS, else
+        /// all cores). The verdict does not depend on it.
+        #[arg(long, short = 'j', default_value_t = 0)]
+        jobs: usize,
         /// With --olean and a project: load this module (repeatable)
         /// instead of the project's top-level modules.
         #[arg(long, value_name = "MODULE")]
@@ -164,6 +168,7 @@ pub fn main() -> ExitCode {
             olean,
             search_path,
             threads,
+            jobs,
             module,
         } => {
             let src = if olean {
@@ -176,7 +181,12 @@ pub fn main() -> ExitCode {
             } else {
                 Source::Export
             };
-            ExitCode::from(check(&file, &src, stats, parse_only))
+            let jobs = if jobs == 0 {
+                check::default_jobs()
+            } else {
+                jobs
+            };
+            ExitCode::from(check(&file, &src, stats, parse_only, jobs))
         }
         Command::Compare {
             export,
@@ -202,7 +212,7 @@ enum Source {
     Olean(olean::Options),
 }
 
-fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool) -> u8 {
+fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: usize) -> u8 {
     let start = Instant::now();
     let opts = match src {
         Source::Export => None,
@@ -301,7 +311,7 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool) -> u8 {
     }
     let _ = io::stdout().lock().write_all(out.as_bytes());
     let start = Instant::now();
-    let res = check::check_env(&env);
+    let res = check::check_env_jobs(&env, jobs);
     let secs = start.elapsed().as_secs_f64();
     let mut out = String::new();
     let code = match res {
@@ -332,7 +342,7 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool) -> u8 {
         }
     };
     if show_stats {
-        out.push_str(&format!("check time    {secs:.3} s\n"));
+        out.push_str(&format!("check time    {secs:.3} s ({jobs} threads)\n"));
         if let Some(b) = peak_rss_bytes() {
             out.push_str(&format!("peak RSS      {}\n", human_bytes(b)));
         }
