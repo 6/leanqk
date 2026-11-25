@@ -201,10 +201,16 @@ pub struct Arena {
     /// Neutrals by head and spine contents, so that applying a neutral to
     /// arguments finds the result with one probe.
     nutable: HashTable<(u32, u32)>,
+    /// Environments by their last entry and the rest (direct-mapped, in
+    /// front of `envtable`): (rest, entry, environment).
+    conses: Vec<[u32; 3]>,
 }
 
 /// Slots of `Arena::heads`.
 const HEADS: usize = 1 << 12;
+
+/// Slots of `Arena::conses`.
+const CONSES: usize = 1 << 14;
 
 /// Slots of `Arena::thunks`.
 const THUNKS: usize = 1 << 14;
@@ -241,6 +247,7 @@ impl Arena {
             heads: vec![(NONE, NONE, V(NONE)); HEADS],
             thunks: vec![[NONE; 4]; THUNKS],
             nutable: HashTable::new(),
+            conses: vec![[NONE; 3]; CONSES],
         }
     }
 
@@ -272,6 +279,7 @@ impl Arena {
         self.heads.fill((NONE, NONE, V(NONE)));
         self.thunks.fill([NONE; 4]);
         self.nutable.clear();
+        self.conses.fill([NONE; 3]);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -288,6 +296,7 @@ impl Arena {
             + self.envs.capacity() * 17
             + self.thunks.capacity() * 16
             + self.nutable.capacity() * 9
+            + self.conses.capacity() * 12
             + self.envtable.capacity() * 9
     }
 
@@ -621,9 +630,23 @@ impl Arena {
         self.envs[e.0 as usize].len & LEN_BITS
     }
 
+    #[inline]
     pub fn cons(&mut self, env: Env, v: V) -> Env {
+        let h = hash2(env.0 as u64 | 2 << 40, v.0 as u64);
+        let i = (h >> 50) as usize & (CONSES - 1);
+        let s = self.conses[i];
+        if s[0] == env.0 && s[1] == v.0 {
+            return Env(s[2]);
+        }
+        let r = self.cons_find(env, v, h32(h));
+        self.conses[i] = [env.0, v.0, r.0];
+        r
+    }
+
+    /// `cons` not in its slot of `conses`.
+    #[inline(never)]
+    fn cons_find(&mut self, env: Env, v: V, h: u32) -> Env {
         let node = EnvNode { prev: env, v };
-        let h = h32(hash2(env.0 as u64 | 2 << 40, v.0 as u64));
         let Self { envs, envtable, .. } = self;
         if let Some(&(id, _)) = envtable.find(spread(h), |&(id, k)| {
             k == h && envs[id as usize].node == node
