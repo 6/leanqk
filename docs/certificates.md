@@ -229,8 +229,9 @@ operation, not in the arithmetic.
 
 ### What the evaluator spends its time on
 
-From `nitrolean check --stats` and `NITROLEAN_EVAL_PROFILE=1` on `inverse-128`,
-`inverse-256`, `nonsingular-64` and `nonsingular-128`: every evaluator call is answered
+Profiled at nitrolean `4646dd9` (the checker as of these measurements; later evaluator
+changes are not included). From `nitrolean check --stats` and `NITROLEAN_EVAL_PROFILE=1` on
+`inverse-128`, `inverse-256`, `nonsingular-64` and `nonsingular-128`: every evaluator call is answered
 (nothing stuck, too deep, over the limit or evaluated again), and the evaluator is almost
 all of the time (133.7 s of 133.9 s for `inverse-256`). It takes about 100 steps per
 multiply-add `acc + a * b`, in every export. The constants reached most for `inverse-256`
