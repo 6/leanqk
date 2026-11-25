@@ -294,22 +294,6 @@ impl IdTable {
         }
     }
 
-    /// Add `id` with hash `h` at the first slot from its line on that is
-    /// at or after slot `next`, and set `next` after it; for adding ids in
-    /// the order of their lines (then the slots from an id's line up to
-    /// it are used, as a probe needs). False if that is past the end.
-    #[inline]
-    pub fn push_in_order(&mut self, next: &mut usize, h: u64, id: u32) -> bool {
-        let at = (*next).max(self.line(h) * LINE);
-        let Some(s) = self.slots.get_mut(at) else {
-            return false;
-        };
-        *s.get_mut() = tag_of(h) | id as u64;
-        *self.len.get_mut() += 1;
-        *next = at + 1;
-        true
-    }
-
     /// Add `id` with hash `h` unless an id for which `eq` holds is
     /// present (then that id); there must be room. For a table only this
     /// thread sees.
@@ -578,42 +562,43 @@ impl<T: Node> Big<T> {
         const _: () = assert!(BITS + 2 * DIGIT == 32);
         let cap = n / BUCKETS + n / BUCKETS / 8 + 64;
         let mut fill = vec![0usize; BUCKETS];
-        // The buckets' hashes (low and high halves) and ids.
-        let size = BUCKETS * cap;
-        if scratch.len() < 3 * size {
-            scratch.resize(3 * size, 0);
+        // The buckets' entries: hash (low and high halves) and id.
+        if scratch.len() < 3 * BUCKETS * cap {
+            scratch.resize(3 * BUCKETS * cap, 0);
         }
-        let (lo, rest) = scratch.split_at_mut(size);
-        let (hi, rest) = rest.split_at_mut(size);
-        let ids = &mut rest[..size];
+        let ents = &mut scratch.as_chunks_mut::<3>().0[..BUCKETS * cap];
         // Entries of a bucket that is full (and, below, those that would
         // go past the end of the table), inserted last.
         let mut spill = Vec::new();
-        for id in 0..n as u32 {
-            let h = nodes.get(id).hash();
-            let b = (h as u32 >> (32 - BITS)) as usize;
-            let k = fill[b];
-            if k < cap {
-                let at = b * cap + k;
-                lo[at] = h as u32;
-                hi[at] = (h >> 32) as u32;
-                ids[at] = id;
-                fill[b] = k + 1;
-            } else {
-                spill.push((h, id));
+        let mut id = 0u32;
+        for chunk in &nodes.chunks {
+            for node in chunk {
+                let h = node.hash();
+                let b = (h as u32 >> (32 - BITS)) as usize;
+                let k = fill[b];
+                if k < cap {
+                    ents[b * cap + k] = [h as u32, (h >> 32) as u32, id];
+                    fill[b] = k + 1;
+                } else {
+                    spill.push((h, id));
+                }
+                id += 1;
             }
         }
-        let mut tmp: Vec<(u64, u32)> = Vec::with_capacity(cap);
-        let mut sorted: Vec<(u64, u32)> = Vec::with_capacity(cap);
+        let digit = |l: u32, d: u32| (l >> (d * DIGIT)) as usize & ((1 << DIGIT) - 1);
+        let mut tmp: Vec<[u32; 3]> = Vec::with_capacity(cap);
+        let mut sorted: Vec<[u32; 3]> = Vec::with_capacity(cap);
+        let slots = &mut table.slots;
+        let lines = table.lines as u64;
+        // The slot after the last one filled.
         let mut next = 0usize;
+        let mut added = 0usize;
         for (b, &k) in fill.iter().enumerate() {
-            let at = b * cap..b * cap + k;
-            let (bl, bh, bi) = (&lo[at.clone()], &hi[at.clone()], &ids[at]);
-            let digit = |h: u64, d: u32| (h as u32 >> (d * DIGIT)) as usize & ((1 << DIGIT) - 1);
-            let mut count = [[0usize; 1 << DIGIT]; 2];
-            for &l in bl {
-                count[0][digit(l as u64, 0)] += 1;
-                count[1][digit(l as u64, 1)] += 1;
+            let bucket = &ents[b * cap..b * cap + k];
+            let mut count = [[0u32; 1 << DIGIT]; 2];
+            for e in bucket {
+                count[0][digit(e[0], 0)] += 1;
+                count[1][digit(e[0], 1)] += 1;
             }
             for c in &mut count {
                 let mut sum = 0;
@@ -622,39 +607,51 @@ impl<T: Node> Big<T> {
                 }
             }
             tmp.clear();
-            tmp.resize(k, (0, 0));
-            for ((&l, &hh), &id) in bl.iter().zip(bh).zip(bi) {
-                let h = (hh as u64) << 32 | l as u64;
-                let c = &mut count[0][digit(h, 0)];
-                tmp[*c] = (h, id);
+            tmp.resize(k, [0; 3]);
+            for e in bucket {
+                let c = &mut count[0][digit(e[0], 0)];
+                tmp[*c as usize] = *e;
                 *c += 1;
             }
             sorted.clear();
-            sorted.resize(k, (0, 0));
-            for &(h, id) in &tmp {
-                let c = &mut count[1][digit(h, 1)];
-                sorted[*c] = (h, id);
+            sorted.resize(k, [0; 3]);
+            for e in &tmp {
+                let c = &mut count[1][digit(e[0], 1)];
+                sorted[*c as usize] = *e;
                 *c += 1;
             }
-            for (i, &(h, id)) in sorted.iter().enumerate() {
+            let mut last = None;
+            for (i, &[l, hi, id]) in sorted.iter().enumerate() {
+                let h = (hi as u64) << 32 | l as u64;
                 // An equal key has an equal hash, so it is among the ones
                 // just before with the same low half.
-                if i > 0 && sorted[i - 1].0 as u32 == h as u32 {
+                if last == Some(l) {
                     let node = nodes.get(id);
-                    for &(g, other) in sorted[..i].iter().rev() {
-                        if g as u32 != h as u32 {
+                    for &[l2, hi2, other] in sorted[..i].iter().rev() {
+                        if l2 != l {
                             break;
                         }
-                        if g == h && nodes.get(other).same(node) {
+                        if hi2 == hi && nodes.get(other).same(node) {
                             return Err((id.max(other), id.min(other)));
                         }
                     }
                 }
-                if !table.push_in_order(&mut next, h, id) {
-                    spill.push((h, id));
+                last = Some(l);
+                // The first slot from its line on that is after the last
+                // filled: the slots between are all in use, as a probe
+                // needs.
+                let at = next.max(((l as u64 * lines) >> 32) as usize * LINE);
+                match slots.get_mut(at) {
+                    Some(s) => {
+                        *s.get_mut() = tag_of(h) | id as u64;
+                        next = at + 1;
+                        added += 1;
+                    }
+                    None => spill.push((h, id)),
                 }
             }
         }
+        table.add_len(added);
         for (h, id) in spill {
             let same = |o| nodes.get(o).same(nodes.get(id));
             if let Some(old) = table.insert_unique(h, same, id) {

@@ -163,10 +163,12 @@ impl C<'_> {
         }
         // The digits, most significant first, as eight digits with
         // leading zeros.
-        let mut d = x << (64 - n8);
-        d = (d & 0x0F0F_0F0F_0F0F_0F0F).wrapping_mul(2561) >> 8;
-        d = (d & 0x00FF_00FF_00FF_00FF).wrapping_mul(6_553_601) >> 16;
-        d = (d & 0x0000_FFFF_0000_FFFF).wrapping_mul(42_949_672_960_001) >> 32;
+        // (Each step joins neighbours: `d * 10 + (d >> 8)` is
+        // `(d * 2561) >> 8` in the bytes kept, without a constant to load.)
+        let d = x << (64 - n8);
+        let d = d.wrapping_mul(10).wrapping_add(d >> 8) & 0x00FF_00FF_00FF_00FF;
+        let d = d.wrapping_mul(100).wrapping_add(d >> 16) & 0x0000_FFFF_0000_FFFF;
+        let d = d.wrapping_mul(42_949_672_960_001) >> 32;
         if n8 == 64 {
             // A ninth digit (ids of a big export), or more.
             let c = self.at(8);
