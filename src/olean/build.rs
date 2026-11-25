@@ -17,7 +17,7 @@
 use hashbrown::HashMap;
 
 use super::Fail;
-use super::decode::{LAZY, Tape};
+use super::decode::{LAZY, PRE_NAME, Tape};
 use super::par::{Local, Par};
 use crate::env::{
     Block, BlockKind, Decl, DeclKind, Env, LAZY_BASE, NameList, QuotKind, RecRule, is_lazy,
@@ -45,6 +45,9 @@ pub struct ModOut {
     order: Vec<usize>,
     /// Where each lazily read value is: (declaration, address, holder).
     lazy: HashMap<usize, (u64, u64)>,
+    /// The objects lazy values point to that were decoded: (address,
+    /// shared id), as in [`super::decode::Tape::frontier`].
+    pub frontier: Vec<(u64, u32)>,
 }
 
 /// Intern a module's tape into `par`.
@@ -235,6 +238,18 @@ pub fn intern_module(par: &Par, loc: &mut Local, t: &Tape) -> Result<ModOut, Fai
         .iter()
         .map(|l| (l.decl as usize, (l.ptr, l.holder)))
         .collect();
+    let frontier = t
+        .frontier
+        .iter()
+        .map(|&(a, id)| {
+            let g = if id & PRE_NAME != 0 {
+                names[(id & !PRE_NAME) as usize].0 | PRE_NAME
+            } else {
+                exprs[id as usize].0
+            };
+            (a, g)
+        })
+        .collect();
     Ok(ModOut {
         decls,
         pool,
@@ -242,6 +257,7 @@ pub fn intern_module(par: &Par, loc: &mut Local, t: &Tape) -> Result<ModOut, Fai
         units,
         order,
         lazy,
+        frontier,
     })
 }
 

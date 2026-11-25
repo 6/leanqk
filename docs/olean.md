@@ -39,6 +39,10 @@ a theorem's `value` is a placeholder:
   children first. A sink should look each node up in the shared arena
   first, so that ids stay canonical. Strings are already in the shared
   pool (`StrPool::intern_late` adds the ones first met in a lazy value).
+- Subterms of a value that were already built at load time arrive whole,
+  as ids of the shared arena, through `shared_name` and `shared_expr`. By
+  default these return the id unchanged, which is right for any sink
+  above the same environment, such as the checker's `Store`.
 
 The checker's `Store` implements `TermSink`. `Tc::value(&Decl)` builds the
 value once per declaration being checked, and returns it from a cache
@@ -73,6 +77,14 @@ checked as well.
    per-thread id blocks and grouped probes.
 5. **Assembly.** Declarations are ordered into blocks, equal copies are
    merged, and the arenas are handed to the `Env` without a copy.
+
+A lazy value is decoded only down to the subterms that were built at
+load time. Proofs share most of their types and instances with their
+statements, and in Lean's compacted files equal objects are one object.
+So the scan in step 3 records which loaded objects the lazy values point
+to, by address, and keeps them per module in a small map from address to
+shared id (`decode::Pre`). On the Lean package this map has 0.75M entries
+across all modules, and cuts the nodes decoded for proofs by 40%.
 
 The files of modules with lazy values stay mapped. Their pages are
 released after loading, and again every 1024 decoded values, so they do

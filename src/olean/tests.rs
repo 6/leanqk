@@ -411,6 +411,7 @@ fn lazy_values_match_eager_ones() {
     };
     assert_eq!(main(&eager), main(&lazy), "same declarations, same order");
     let mut decoded = 0;
+    let mut back = crate::compare::Tr::new(&lazy, &eager);
     for (j, d) in lazy.decls.iter().enumerate() {
         if lazy.by_name.get(&d.name) != Some(&(j as u32)) {
             continue;
@@ -431,6 +432,7 @@ fn lazy_values_match_eager_ones() {
             a: &eager,
             b: &lazy,
             missing: false,
+            back: &mut back,
         };
         let got = lazy.value_into(d, &mut sink).expect("decodes");
         assert!(

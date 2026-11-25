@@ -10,7 +10,7 @@
 //! (`touched`), so the files' pages do not pile up in memory as checking
 //! reads every proof.
 
-use super::decode::{Decoder, Memo, Tape};
+use super::decode::{Decoder, Memo, Pre, Tape};
 use super::file::OleanFile;
 use super::obj::Heap;
 use crate::env::{Env, LazyValues, TermSink};
@@ -19,9 +19,16 @@ use crate::level::{LevelId, LevelList, LevelNode};
 use crate::name::{NameId, NameNode};
 use crate::strings::StrId;
 
+/// A module with lazy values: its parts, and the terms its values
+/// point to that are already in the shared arena.
+pub struct LazyModule {
+    pub parts: Vec<OleanFile>,
+    pub pre: Pre,
+}
+
 pub struct OleanValues {
-    /// The parts of each module (by load index) that has lazy values.
-    pub modules: Vec<Option<Vec<OleanFile>>>,
+    /// Each module (by load index) that has lazy values.
+    pub modules: Vec<Option<LazyModule>>,
     /// Per value: module, address, holder.
     pub handles: Vec<(u32, u64, u64)>,
     /// Modules read since their pages were last released, and how many
@@ -38,7 +45,7 @@ impl LazyValues for OleanValues {
             .handles
             .get(k as usize)
             .ok_or("internal: no such lazy value")?;
-        let Some(Some(parts)) = self.modules.get(m as usize) else {
+        let Some(Some(LazyModule { parts, pre })) = self.modules.get(m as usize) else {
             return Err("internal: the module of a lazy value is not open".into());
         };
         let path =
@@ -49,6 +56,7 @@ impl LazyValues for OleanValues {
             .with(|s| s.take())
             .unwrap_or_else(|| (Memo::stamped(), Tape::default()));
         let mut d = Decoder::reusing(&heap, memo, tape);
+        d.pre = Some(pre);
         let res = d.expr(ptr, holder).map_err(|f| path(&f));
         let (memo, tape) = d.into_parts();
         let res = res.and_then(|root| build(env, &tape, root, sink));
@@ -62,12 +70,18 @@ impl LazyValues for OleanValues {
     }
 
     fn heap_bytes(&self) -> usize {
-        self.handles.capacity() * 24 + self.modules.capacity() * 24
+        let pre: usize = self
+            .modules
+            .iter()
+            .flatten()
+            .map(|m| m.pre.capacity() * 17)
+            .sum();
+        self.handles.capacity() * 24 + self.modules.capacity() * 24 + pre
     }
 }
 
 impl OleanValues {
-    pub fn new(modules: Vec<Option<Vec<OleanFile>>>, handles: Vec<(u32, u64, u64)>) -> Self {
+    pub fn new(modules: Vec<Option<LazyModule>>, handles: Vec<(u32, u64, u64)>) -> Self {
         OleanValues {
             modules,
             handles,
@@ -88,8 +102,8 @@ impl OleanValues {
         t.1 = 0;
         drop(t);
         for m in ms {
-            if let Some(Some(parts)) = self.modules.get(m as usize) {
-                parts.iter().for_each(OleanFile::release);
+            if let Some(Some(lm)) = self.modules.get(m as usize) {
+                lm.parts.iter().for_each(OleanFile::release);
             }
         }
     }
@@ -109,7 +123,15 @@ fn build(env: &Env, t: &Tape, root: ExprId, sink: &mut dyn TermSink) -> Result<E
             .collect::<Result<_, _>>()
             .map_err(|o| o.0.to_string())?;
         let mut names = Vec::with_capacity(t.names.len());
-        for n in &t.names {
+        let mut pre = t.pre_names.iter().peekable();
+        for (i, n) in t.names.iter().enumerate() {
+            if let Some(&&(j, g)) = pre.peek()
+                && j as usize == i
+            {
+                pre.next();
+                names.push(sink.shared_name(g));
+                continue;
+            }
             let node = match *n {
                 NameNode::Anon => NameNode::Anon,
                 NameNode::Str(p, s) => NameNode::Str(names[p.index()], strs[s.index()]),
@@ -149,7 +171,15 @@ fn build(env: &Env, t: &Tape, root: ExprId, sink: &mut dyn TermSink) -> Result<E
             lists.push(sink.list(&buf));
         }
         let mut exprs: Vec<ExprId> = Vec::with_capacity(t.exprs.len());
-        for e in &t.exprs {
+        let mut pre = t.pre_exprs.iter().peekable();
+        for (i, e) in t.exprs.iter().enumerate() {
+            if let Some(&&(j, g)) = pre.peek()
+                && j as usize == i
+            {
+                pre.next();
+                exprs.push(sink.shared_expr(g));
+                continue;
+            }
             let x = |i: ExprId| exprs[i.index()];
             let n = |i: NameId| names[i.index()];
             let id = match *e {
