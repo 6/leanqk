@@ -17,7 +17,7 @@
 use hashbrown::HashMap;
 
 use super::Fail;
-use super::decode::Tape;
+use super::decode::{LAZY, Tape};
 use super::par::{Local, Par};
 use crate::env::{Block, BlockKind, Decl, DeclKind, Env, NameList, QuotKind, RecRule};
 use crate::expr::{ExprData, ExprId, ExprNode, LetBinder};
@@ -191,7 +191,7 @@ pub fn intern_module(par: &Par, loc: &mut Local, t: &Tape) -> Result<ModOut, Fai
                     all,
                 },
                 DeclKind::Theorem { value, all } => DeclKind::Theorem {
-                    value: e(value),
+                    value: if value == LAZY { LAZY } else { e(value) },
                     all,
                 },
                 DeclKind::Opaque {
@@ -412,7 +412,9 @@ impl<'p> Assembler<'p> {
                 // by name.
                 let same = match (p.kind, d.kind) {
                     (DeclKind::Theorem { value: v, .. }, DeclKind::Theorem { value: w, .. }) => {
-                        v == w
+                        // Values still in their files are not compared:
+                        // the copy is kept (and checked).
+                        v == w && v != LAZY
                     }
                     (_, DeclKind::Theorem { .. }) => false,
                     _ => true,
@@ -667,6 +669,10 @@ fn sort_units(t: &Tape, units: &[Unit]) -> Vec<usize> {
     }
     let mut seen = vec![u32::MAX; t.exprs.len()];
     let mut work: Vec<ExprId> = Vec::new();
+    let mut lazy_of = vec![u32::MAX; decls.len()];
+    for (j, lv) in t.lazy.iter().enumerate() {
+        lazy_of[lv.decl as usize] = j as u32;
+    }
     let mut deps_of = |u: usize, out: &mut Vec<usize>| {
         out.clear();
         work.clear();
@@ -674,6 +680,20 @@ fn sort_units(t: &Tape, units: &[Unit]) -> Vec<usize> {
             let d = &decls[i];
             work.push(d.ty);
             match d.kind {
+                DeclKind::Theorem { value, .. } if value == LAZY => {
+                    // Scanned at decode time instead.
+                    let lv = &t.lazy[lazy_of[i] as usize];
+                    let (start, len) = (lv.refs.0 as usize, lv.refs.1 as usize);
+                    for n in &t.lazy_refs[start..start + len] {
+                        out.extend(unit_of.get(n));
+                    }
+                    if lv.nat_lit {
+                        out.extend(&lit_nat);
+                    }
+                    if lv.str_lit {
+                        out.extend(&lit_str);
+                    }
+                }
                 DeclKind::Definition { value, .. }
                 | DeclKind::Theorem { value, .. }
                 | DeclKind::Opaque { value, .. } => work.push(value),

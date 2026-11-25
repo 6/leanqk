@@ -177,6 +177,9 @@ pub fn main() -> ExitCode {
                     threads,
                     no_toolchain: false,
                     modules: module,
+                    // An experiment for measuring load times: the checker
+                    // cannot use such an environment yet.
+                    lazy_proofs: parse_only && std::env::var_os("NITROLEAN_LAZY_PROOFS").is_some(),
                 })
             } else {
                 Source::Export

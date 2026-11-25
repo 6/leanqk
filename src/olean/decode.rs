@@ -43,7 +43,32 @@ pub struct Tape {
     /// The names by depth (components), and the expressions by height.
     pub name_order: Layers,
     pub expr_order: Layers,
+    /// Theorem values left in the file (see [`Decoder::lazy_proofs`]).
+    pub lazy: Vec<LazyValue>,
+    /// The local constants they mention: ranges in here.
+    pub lazy_refs: Vec<NameId>,
 }
+
+/// The value of a theorem that is not decoded at load time, only scanned
+/// for the constants of its module it mentions (so that declarations can
+/// still be put in dependency order).
+#[derive(Clone, Copy, Debug)]
+pub struct LazyValue {
+    /// The declaration (an index into [`Tape::decls`]).
+    pub decl: u32,
+    /// The value's address, and the address of the object holding it.
+    pub ptr: u64,
+    pub holder: u64,
+    /// Its constants of this module: `lazy_refs[refs.0..refs.0 + refs.1]`.
+    pub refs: (u32, u32),
+    /// Whether it has a natural number or string literal (which refer to
+    /// `Nat`, or to `String` and `Char`, implicitly).
+    pub nat_lit: bool,
+    pub str_lit: bool,
+}
+
+/// The id a lazily read theorem value has until it is decoded.
+pub const LAZY: ExprId = ExprId(u32::MAX);
 
 /// Indices grouped into layers: layer `d` is `order[ends[d-1]..ends[d]]`.
 #[derive(Default)]
@@ -88,6 +113,12 @@ impl Layers {
 pub struct Memo {
     bits: Vec<u64>,
     vals: Vec<u32>,
+    /// For the scan of lazy values: objects scanned, objects that mention
+    /// a constant of the module, and the last scan that visited each.
+    scanned: Vec<u64>,
+    mentions: Vec<u64>,
+    stamp: Vec<u32>,
+    epoch: u32,
     /// (first address, end address, first entry) of each part.
     parts: Vec<(u64, u64, usize)>,
 }
@@ -118,6 +149,30 @@ impl Memo {
         if self.vals.len() < n {
             self.vals.resize(n, 0);
         }
+        self.scanned.clear();
+        self.mentions.clear();
+    }
+
+    /// Size the scan's arrays (only modules with lazy values need them).
+    fn reset_scan(&mut self) {
+        let n = self.bits.len();
+        self.scanned.clear();
+        self.scanned.resize(n, 0);
+        self.mentions.clear();
+        self.mentions.resize(n, 0);
+        if self.stamp.len() < self.vals.len() {
+            self.stamp.resize(self.vals.len(), 0);
+        }
+    }
+
+    #[inline]
+    fn bit(v: &[u64], k: usize) -> bool {
+        v[k / 64] >> (k % 64) & 1 != 0
+    }
+
+    #[inline]
+    fn set_bit(v: &mut [u64], k: usize) {
+        v[k / 64] |= 1 << (k % 64);
     }
 
     #[inline]
@@ -153,10 +208,13 @@ impl Memo {
 
 pub struct Decoder<'h, 'a> {
     heap: &'h Heap<'a>,
+    /// Leave theorem values in the file: scan them for references only.
+    pub lazy_proofs: bool,
     pub tape: Tape,
     memo: Memo,
     stack: Vec<(u64, u64, bool)>,
     estack: Vec<(Obj<'a>, bool)>,
+    name_buf: Vec<(u64, NameNode)>,
     lvl_buf: Vec<LevelId>,
 }
 
@@ -185,10 +243,12 @@ impl<'h, 'a> Decoder<'h, 'a> {
         tape.level_ends.push(0);
         Decoder {
             heap,
+            lazy_proofs: false,
             tape,
             memo,
             stack: Vec::new(),
             estack: Vec::new(),
+            name_buf: Vec::new(),
             lvl_buf: Vec::new(),
         }
     }
@@ -232,13 +292,203 @@ impl<'h, 'a> Decoder<'h, 'a> {
                 let d = self.constant(p, cs.addr)?;
                 self.tape.decls.push(d);
             }
+            if !self.tape.lazy.is_empty() {
+                self.scan_lazy()?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether local name `n` is the dotted name `s`.
+    fn is_dotted(&self, mut n: NameId, s: &str) -> bool {
+        for c in s.rsplit('.') {
+            match self.tape.names[n.index()] {
+                NameNode::Str(p, x) if self.tape.strs.get(x) == c => n = p,
+                _ => return false,
+            }
+        }
+        n == NameId::ANON
+    }
+
+    /// The expression children of an expression object (after checking
+    /// its shape), for the scan.
+    fn scan_kids(o: &Obj<'a>) -> Result<&'static [usize], Fail> {
+        let (nobjs, scalars, kids): (u8, usize, &[usize]) = match o.tag {
+            0 => (1, 8, &[]),
+            1 => return Err(Fail::malformed("free variable in a declaration")),
+            2 => return Err(Fail::malformed("metavariable in a declaration")),
+            3 => (1, 8, &[]),
+            4 => (2, 8, &[]),
+            5 => (2, 8, &[0, 1]),
+            6 | 7 => (3, 9, &[1, 2]),
+            8 => (4, 9, &[1, 2, 3]),
+            9 => (1, 8, &[]),
+            10 => (2, 8, &[1]),
+            11 => (3, 8, &[2]),
+            t => return Err(Fail::malformed(format!("bad expression tag {t}"))),
+        };
+        o.ctor(o.tag, nobjs, scalars, "expression")?;
+        Ok(kids)
+    }
+
+    /// What a literal object refers to implicitly: (`Nat`, `String`).
+    fn lit_kind(&self, o: &Obj<'a>) -> Result<(bool, bool), Fail> {
+        let lit = self.obj(o.field(0), o.addr, "a literal")?;
+        match lit.tag {
+            0 => Ok((true, false)),
+            1 => Ok((false, true)),
+            _ => Err(Fail::malformed("bad literal")),
+        }
+    }
+
+    /// Find the constants of this module that each lazy value mentions,
+    /// without decoding the values: first mark, bottom up, which objects
+    /// mention one at all, then walk each value through the marked
+    /// objects only. Constant names are decoded (they are memoized and
+    /// shared), so a reference is found whatever object its name is.
+    fn scan_lazy(&mut self) -> Result<(), Fail> {
+        // Names decoded during the scan are not declarations.
+        let is_local = |l: &[bool], n: NameId| l.get(n.index()).copied().unwrap_or(false);
+        let mut local = vec![false; self.tape.names.len()];
+        let (mut nat_local, mut str_local) = (false, false);
+        for d in &self.tape.decls {
+            local[d.name.index()] = true;
+        }
+        for d in &self.tape.decls {
+            nat_local |= self.is_dotted(d.name, "Nat");
+            str_local |= ["String", "Char.ofNat", "String.ofList"]
+                .iter()
+                .any(|s| self.is_dotted(d.name, s));
+        }
+        self.memo.reset_scan();
+        // Phase 1: post-order, marking what mentions a local constant.
+        let mut stack: Vec<(Obj<'a>, bool)> = Vec::new();
+        for i in 0..self.tape.lazy.len() {
+            let lv = self.tape.lazy[i];
+            let root = self.obj(lv.ptr, lv.holder, "an expression")?;
+            stack.push((root, false));
+            while let Some(&(o, expanded)) = stack.last() {
+                let k = self.memo.slot(o.addr).expect("in the module");
+                if Memo::bit(&self.memo.scanned, k) {
+                    stack.pop();
+                    continue;
+                }
+                let kids = Self::scan_kids(&o)?;
+                if !expanded {
+                    stack.last_mut().expect("nonempty").1 = true;
+                    for &i in kids.iter().rev() {
+                        let c = self.obj(o.field(i), o.addr, "an expression")?;
+                        let ck = self.memo.slot(c.addr).expect("in the module");
+                        if !Memo::bit(&self.memo.scanned, ck) {
+                            stack.push((c, false));
+                        }
+                    }
+                    continue;
+                }
+                let kid = |d: &Self, i: usize| {
+                    let ck = d.memo.slot(o.field(i)).expect("in the module");
+                    Memo::bit(&d.memo.mentions, ck)
+                };
+                let m = match o.tag {
+                    4 => is_local(&local, self.name(o.field(0), o.addr)?),
+                    9 => {
+                        let (n, st) = self.lit_kind(&o)?;
+                        (n && nat_local) || (st && str_local)
+                    }
+                    11 => {
+                        let n = self.name(o.field(0), o.addr)?;
+                        is_local(&local, n) || kid(self, 2)
+                    }
+                    _ => kids.iter().any(|&i| kid(self, i)),
+                };
+                Memo::set_bit(&mut self.memo.scanned, k);
+                if m {
+                    Memo::set_bit(&mut self.memo.mentions, k);
+                }
+                stack.pop();
+            }
+        }
+        // Phase 2: each value's constants, through marked objects only.
+        let mut work: Vec<u64> = Vec::new();
+        for i in 0..self.tape.lazy.len() {
+            let mut lv = self.tape.lazy[i];
+            self.memo.epoch = self.memo.epoch.wrapping_add(1).max(1);
+            let epoch = self.memo.epoch;
+            let start = idx(self.tape.lazy_refs.len(), "references")?;
+            work.clear();
+            work.push(lv.ptr);
+            while let Some(p) = work.pop() {
+                let k = self.memo.slot(p).expect("scanned");
+                if !Memo::bit(&self.memo.mentions, k) || self.memo.stamp[k] == epoch {
+                    continue;
+                }
+                self.memo.stamp[k] = epoch;
+                // Shapes were checked in phase 1; the pointers go down.
+                let o = self.obj(p, u64::MAX, "an expression")?;
+                match o.tag {
+                    4 => {
+                        let n = self.name(o.field(0), o.addr)?;
+                        if is_local(&local, n) {
+                            self.tape.lazy_refs.push(n);
+                        }
+                    }
+                    9 => {
+                        let (n, st) = self.lit_kind(&o)?;
+                        lv.nat_lit |= n;
+                        lv.str_lit |= st;
+                    }
+                    11 => {
+                        let n = self.name(o.field(0), o.addr)?;
+                        if is_local(&local, n) {
+                            self.tape.lazy_refs.push(n);
+                        }
+                        work.push(o.field(2));
+                    }
+                    _ => {
+                        for &i in Self::scan_kids(&o)? {
+                            work.push(o.field(i));
+                        }
+                    }
+                }
+            }
+            let end = idx(self.tape.lazy_refs.len(), "references")?;
+            let refs = &mut self.tape.lazy_refs[start as usize..];
+            refs.sort_unstable();
+            let mut n = 0;
+            for j in 0..refs.len() {
+                if j == 0 || refs[j] != refs[j - 1] {
+                    refs[n] = refs[j];
+                    n += 1;
+                }
+            }
+            let _ = end;
+            self.tape.lazy_refs.truncate(start as usize + n);
+            lv.refs = (start, n as u32);
+            self.tape.lazy[i] = lv;
         }
         Ok(())
     }
 
     /// A `Name`. Iterative: collect the components up to a known prefix.
     pub fn name(&mut self, ptr: u64, holder: u64) -> Result<NameId, Fail> {
-        let mut chain: Vec<(u64, NameNode)> = Vec::new();
+        if ptr & 1 == 0
+            && let Some(id) = self.memo.get(Kind::Name, ptr)
+        {
+            return Ok(NameId(id));
+        }
+        let mut chain = std::mem::take(&mut self.name_buf);
+        chain.clear();
+        let r = self.name_chain(ptr, holder, &mut chain);
+        self.name_buf = chain;
+        r
+    }
+
+    fn name_chain(
+        &mut self,
+        ptr: u64,
+        holder: u64,
+        chain: &mut Vec<(u64, NameNode)>,
+    ) -> Result<NameId, Fail> {
         let (mut p, mut h) = (ptr, holder);
         let mut base = loop {
             match self.heap.get(p, h)? {
@@ -625,10 +875,27 @@ impl<'h, 'a> Decoder<'h, 'a> {
                     all: self.name_list(f(3), v.addr)?,
                 }
             }
-            2 => DeclKind::Theorem {
-                value: self.expr(f(1), v.addr)?,
-                all: self.name_list(f(2), v.addr)?,
-            },
+            2 => {
+                let value = if self.lazy_proofs {
+                    // Check now that it is an expression below its holder.
+                    self.obj(f(1), v.addr, "an expression")?;
+                    self.tape.lazy.push(LazyValue {
+                        decl: idx(self.tape.decls.len(), "constants")?,
+                        ptr: f(1),
+                        holder: v.addr,
+                        refs: (0, 0),
+                        nat_lit: false,
+                        str_lit: false,
+                    });
+                    LAZY
+                } else {
+                    self.expr(f(1), v.addr)?
+                };
+                DeclKind::Theorem {
+                    value,
+                    all: self.name_list(f(2), v.addr)?,
+                }
+            }
             3 => DeclKind::Opaque {
                 value: self.expr(f(1), v.addr)?,
                 all: self.name_list(f(2), v.addr)?,
