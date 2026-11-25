@@ -3,6 +3,7 @@
 mod arena;
 mod ci;
 mod corpus;
+mod difffuzz;
 mod kc;
 mod kernel_cases;
 mod limited;
@@ -56,6 +57,8 @@ enum Cmd {
     /// The per-declaration oracle against Lean's checker (bench/oracle).
     #[command(subcommand)]
     Oracle(oracle::Cmd),
+    /// Differential fuzzing against Lean's checker (tests/fuzz).
+    Difffuzz(difffuzz::Args),
 }
 
 fn main() {
@@ -79,6 +82,7 @@ fn main() {
         Cmd::Matcert(c) => matcert::main(c),
         Cmd::Arena(c) => arena::main(c),
         Cmd::Oracle(c) => oracle::main(c),
+        Cmd::Difffuzz(a) => difffuzz::main(a),
     };
     if let Err(e) = r {
         match e.downcast_ref::<util::Exit>() {

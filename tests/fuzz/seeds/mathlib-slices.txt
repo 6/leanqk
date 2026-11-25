@@ -1,0 +1,20 @@
+# Mathlib slices for `fuzz.py seeds --mathlib DIR`: one per line, a module and
+# the constants whose closure is exported. Picked for small closures (a few MB)
+# that still cover the typeclass hierarchy, Finset/List lemmas, and proofs by
+# `decide` and `norm_num`. A missing constant only skips its line.
+Mathlib.Logic.Basic not_not Function.Injective.comp
+Mathlib.Order.Basic le_of_eq_of_le lt_irrefl
+Mathlib.Algebra.Group.Defs mul_assoc one_mul
+Mathlib.Algebra.Group.Basic mul_inv_cancel_left
+Mathlib.Algebra.Order.Ring.Lemmas mul_le_mul_of_nonneg_left
+Mathlib.Data.Nat.Defs Nat.succ_le_iff
+Mathlib.Data.Nat.Prime.Defs Nat.prime_two Nat.prime_three
+Mathlib.Data.Fin.Basic Fin.val_add
+Mathlib.Data.List.Basic List.length_append
+Mathlib.Data.Finset.Basic Finset.mem_insert
+Mathlib.Data.ZMod.Defs ZMod.commRing
+Mathlib.Data.Int.GCD Int.gcd_eq_gcd_ab
+Mathlib.Order.Lattice sup_comm
+Mathlib.Data.Prod.Basic Prod.ext_iff
+Mathlib.Data.Sigma.Basic Sigma.ext_iff
+Mathlib.Data.Quot Quotient.out_eq
