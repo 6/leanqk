@@ -13,7 +13,22 @@
 //! general path yields the same one.
 
 use super::{Comp, Item, R, RawExpr, RawLevel};
+use crate::env::{Hints, Safety};
 use crate::expr::BinderInfo;
+
+/// A theorem or definition record. The lists are ranges of the scratch
+/// space given to [`line`]; `hints` and `safety` are those of a
+/// definition (unused for a theorem).
+pub(super) struct Decl {
+    pub thm: bool,
+    pub all: (usize, usize),
+    pub level_params: (usize, usize),
+    pub name: u64,
+    pub ty: u64,
+    pub value: u64,
+    pub hints: Hints,
+    pub safety: Safety,
+}
 
 /// What a scanned record goes to. The commonest kinds have their own
 /// methods, so that the reader can apply them without building an
@@ -27,6 +42,12 @@ pub(super) trait Sink {
     /// Any other record; its text ranges are into `line`, and the levels
     /// of a `const` into `us`.
     fn item(&mut self, item: Item, line: &[u8], us: &[u64]) -> R<()>;
+
+    /// A theorem or definition, with its lists in `us`; `None` to leave
+    /// the line to the general parser.
+    fn decl(&mut self, _d: &Decl, _us: &[u64]) -> Option<R<()>> {
+        None
+    }
 }
 
 /// A cursor over the rest of the input, starting at a line.
@@ -187,6 +208,76 @@ impl C<'_> {
             _ => None,
         }
     }
+
+    /// A list of numbers (the opening bracket is already read), pushed to
+    /// `us`: the range they take there.
+    fn nats(&mut self, us: &mut Vec<u64>) -> Option<(usize, usize)> {
+        let start = us.len();
+        if !self.opt(b"]") {
+            loop {
+                us.push(self.nat()?);
+                if self.opt(b"]") {
+                    break;
+                }
+                self.lit(b",")?;
+            }
+        }
+        Some((start, us.len()))
+    }
+
+    /// The fields of a theorem or definition after `{"thm":` or
+    /// `{"def":`, and the end of the line.
+    fn decl(&mut self, thm: bool, us: &mut Vec<u64>) -> Option<Decl> {
+        us.clear();
+        self.lit(b"{\"all\":[")?;
+        let all = self.nats(us)?;
+        let mut hints = Hints::Opaque;
+        if !thm {
+            self.lit(b",\"hints\":")?;
+            hints = if self.opt(b"\"abbrev\"") {
+                Hints::Abbrev
+            } else if self.opt(b"\"opaque\"") {
+                Hints::Opaque
+            } else {
+                self.lit(b"{\"regular\":")?;
+                let h = u32::try_from(self.nat()?).ok()?;
+                self.lit(b"}")?;
+                Hints::Regular(h)
+            };
+        }
+        self.lit(b",\"levelParams\":[")?;
+        let level_params = self.nats(us)?;
+        self.lit(b",\"name\":")?;
+        let name = self.nat()?;
+        let mut safety = Safety::Safe;
+        if !thm {
+            self.lit(b",\"safety\":\"")?;
+            safety = if self.opt(b"safe\"") {
+                Safety::Safe
+            } else if self.opt(b"unsafe\"") {
+                Safety::Unsafe
+            } else {
+                self.lit(b"partial\"")?;
+                Safety::Partial
+            };
+        }
+        self.lit(b",\"type\":")?;
+        let ty = self.nat()?;
+        self.lit(b",\"value\":")?;
+        let value = self.nat()?;
+        self.lit(b"}}")?;
+        self.eol()?;
+        Some(Decl {
+            thm,
+            all,
+            level_params,
+            name,
+            ty,
+            value,
+            hints,
+            safety,
+        })
+    }
 }
 
 /// [`C::nat`] a digit at a time, from `p`: the value and the position
@@ -264,6 +355,16 @@ pub(super) fn line<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option
                 id,
                 node: RawExpr::Const(name, a, b),
             }
+        }
+        b't' | b'd' => {
+            let thm = s[2] == b't';
+            if thm {
+                c.lit(b"thm\":")?;
+            } else {
+                c.lit(b"def\":")?;
+            }
+            let d = c.decl(thm, us)?;
+            return sink.decl(&d, us).map(|r| (c.p, r));
         }
         b'b' => {
             c.lit(b"bvar\":")?;

@@ -562,6 +562,10 @@ impl scan::Sink for State {
     fn item(&mut self, item: Item, line: &[u8], us: &[u64]) -> R<()> {
         self.apply(Src { text: line, us }, item)
     }
+
+    fn decl(&mut self, d: &scan::Decl, us: &[u64]) -> Option<R<()>> {
+        Some(self.scanned_decl(d, us))
+    }
 }
 
 /// Where the text and level ranges of an item point: a batch's buffers,
@@ -1739,6 +1743,65 @@ impl State {
         }
     }
 
+    /// A theorem or definition the scanner read; the same steps, in the
+    /// same order, as [`State::single`].
+    fn scanned_decl(&mut self, d: &scan::Decl, us: &[u64]) -> R<()> {
+        let name = self.name(d.name)?;
+        let level_params = self.name_ids(&us[d.level_params.0..d.level_params.1])?;
+        let ty = self.root(d.ty)?;
+        let all = &us[d.all.0..d.all.1];
+        let kind = if d.thm {
+            DeclKind::Theorem {
+                value: self.thm_value(d.value)?,
+                all: self.name_ids(all)?,
+            }
+        } else {
+            DeclKind::Definition {
+                value: self.root(d.value)?,
+                hints: d.hints,
+                safety: d.safety,
+                all: self.name_ids(all)?,
+            }
+        };
+        let start = self.env.decls.len() as u32;
+        self.push_decl(Decl {
+            name,
+            level_params,
+            ty,
+            kind,
+        })?;
+        self.env.blocks.push(Block {
+            start,
+            kind: BlockKind::Single,
+        });
+        match self.lazy.as_deref_mut() {
+            Some(b) => b.flush(&mut self.expr_ids),
+            None => Ok(()),
+        }
+    }
+
+    /// A list of names, by export id.
+    fn name_ids(&mut self, ids: &[u64]) -> R<NameList> {
+        let mut buf = std::mem::take(&mut self.names_buf);
+        buf.clear();
+        let mut res = Ok(());
+        for &n in ids {
+            match self.name(n) {
+                Ok(n) => buf.push(n),
+                Err(e) => {
+                    res = Err(e);
+                    break;
+                }
+            }
+        }
+        let out = res.and_then(|()| match self.env.push_names(&buf) {
+            Some(l) => Ok(l),
+            None => Err(Overflow("too many names in declaration lists").into()),
+        });
+        self.names_buf = buf;
+        out
+    }
+
     fn name_list(&mut self, o: &Obj<'_>, k: &str) -> R<NameList> {
         let vals = o.arr(k)?;
         let mut buf = std::mem::take(&mut self.names_buf);
@@ -2180,6 +2243,15 @@ mod tests {
                     r#"{"ie":3,"lam":{"binderInfo":"default","body":1,"name":2,"type":0}}"#,
                     r#"{"ie":4,"mdata":{"data":{},"expr":3}}"#,
                     r#"{"thm":{"all":[3],"levelParams":[],"name":3,"type":2,"value":4}}"#,
+                    r#"{"in":4,"str":{"pre":0,"str":"d"}}"#,
+                    r#"{"in":5,"num":{"i":2,"pre":4}}"#,
+                    r#"{"in":6,"num":{"i":3,"pre":4}}"#,
+                    r#"{"in":7,"str":{"pre":0,"str":"u"}}"#,
+                    r#"{"def":{"all":[4],"hints":"abbrev","levelParams":[],"name":4,"safety":"safe","type":2,"value":3}}"#,
+                    r#"{"def":{"all":[5,6],"hints":{"regular":7},"levelParams":[7],"name":5,"safety":"unsafe","type":2,"value":3}}"#,
+                    r#"{"def":{"all":[5,6],"hints":"opaque","levelParams":[],"name":6,"safety":"partial","type":2,"value":4}}"#,
+                    r#"{"in":8,"str":{"pre":0,"str":"t2"}}"#,
+                    r#"{"thm":{"all":[8],"levelParams":[7],"name":8,"type":2,"value":3}}"#,
                 ] {
                     text.push_str(l);
                     text.push('\n');
