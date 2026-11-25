@@ -51,6 +51,76 @@ pub struct Args {
     max_tests: usize,
 }
 
+/// Write DECLARATIONS of EXPORT and every declaration they use, transitively,
+/// as an export of their own (to time or debug them alone).
+#[derive(clap::Args)]
+pub struct ClosureArgs {
+    export: PathBuf,
+    #[arg(required = true)]
+    decls: Vec<String>,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+pub fn closure_main(a: ClosureArgs) -> Result<()> {
+    eprintln!("reading {}", a.export.display());
+    let g = Graph::new(&a.export)?;
+    let mut start = Vec::new();
+    for d in &a.decls {
+        let Some(nid) = g.name_id(&norm_name(d)) else {
+            return Err(exit_with(
+                1,
+                format!("closure: {d} is not declared in {}", a.export.display()),
+            ));
+        };
+        start.push(g.decl_of[&nid]);
+    }
+    // What the kernel's literal and quotient support looks up by name.
+    for n in BUILTINS {
+        if let Some(nid) = g.name_id(n) {
+            start.push(g.decl_of[&nid]);
+        }
+    }
+    let none = HashSet::new();
+    let lines = g.closure(&start, &none)?;
+    g.write(&a.out, &lines, &none)?;
+    eprintln!(
+        "closure: {} declarations written to {}",
+        lines.len(),
+        a.out.display()
+    );
+    Ok(())
+}
+
+const BUILTINS: [&str; 26] = [
+    "Nat",
+    "Nat.add",
+    "Nat.sub",
+    "Nat.mul",
+    "Nat.div",
+    "Nat.mod",
+    "Nat.gcd",
+    "Nat.beq",
+    "Nat.ble",
+    "Nat.land",
+    "Nat.lor",
+    "Nat.xor",
+    "Nat.shiftLeft",
+    "Nat.shiftRight",
+    "Nat.pow",
+    "Nat.log2",
+    "String",
+    "String.ofList",
+    "Char",
+    "Char.ofNat",
+    "List",
+    "Bool",
+    "Eq",
+    "Quot",
+    "Quot.mk",
+    "Quot.lift",
+];
+
 /// 'accept', 'reject:<kind>', or None (another declaration rejected, or no verdict).
 fn verdict(
     cmd: &[OsString],

@@ -29,6 +29,8 @@ pub enum Cmd {
     Run(RunArgs),
     /// Reduce a declaration the checkers disagree on to a small export.
     Reduce(reduce::Args),
+    /// Write the closure of some declarations (with everything they use) as an export.
+    Closure(reduce::ClosureArgs),
     /// `cargo build --release`, then `oracle build`, then `oracle run`.
     All(RunArgs),
 }
@@ -38,6 +40,7 @@ pub fn main(c: Cmd) -> Result<()> {
         Cmd::Build(a) => build(a).map_err(|e| prefix_error("build", e)),
         Cmd::Run(a) => run_main(a),
         Cmd::Reduce(a) => reduce::main(a),
+        Cmd::Closure(a) => reduce::closure_main(a),
         Cmd::All(a) => all(a),
     }
 }
