@@ -458,6 +458,7 @@ impl Nbe<'_> {
     }
 
     fn lazy_delta_reduction_step(&mut self, t: &mut V, s: &mut V) -> R<Step> {
+        self.decl_steps = self.decl_steps.saturating_add(1);
         let dt = self.is_delta(*t);
         let ds = self.is_delta(*s);
         match (dt, ds) {
@@ -731,10 +732,36 @@ impl Nbe<'_> {
     }
 
     pub fn is_def_eq(&mut self, t: V, s: V) -> R<bool> {
+        if t == s {
+            return Ok(true);
+        }
         if self.neq.contains(&pair(t, s)) {
             return Ok(false);
         }
+        // In a heavy declaration, also remember results by the terms the
+        // values stand for: different values (a thunk and its value, say,
+        // inside them) often stand for one term, and then compare alike.
+        let named = if self.decl_steps > HEAVY_STEPS && !self.eq_ok.contains(&pair(t, s)) {
+            match (self.name(t), self.name(s)) {
+                (Some(a), Some(b)) => {
+                    if a == b {
+                        return Ok(true);
+                    }
+                    let k = if a.0 <= b.0 { (a, b) } else { (b, a) };
+                    if let Some(&r) = self.name_eq.get(&k) {
+                        return Ok(r);
+                    }
+                    Some(k)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
         let r = self.is_def_eq_core(t, s)?;
+        if let Some(k) = named {
+            self.name_eq.insert(k, r);
+        }
         if r {
             self.eq_ok.insert(pair(t, s));
         } else {
@@ -743,6 +770,10 @@ impl Nbe<'_> {
         Ok(r)
     }
 }
+
+/// Lazy delta steps after which a declaration counts as heavy, and
+/// definitional equality also goes by names (`is_def_eq`).
+const HEAVY_STEPS: u32 = 1 << 10;
 
 /// Bound on the nodes one structural comparison may visit.
 const SYN_BUDGET: u32 = 1 << 10;
@@ -789,7 +820,9 @@ impl Nbe<'_> {
                 (ft != t || fs != s) && self.syn_eq_v(ft, fs, budget)
             }
             (Val::Const(n_l, l_l, sp1), Val::Const(n_r, l_r, sp2)) => {
-                n_l == n_r && l_l == l_r && self.syn_eq_sp(sp1, sp2, budget)
+                n_l == n_r
+                    && (l_l == l_r || self.is_def_eq_levels(l_l, l_r))
+                    && self.syn_eq_sp(sp1, sp2, budget)
             }
             (Val::FVar(k_l, sp1), Val::FVar(k_r, sp2)) => {
                 k_l == k_r && self.syn_eq_sp(sp1, sp2, budget)
@@ -964,11 +997,12 @@ impl Nbe<'_> {
                 n_l == n_r && {
                     let a = self.inst_list(ls1, l_l);
                     let b = self.inst_list(ls2, l_r);
-                    a == b
+                    a == b || self.is_def_eq_levels(a, b)
                 }
             }
             (ExprNode::Sort(a), ExprNode::Sort(b)) => {
-                self.inst_level(a, l_l) == self.inst_level(b, l_r)
+                let (a, b) = (self.inst_level(a, l_l), self.inst_level(b, l_r));
+                a == b || self.is_def_eq_level(a, b)
             }
             (ExprNode::NatSmall(a, b), ExprNode::NatSmall(c, d)) => (a, b) == (c, d),
             (ExprNode::NatBig(a), ExprNode::NatBig(b)) => self.st.big(a) == self.st.big(b),
@@ -1050,7 +1084,10 @@ impl Nbe<'_> {
                             }
                             return match (head, n) {
                                 (Val::Const(m, ls, _), ExprNode::Const(m_r, ls2)) => {
-                                    m == m_r && self.inst_list(ls2, l) == ls
+                                    m == m_r && {
+                                        let l2 = self.inst_list(ls2, l);
+                                        l2 == ls || self.is_def_eq_levels(l2, ls)
+                                    }
                                 }
                                 (Val::FVar(a, _), ExprNode::FVar(b)) => a == b,
                                 _ => false,

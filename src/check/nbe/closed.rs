@@ -14,6 +14,9 @@ use super::super::tc::Tc;
 use super::Nbe;
 use super::val::{Elim, Env, Ls, Sp, V, Val};
 
+/// Terms names may add to the store before naming stops.
+const NAMES_LIMIT: usize = 1 << 20;
+
 /// How deep a read back may nest before the evaluator is not used.
 const MAX_DEPTH: u32 = 4096;
 
@@ -25,7 +28,7 @@ impl<'e> Nbe<'e> {
             return None;
         }
         let mut memo = IdMap::default();
-        let e = self.readback_closed(v, 0, &mut memo)?;
+        let e = self.term_of(v, 0, &mut memo, false)?;
         let mut ev = match self.ev.take() {
             Some(ev) => ev,
             None => Box::new(Tc::new(Store::new(self.st.env), self.ext, self.limit)),
@@ -45,9 +48,42 @@ impl<'e> Nbe<'e> {
         Some(self.eval(r, Env::NIL, Ls::ID))
     }
 
-    /// The term of a closed value, or `None` if it nests too deep or holds
-    /// a value with no term of its own.
-    fn readback_closed(&mut self, v: V, depth: u32, memo: &mut IdMap<V, ExprId>) -> Option<ExprId> {
+    /// The term `v` stands for, remembered.
+    pub(super) fn name(&mut self, v: V) -> Option<ExprId> {
+        if let Some(&e) = self.names.get(&v) {
+            return (e.0 != super::val::NONE).then_some(e);
+        }
+        if self.name_exprs > NAMES_LIMIT {
+            return None;
+        }
+        let mut memo = std::mem::take(&mut self.names);
+        let before = self.st.local_exprs();
+        let r = self.term_of(v, 0, &mut memo, true);
+        self.name_exprs += self.st.local_exprs() - before;
+        self.names = memo;
+        if r.is_none() {
+            self.names.insert(v, ExprId(super::val::NONE));
+        }
+        r
+    }
+
+    /// Drop the names (their terms stay in the store until it is cleared).
+    pub(super) fn forget_names(&mut self) {
+        self.names = IdMap::default();
+        self.name_eq = IdMap::default();
+    }
+
+    /// The term a value stands for (its closures' terms with their
+    /// environments substituted), or `None` if it nests too deep or holds a
+    /// value with no term of its own. Free variables are the store's `FVar`
+    /// terms if `open`, else `None`.
+    pub(super) fn term_of(
+        &mut self,
+        v: V,
+        depth: u32,
+        memo: &mut IdMap<V, ExprId>,
+        open: bool,
+    ) -> Option<ExprId> {
         if depth > MAX_DEPTH {
             return None;
         }
@@ -63,38 +99,57 @@ impl<'e> Nbe<'e> {
             }
             Val::Str(s) => self.st.mk(crate::expr::ExprNode::Str(s)),
             Val::Lam(t, env, ls) | Val::Pi(t, env, ls) | Val::Thunk(t, env, ls) => {
-                self.closed_term_in(t, env, ls, depth, memo)?
+                self.term_in_env(t, env, ls, depth, memo, open)?
             }
-            Val::PiInfer(..) | Val::FVar(..) => return None,
-            Val::Const(n, l, sp) => {
-                let mut h = self.st.cnst(n, l);
-                if sp != Sp::NIL {
-                    let mut es = Vec::new();
-                    self.a.elims(sp, &mut es);
-                    for el in es {
-                        h = match el {
-                            Elim::Arg(a) => {
-                                let a = self.readback_closed(a, depth + 1, memo)?;
-                                self.st.app(h, a)
-                            }
-                            Elim::Proj(s, i) => self.st.proj(s, i, h),
-                        };
-                    }
+            Val::PiInfer(..) => return None,
+            Val::FVar(k, sp) => {
+                if !open || k == super::BOTTOM {
+                    return None;
                 }
-                h
+                let h = self.st.fvar(k);
+                self.spine_term(h, sp, depth, memo, open)?
+            }
+            Val::Const(n, l, sp) => {
+                let h = self.st.cnst(n, l);
+                self.spine_term(h, sp, depth, memo, open)?
             }
         };
         memo.insert(v, e);
         Some(e)
     }
 
-    fn closed_term_in(
+    fn spine_term(
+        &mut self,
+        mut h: ExprId,
+        sp: Sp,
+        depth: u32,
+        memo: &mut IdMap<V, ExprId>,
+        open: bool,
+    ) -> Option<ExprId> {
+        if sp != Sp::NIL {
+            let mut es = Vec::new();
+            self.a.elims(sp, &mut es);
+            for el in es {
+                h = match el {
+                    Elim::Arg(a) => {
+                        let a = self.term_of(a, depth + 1, memo, open)?;
+                        self.st.app(h, a)
+                    }
+                    Elim::Proj(s, i) => self.st.proj(s, i, h),
+                };
+            }
+        }
+        Some(h)
+    }
+
+    fn term_in_env(
         &mut self,
         mut e: ExprId,
         env: Env,
         ls: Ls,
         depth: u32,
         memo: &mut IdMap<V, ExprId>,
+        open: bool,
     ) -> Option<ExprId> {
         if ls != Ls::ID {
             let node = self.a.ls(ls);
@@ -109,7 +164,7 @@ impl<'e> Nbe<'e> {
             vs.truncate(n);
             let mut ts = Vec::with_capacity(vs.len());
             for v in vs {
-                ts.push(self.readback_closed(v, depth + 1, memo)?);
+                ts.push(self.term_of(v, depth + 1, memo, open)?);
             }
             e = self.st.instantiate(e, &ts);
         }

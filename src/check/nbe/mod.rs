@@ -51,6 +51,10 @@ pub struct FVarInfo {
 /// evaluation met: it never reduces and has no type.
 pub const BOTTOM: u32 = u32::MAX - 1;
 
+/// Terms of names the store may hold before it is dropped between
+/// declarations.
+const NAMES_KEEP: usize = 1 << 18;
+
 /// Values an arena may hold before it is dropped between declarations.
 const KEEP_VALUES: usize = 1 << 16;
 
@@ -101,6 +105,15 @@ pub struct Nbe<'e> {
     ev: Option<Box<Tc<'e>>>,
     /// Whether `ev` was used since `begin`.
     ev_used: bool,
+    /// The terms values stand for (`term_of`), in heavy declarations.
+    names: IdMap<V, ExprId>,
+    /// Definitional equality of terms named so.
+    name_eq: IdMap<(ExprId, ExprId), bool>,
+    /// Terms added to `st` for names: they do not count towards its size
+    /// for keeping it between declarations.
+    name_exprs: usize,
+    /// Lazy delta steps in this declaration.
+    pub(crate) decl_steps: u32,
 }
 
 /// Empty `c`, dropping its storage if it is large: clearing a table costs
@@ -192,6 +205,10 @@ impl<'e> Nbe<'e> {
             closed_eval: super::eval::enabled(),
             ev: None,
             ev_used: false,
+            names: IdMap::default(),
+            name_eq: IdMap::default(),
+            name_exprs: 0,
+            decl_steps: 0,
         }
     }
 
@@ -203,7 +220,10 @@ impl<'e> Nbe<'e> {
     /// universe parameters are known to be well-formed. Past a size, all
     /// of it goes.
     pub fn begin(&mut self, limit: u32) {
-        if self.a.len() > KEEP_VALUES || self.st.local_exprs() > KEEP_VALUES {
+        if self.a.len() > KEEP_VALUES
+            || self.st.local_exprs() > KEEP_VALUES + self.name_exprs
+            || self.name_exprs > NAMES_KEEP
+        {
             self.reset(limit);
             return;
         }
@@ -218,6 +238,7 @@ impl<'e> Nbe<'e> {
         self.terms.clear();
         self.vargs.clear();
         self.eager_depth = 0;
+        self.decl_steps = 0;
         self.open_count.clear();
         for v in self.level_checked.drain(..) {
             self.a.clear_checked(v);
@@ -228,6 +249,11 @@ impl<'e> Nbe<'e> {
     /// Forget everything.
     pub fn reset(&mut self, limit: u32) {
         self.limit = limit;
+        self.decl_steps = 0;
+        // Names hold free variables by index, and those go now.
+        if !self.names.is_empty() {
+            self.forget_names();
+        }
         self.ev = None;
         self.ev_used = false;
         self.lparams.clear();
@@ -243,6 +269,7 @@ impl<'e> Nbe<'e> {
         self.a.clear();
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
+            self.name_exprs = 0;
         }
         shrink(&mut self.bigs);
         shrink(&mut self.big_table);
