@@ -687,6 +687,13 @@ impl<'e> Nbe<'e> {
     /// `env` as the key of a memo about `e`: trimmed, and with `HOLE` for
     /// the entries `e` does not use, so that the same term under different
     /// unused bindings has one key.
+    /// A value standing where nothing will read one (any closed value
+    /// would do; Lean's `dontcare`).
+    #[inline]
+    pub fn hole(&mut self) -> V {
+        self.a.sort(LevelId::ZERO)
+    }
+
     /// Whether `key_env` of `e` is its environment trimmed.
     #[inline]
     pub fn key_is_trim(&self, e: ExprId) -> bool {
@@ -710,7 +717,7 @@ impl<'e> Nbe<'e> {
         let mut vs = Vec::new();
         self.a.env_values(env, &mut vs);
         // Any value will do where the term does not look.
-        let hole = self.a.mk(val::Val::Sort(LevelId::ZERO));
+        let hole = self.hole();
         let mut r = val::Env::NIL;
         for i in (0..vs.len()).rev() {
             r = self.a.cons(r, if m >> i & 1 != 0 { vs[i] } else { hole });

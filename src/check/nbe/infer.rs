@@ -484,7 +484,7 @@ impl Nbe<'_> {
                 let av = self.thunk(a, env, ls);
                 if !infer_only {
                     let dom = self.binder_dom(ft);
-                    self.check_arg(a, av, env, ls, dom)?;
+                    self.check_arg(a, env, ls, dom)?;
                 }
                 ft = self.instantiate(ft, av)?;
                 k += 1;
@@ -498,11 +498,16 @@ impl Nbe<'_> {
                     unreachable!()
                 };
                 let a = self.terms[k];
-                let av = self.thunk(a, env, ls);
                 if !infer_only {
                     let dom = self.thunk(d, pi_env, pi_ls);
-                    self.check_arg(a, av, env, ls, dom)?;
+                    self.check_arg(a, env, ls, dom)?;
                 }
+                // The argument's value only if the codomain may read it.
+                let av = if self.st.data(b).may_use_bvar(0) {
+                    self.thunk(a, env, ls)
+                } else {
+                    self.hole()
+                };
                 pi_env = self.a.cons(pi_env, av);
                 k += 1;
                 if k < base + n && matches!(self.st.node(b), ExprNode::Pi(..)) {
@@ -516,9 +521,8 @@ impl Nbe<'_> {
         Ok(ft)
     }
 
-    /// Check the argument `a` (whose value is `av`) against the domain
-    /// `dom`.
-    fn check_arg(&mut self, a: ExprId, av: V, env: Env, ls: Ls, dom: V) -> R<()> {
+    /// Check the argument `a` against the domain `dom`.
+    fn check_arg(&mut self, a: ExprId, env: Env, ls: Ls, dom: V) -> R<()> {
         let ok = if self.is_eager_reduce(a) {
             let saved = std::mem::replace(&mut self.eager, true);
             let r = self.check_against(a, env, ls, dom);
@@ -528,6 +532,7 @@ impl Nbe<'_> {
             self.check_against(a, env, ls, dom)?
         };
         if !ok {
+            let av = self.thunk(a, env, ls);
             let at = self.infer_term(a, env, ls, true)?;
             return err(format!(
                 "application type mismatch: argument {} has type {} but is expected to have type {}",

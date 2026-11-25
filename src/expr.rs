@@ -155,10 +155,24 @@ impl ExprData {
     pub const MAX_RANGE: u32 = (1 << 20) - 1;
     const HAS_LEVEL_PARAM: u32 = 1 << 20;
     const HAS_FVAR: u32 = 1 << 21;
+    /// Bit `USED_SHIFT + i` is set if `#i` may occur loose, for `i` below
+    /// `USED_LOW`: exactly, except that `#(USED_LOW - 1)` counts as
+    /// occurring under a binder whose body has a larger range.
+    const USED_SHIFT: u32 = 22;
+    const USED_LOW: u32 = 10;
+    const USED: u32 = ((1 << Self::USED_LOW) - 1) << Self::USED_SHIFT;
 
+    /// The data of a constant, sort or literal (`range` 0), or of the
+    /// bound variable `#(range - 1)`.
     pub(crate) fn new(range: u32, has_level_param: bool) -> Self {
+        let used = if range > 0 && range - 1 < Self::USED_LOW {
+            1 << (Self::USED_SHIFT + range - 1)
+        } else {
+            0
+        };
         ExprData(
             range
+                | used
                 | if has_level_param {
                     Self::HAS_LEVEL_PARAM
                 } else {
@@ -195,6 +209,13 @@ impl ExprData {
         self.loose_bvar_range() != 0
     }
 
+    /// Whether `#i` may occur loose (if not, it surely does not).
+    #[inline]
+    pub fn may_use_bvar(self, i: u32) -> bool {
+        i < self.loose_bvar_range()
+            && (i >= Self::USED_LOW || self.0 & 1 << (Self::USED_SHIFT + i) != 0)
+    }
+
     pub(crate) fn union(self, other: ExprData) -> ExprData {
         let r = self.loose_bvar_range().max(other.loose_bvar_range());
         ExprData((self.0 | other.0) & !Self::MAX_RANGE | r)
@@ -202,8 +223,13 @@ impl ExprData {
 
     /// Data of a binder body seen from outside the binder.
     pub(crate) fn under_binder(self) -> ExprData {
-        let r = self.loose_bvar_range().saturating_sub(1);
-        ExprData(self.0 & !Self::MAX_RANGE | r)
+        let r0 = self.loose_bvar_range();
+        let r = r0.saturating_sub(1);
+        let mut used = (self.0 & Self::USED) >> 1 & Self::USED;
+        if r0 > Self::USED_LOW {
+            used |= 1 << (Self::USED_SHIFT + Self::USED_LOW - 1);
+        }
+        ExprData(self.0 & !Self::MAX_RANGE & !Self::USED | used | r)
     }
 }
 
@@ -536,6 +562,31 @@ mod tests {
             es.intern(ExprNode::BVar(ExprData::MAX_RANGE), &levels),
             Err(ExprError::BVarTooLarge(_))
         ));
+    }
+
+    #[test]
+    fn used_bound_variables() {
+        let levels = Levels::new();
+        let mut es = Exprs::new();
+        let bv = |es: &mut Exprs, i| es.intern(ExprNode::BVar(i), &levels).unwrap().0;
+        let (b0, b2, b12) = (bv(&mut es, 0), bv(&mut es, 2), bv(&mut es, 12));
+        let (ty, _) = es.intern(ExprNode::Sort(LevelId::ZERO), &levels).unwrap();
+        let (app, _) = es.intern(ExprNode::App(b2, b0), &levels).unwrap();
+        let d = es.data(app);
+        assert!(d.may_use_bvar(0) && !d.may_use_bvar(1) && d.may_use_bvar(2));
+        assert!(!d.may_use_bvar(3));
+        // Under a binder #2 becomes #1, and #0 is bound.
+        let lam = ExprNode::Lam(BinderInfo::Default, NameId::ANON, ty, app);
+        let (lam, _) = es.intern(lam, &levels).unwrap();
+        let d = es.data(lam);
+        assert!(!d.may_use_bvar(0) && d.may_use_bvar(1) && !d.may_use_bvar(2));
+        // Past the exact bits, an occurrence is assumed.
+        let (wide, _) = es.intern(ExprNode::App(b12, b0), &levels).unwrap();
+        let pi = ExprNode::Pi(BinderInfo::Default, NameId::ANON, ty, wide);
+        let (pi, _) = es.intern(pi, &levels).unwrap();
+        let d = es.data(pi);
+        assert!(!d.may_use_bvar(0) && d.may_use_bvar(9) && d.may_use_bvar(11));
+        assert!(!d.may_use_bvar(12));
     }
 
     #[test]
