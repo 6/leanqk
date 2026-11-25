@@ -104,7 +104,12 @@ and `Tc::whnf_core` take themselves, on the terms the values stand for:
   one of its rules is replaced by the rule's right-hand side, applied as in
   `inductive_reduce_rec`. A `Nat` literal major premise becomes `Nat.zero` or
   `Nat.succ (n-1)`, and a string literal `String.ofList […]`, as in
-  `nat_lit_to_constructor` and `string_lit_to_constructor`;
+  `nat_lit_to_constructor` and `string_lit_to_constructor`. A right-hand
+  side `fun params motives minors fields => m fields ihs` (every rule Lean
+  generates) is not applied as a closure: the minor premise `m` is applied
+  to the fields, the thunks of the `ihs` and the rest, which is the body it
+  would reach (`rule_info`). On `nonsingular-128` that is 49.6 to 45.3
+  million steps;
 - **K-like recursors**: before evaluating the major premise, the machine
   calls the checker's own `ctor_when_k`. It infers the premise's type and
   checks with the checker's definitional equality that it is the type of the
@@ -410,6 +415,38 @@ million and the evaluator's time from 5.0 to 4.0 s. On lrat06 they go from
 81 to 52 million steps (4.8 to 3.9 s). On `cartan_A7` they go from 65 to 42
 million steps (3.8 to 3.1 s).
 
+A definition can also apply a definition of that shape (`C`) to exactly its
+arguments (`cases_compose`). `ite`, `dite` and `decide` do: each is
+`fun … h … => Decidable.casesOn h m₀ m₁`. When the major premise is a
+variable and each minor premise `C` selects is a variable `x_l` (applied to
+the fields), or `fun fields => t` with `t` closed or a variable `x_l`, the
+definition goes straight to `t` or `x_l` too. That is what unfolding it, then
+`C`, and reducing gives. `if c then a else b` at a decided `c` is then one
+step instead of four. The test `eval-select` picks branches of `ite`,
+`dite` and `decide`, one of them a function applied further. On lrat06
+the steps go from 51.5 to 43.6 million (3.45 to 3.10 s in the evaluator),
+on lrat05 from 11.0 to 9.5 million, on `cartan_A7` from 41.3 to 37.3
+million (2.82 to 2.65 s).
+
+A matcher on several discriminants or nested patterns is nested `casesOn`s
+(sparse ones, with an `else`, in recent versions): `match x, y with | a :: as,
+b :: bs => h₁ a as b bs | _, _ => h₂ x y` is a `casesOn` on `x` whose `cons`
+branch is a `casesOn` on `y`. `tree_shape` turns such a definition into a
+decision tree when every branch the reductions pick ends in a leaf: a
+variable, field or closed term applied to variables, fields, closed terms,
+or a constructor that rebuilds a matched value from its fields (the `else`
+of the inner `casesOn` passes `a :: as` back). `tree_n` follows the tree
+while the values matched are constructors of its rules and applies the
+leaf, using the matched value itself for a rebuilt constructor (equal up to
+its parameters, which typing makes the same). Unfolding the matcher and the
+`casesOn`s on the way, and reducing them, gives that leaf. Any other value
+makes it its definition. The test `eval-match` has matchers on two and
+three discriminants, nested patterns, literal patterns and an `else` that
+rebuilds the list. On `nonsingular-128` the steps go from 45.3 to 30.3
+million (3.1 to 2.6 s in the evaluator), on lrat06 from 43.0 to 36.0
+million (3.09 to 2.84 s), on `cartan_A7` from 36.7 to 30.5 million and on
+`qnr_100003` from 21.1 to 16.9 million.
+
 ## Built-in operations of several Lean versions
 
 The fingerprint table (`src/check/fingerprint_table.rs`, written by
@@ -427,7 +464,7 @@ out of memory.
 
 ## Tests
 
-`xtask/src/kernel_cases/cases.rs` has 82 `eval*` cases. Each is a claim proved by
+`xtask/src/kernel_cases/cases.rs` has 86 `eval*` cases. Each is a claim proved by
 `Eq.refl`, so only reduction decides it, and nearly every one has a false
 twin. The 27 `eval434-*` cases are exported from Lean v4.34.0, where the
 `DecidableEq` fast paths apply. They cover:

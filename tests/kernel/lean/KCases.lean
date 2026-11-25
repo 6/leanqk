@@ -184,6 +184,39 @@ theorem ev_arr_vers :
 theorem ev_arr_vers_wrong :
     (let a := ev_arr 10; let b := a.set! 2 7; let c := b.push 5; let d := a.set! 2 8
      a[2]! + b[2]! + c[10]! + d[2]! + c.size + a.size + b[2]! + a[2]!) = 57 := sorry
+def ev_m2 : List Nat → List Nat → Nat
+  | x :: xs, y :: ys => x * y + ev_m2 xs ys
+  | [], ys => ys.length
+  | xs, [] => xs.length + 100
+def ev_m3 : Option (Nat × Nat) → Nat → Nat
+  | some (a, b), 0 => a + b
+  | some (a, _), n+1 => a * n
+  | none, n => n + 7
+def ev_m4 (l : List Nat) : List Nat := match l with
+  | a :: b :: rest => b :: a :: rest
+  | other => other
+def ev_m5 : Bool → Bool → Nat → Nat
+  | true, true, _ => 1
+  | true, false, n => n
+  | false, _, 3 => 30
+  | false, b, n => if b then n * 2 else n + 1
+theorem ev_match :
+    (ev_m2 [1, 2, 3] [4, 5, 6, 7], ev_m2 [] [1, 2], ev_m2 [1, 2, 3] [], ev_m3 (some (3, 4)) 0,
+      ev_m3 (some (3, 4)) 5, ev_m3 none 2, ev_m4 [1, 2, 3], ev_m4 [9],
+      [ev_m5 true true 0, ev_m5 true false 4, ev_m5 false true 3, ev_m5 false true 5,
+        ev_m5 false false 5]) =
+    (33, 2, 103, 7, 12, 9, [2, 1, 3], [9], [1, 4, 30, 10, 6]) := sorry
+theorem ev_match_wrong :
+    (ev_m2 [1, 2, 3] [4, 5, 6, 7], ev_m2 [] [1, 2], ev_m2 [1, 2, 3] [], ev_m3 (some (3, 4)) 0,
+      ev_m3 (some (3, 4)) 5, ev_m3 none 2, ev_m4 [1, 2, 3], ev_m4 [9],
+      [ev_m5 true true 0, ev_m5 true false 4, ev_m5 false true 3, ev_m5 false true 5,
+        ev_m5 false false 5]) =
+    (33, 2, 103, 7, 12, 9, [1, 2, 3], [9], [1, 4, 30, 10, 6]) := sorry
+def ev_sel (n : Nat) : Nat :=
+  (if n % 2 = 0 then (· + 1) else (· * 3)) n + (if _ : n < 5 then n + 100 else 7) +
+    (if decide (n = 3) then 1000 else 0) + (dite (n = 4) (fun _ => 20) (fun _ => 30))
+theorem ev_select : ((List.range 10).map ev_sel).foldl (· + ·) 0 = 1935 := sorry
+theorem ev_select_wrong : ((List.range 10).map ev_sel).foldl (· + ·) 0 = 1936 := sorry
 def ev_arr_hist : List (Array Nat) :=
   (List.range 20).foldl (fun vs i => match vs with
     | v :: _ => (if i % 3 == 0 then v.push i else v.set! (i % 7) (i + 100)) :: vs
