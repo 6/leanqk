@@ -366,6 +366,8 @@ struct Batch {
     lines: Vec<u64>,
     text: String,
     us: Vec<u64>,
+    /// Scratch space for [`scan::line`].
+    scratch: Vec<u64>,
     /// Set on the last batch: how the input ended, and the totals.
     end: Option<Result<(), ReadError>>,
     lines_read: u64,
@@ -447,6 +449,117 @@ impl Batch {
         };
         self.items.push(item);
         Ok(())
+    }
+}
+
+/// Adds scanned records to a batch.
+struct ToBatch<'a>(&'a mut Batch);
+
+impl scan::Sink for ToBatch<'_> {
+    fn app(&mut self, id: u64, f: u64, a: u64) -> R<()> {
+        let node = RawExpr::App(f, a);
+        self.0.items.push(Item::Expr { id, node });
+        Ok(())
+    }
+
+    fn binder(
+        &mut self,
+        id: u64,
+        pi: bool,
+        bi: BinderInfo,
+        name: u64,
+        ty: u64,
+        body: u64,
+    ) -> R<()> {
+        let node = RawExpr::Binder {
+            pi,
+            bi,
+            name,
+            ty,
+            body,
+        };
+        self.0.items.push(Item::Expr { id, node });
+        Ok(())
+    }
+
+    fn item(&mut self, item: Item, line: &[u8], us: &[u64]) -> R<()> {
+        let item = match item {
+            Item::Expr {
+                id,
+                node: RawExpr::Const(n, a, b),
+            } => {
+                let start = self.0.us.len();
+                self.0.us.extend_from_slice(&us[a as usize..b as usize]);
+                let Ok(end) = u32::try_from(self.0.us.len()) else {
+                    return bad("too many universe levels in one batch");
+                };
+                Item::Expr {
+                    id,
+                    node: RawExpr::Const(n, start as u32, end),
+                }
+            }
+            other => other,
+        };
+        self.0.push_scanned(line, item)
+    }
+}
+
+/// Applies scanned records at once.
+impl scan::Sink for State {
+    #[inline(always)]
+    fn app(&mut self, id: u64, f: u64, a: u64) -> R<()> {
+        if let Some(b) = self.lazy.as_deref_mut()
+            && let (Some(f), Some(a)) = (self.expr_ids.get(f), self.expr_ids.get(a))
+        {
+            let r = b.pend(id, lazy::Node::App(f, a))?;
+            return self.bind(Table::Expr, id, r);
+        }
+        let src = Src { text: &[], us: &[] };
+        self.apply_expr(src, id, RawExpr::App(f, a))
+    }
+
+    #[inline(always)]
+    fn binder(
+        &mut self,
+        id: u64,
+        pi: bool,
+        bi: BinderInfo,
+        name: u64,
+        ty: u64,
+        body: u64,
+    ) -> R<()> {
+        if let Some(b) = self.lazy.as_deref_mut()
+            && let (Some(n), Some(t), Some(e)) = (
+                self.name_ids.get(name),
+                self.expr_ids.get(ty),
+                self.expr_ids.get(body),
+            )
+        {
+            let r = b.pend(
+                id,
+                lazy::Node::Bind {
+                    pi,
+                    bi,
+                    name: NameId(n),
+                    ty: t,
+                    body: e,
+                },
+            )?;
+            return self.bind(Table::Expr, id, r);
+        }
+        let src = Src { text: &[], us: &[] };
+        let node = RawExpr::Binder {
+            pi,
+            bi,
+            name,
+            ty,
+            body,
+        };
+        self.apply_expr(src, id, node)
+    }
+
+    fn item(&mut self, item: Item, line: &[u8], us: &[u64]) -> R<()> {
+        self.apply(Src { text: line, us }, item)
     }
 }
 
@@ -683,11 +796,13 @@ fn parse_chunk(
     let mut bytes = 0u64;
     while pos < buf.len() {
         if seen_first {
-            let u = batch.us.len();
-            if let Some((item, n)) = scan::line(&buf[pos..], &mut batch.us) {
+            let mut us = std::mem::take(&mut batch.scratch);
+            let got = scan::line(&buf[pos..], &mut us, &mut ToBatch(&mut batch));
+            batch.scratch = us;
+            if let Some((n, res)) = got {
                 lines += 1;
                 bytes += n as u64;
-                if let Err(f) = batch.push_scanned(&buf[pos..], item) {
+                if let Err(f) = res {
                     batch.end = Some(Err(ReadError {
                         line: lines,
                         class: f.class,
@@ -699,7 +814,6 @@ fn parse_chunk(
                 pos += n;
                 continue;
             }
-            batch.us.truncate(u);
         }
         let next = match buf[pos..].iter().position(|&b| b == b'\n') {
             Some(p) => pos + p + 1,
@@ -779,13 +893,13 @@ fn produce<B: BufRead>(mut r: B, full: SyncSender<Batch>, empty: Receiver<Batch>
 /// Parse one line into at most one item.
 fn parse_line(tape: &mut Tape, buf: &[u8], batch: &mut Batch, seen_first: &mut bool) -> R<()> {
     if *seen_first {
-        let u = batch.us.len();
-        if let Some((item, n)) = scan::line(buf, &mut batch.us)
-            && n == buf.len()
-        {
-            return batch.push_scanned(buf, item);
+        let mut us = std::mem::take(&mut batch.scratch);
+        let got = scan::line(buf, &mut us, &mut ToBatch(batch));
+        batch.scratch = us;
+        if let Some((n, res)) = got {
+            debug_assert_eq!(n, buf.len());
+            return res;
         }
-        batch.us.truncate(u);
     }
     let line = match std::str::from_utf8(buf) {
         Ok(s) => s,
@@ -1142,6 +1256,11 @@ impl Table {
     }
 }
 
+#[cold]
+fn twice(t: Table, id: u64) -> R<()> {
+    bad(format!("{} id {id} is defined twice", t.noun()))
+}
+
 fn parse_nat_lit(s: &str) -> Option<BigUint> {
     if s.is_empty() || !s.bytes().all(|c| c.is_ascii_digit()) {
         return None;
@@ -1194,6 +1313,7 @@ impl State {
         }
     }
 
+    #[inline(always)]
     fn bind(&mut self, t: Table, id: u64, target: u32) -> R<()> {
         let m = match t {
             Table::Name => &mut self.name_ids,
@@ -1202,7 +1322,7 @@ impl State {
         };
         match m.bind(id, target) {
             Ok(()) => Ok(()),
-            Err(_) => bad(format!("{} id {id} is defined twice", t.noun())),
+            Err(_) => twice(t, id),
         }
     }
 
@@ -1300,32 +1420,44 @@ impl State {
         while pos < data.len() {
             l.lines += 1;
             let rest = &data[pos..];
-            if l.seen_first {
-                l.us.clear();
-                if let Some((item, n)) = scan::line(rest, &mut l.us) {
-                    let src = Src {
-                        text: rest,
-                        us: &l.us,
-                    };
-                    self.apply(src, item).map_err(|f| fail(l.lines, f))?;
-                    pos += n;
-                    continue;
-                }
+            if l.seen_first
+                && let Some((n, res)) = scan::line(rest, &mut l.us, self)
+            {
+                res.map_err(|f| fail(l.lines, f))?;
+                pos += n;
+                continue;
             }
             let n = match rest.iter().position(|&b| b == b'\n') {
                 Some(p) => p + 1,
                 None => rest.len(),
             };
-            l.batch.clear();
-            parse_line(&mut l.tape, &rest[..n], &mut l.batch, &mut l.seen_first)
+            self.other_line(l, &rest[..n])
                 .map_err(|f| fail(l.lines, f))?;
-            for &item in &l.batch.items {
-                self.item(&mut l.tape, &l.batch, item, &mut l.seen_meta)
-                    .map_err(|f| fail(l.lines, f))?;
-            }
             pos += n;
         }
         Ok(())
+    }
+
+    /// A line the scanner left: parsed once, with the general parser.
+    fn other_line(&mut self, l: &mut Lines, line: &[u8]) -> R<()> {
+        let line = match std::str::from_utf8(line) {
+            Ok(s) => s,
+            Err(e) => return bad(format!("invalid UTF-8 at column {}", e.valid_up_to() + 1)),
+        };
+        if line.trim_ascii().is_empty() {
+            return Ok(());
+        }
+        let (doc, members) = parse_object(&mut l.tape, line)?;
+        if !l.seen_first {
+            l.seen_first = true;
+            l.seen_meta = true;
+            return self.meta(doc, members);
+        }
+        l.batch.clear();
+        match id_record(doc, members, &mut l.batch)? {
+            Some(item) => self.apply(l.batch.src(), item),
+            None => self.decl_record(doc, members),
+        }
     }
 
     fn end_lines(&mut self, l: Lines) -> Result<ReadStats, ReadError> {
@@ -1581,7 +1713,7 @@ impl State {
         }
         let m = &members[0];
         let kind = doc.key(m);
-        let res = match kind {
+        match kind {
             "axiom" => self.single(doc, m.val, Single::Axiom),
             "def" => self.single(doc, m.val, Single::Def),
             "thm" => self.single(doc, m.val, Single::Thm),
@@ -1590,18 +1722,11 @@ impl State {
             "inductive" => self.inductive(doc, m.val),
             "meta" => bad("meta record after the first line"),
             _ => bad(format!("unknown record kind '{kind}'")),
-        };
-        res?;
-        if let Some(mut b) = self.lazy.take() {
-            let m = &mut self.expr_ids;
-            let res = b.flush(|id, r| {
-                m.rebind(id, r);
-                Ok(())
-            });
-            self.lazy = Some(b);
-            res?;
+        }?;
+        match self.lazy.as_deref_mut() {
+            Some(b) => b.flush(&mut self.expr_ids),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     fn name_list(&mut self, o: &Obj<'_>, k: &str) -> R<NameList> {
@@ -1869,11 +1994,12 @@ mod tests {
     /// it took the line.
     fn scanned_as_general(line: &str) -> bool {
         let mut b = Batch::default();
-        let Some((item, n)) = scan::line(line.as_bytes(), &mut b.us) else {
+        let mut us = Vec::new();
+        let Some((n, res)) = scan::line(line.as_bytes(), &mut us, &mut ToBatch(&mut b)) else {
             return false;
         };
         assert_eq!(n, line.len(), "line: {line}");
-        assert!(b.push_scanned(line.as_bytes(), item).is_ok());
+        assert!(res.is_ok());
         let fast = describe(&b, b.items[0]);
         let general_line = line.strip_suffix('\n').unwrap_or(line);
         assert_eq!(general(general_line), Ok(Some(fast)), "line: {line}");
