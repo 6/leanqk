@@ -33,7 +33,8 @@ pub fn is_local(id: u32) -> bool {
 /// Raised (as a panic, caught by the driver) when an overlay outgrows its
 /// 31-bit ids. Checking a declaration that builds two billion terms is a
 /// resource failure, not a verdict.
-pub const OVERFLOW_MSG: &str = "leanqk: resource limit: a declaration built more than 2^31 terms";
+pub const OVERFLOW_MSG: &str =
+    "nitrolean: resource limit: a declaration built more than 2^31 terms";
 
 fn local_id(i: u32) -> u32 {
     assert!(i < LOCAL, "{OVERFLOW_MSG}");

@@ -1,9 +1,9 @@
 //! Reader tests on small hand-written exports.
 
-use leanqk::env::{BlockKind, DeclKind, Hints, QuotKind, Safety};
-use leanqk::expr::{BinderInfo, ExprNode};
-use leanqk::level::{LevelId, LevelNode};
-use leanqk::reader::{ErrorClass, ReadError, read_buffered, read_str};
+use nitrolean::env::{BlockKind, DeclKind, Hints, QuotKind, Safety};
+use nitrolean::expr::{BinderInfo, ExprNode};
+use nitrolean::level::{LevelId, LevelNode};
+use nitrolean::reader::{ErrorClass, ReadError, read_buffered, read_str};
 
 const META: &str = r#"{"meta":{"exporter":{"name":"handwritten","version":"0"},"format":{"version":"3.1.0"},"lean":{"githash":"0","version":"4.36.0"}}}"#;
 

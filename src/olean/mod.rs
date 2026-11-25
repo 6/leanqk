@@ -551,7 +551,7 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
         })?;
     }
     let t = Instant::now();
-    if std::env::var_os("LEANQK_OLEAN_PROFILE").is_some() {
+    if std::env::var_os("NITROLEAN_OLEAN_PROFILE").is_some() {
         eprintln!(
             "rss before finish: {:?} peak {:?}",
             rss_now(),
@@ -570,7 +570,7 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
     env.levels = levels;
     env.exprs = exprs;
     stats.finish_time = t.elapsed();
-    if std::env::var_os("LEANQK_OLEAN_PROFILE").is_some() {
+    if std::env::var_os("NITROLEAN_OLEAN_PROFILE").is_some() {
         eprintln!(
             "rss after finish: {:?} peak {:?}",
             rss_now(),

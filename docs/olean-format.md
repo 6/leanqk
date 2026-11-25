@@ -7,7 +7,7 @@ Lean ships for (x86-64 and AArch64, Linux and macOS).
 
 An `.olean` file is a memory image of one Lean value, a `ModuleData`, laid out
 by the compactor (`src/runtime/compact.cpp`) so that Lean can `mmap` it and use
-the objects in place. leanqk reads the same bytes but never uses them as Lean
+the objects in place. nitrolean reads the same bytes but never uses them as Lean
 objects: it decodes the kernel's part (constants, expressions, levels, names)
 into its own arenas, checking every pointer on the way.
 
@@ -28,7 +28,7 @@ The three are written by one compactor (`saveModuleDataParts`,
 `Environment.lean:2119`), so they share one address space: objects of a later
 part may point into earlier parts (`readModuleDataPartsOfMod`,
 `Environment.lean:2443`, reads `.server` with the main part as a dependency
-region, and `.private` with both). leanqk takes the constants from the
+region, and `.private` with both). nitrolean takes the constants from the
 `.private` part, the level `importModules` uses by default and the one
 `leanexport` exports. A module without the module system has only the
 `.olean`. The `.ir`, `.ir.sig` and `.ilean` files hold compiler and editor data
@@ -51,14 +51,14 @@ Version 2: the compacted data starts at offset 88 and runs to the end of the
 file. Version 3 (`module.cpp:133-140`, written at `module.cpp:337-393`, read at
 `module.cpp:582-600`): an 8-byte data size at 88, the data at 96, then a table
 of closure offsets and library names used to relocate function pointers.
-Kernel data never contains closures; leanqk reads version 3 files but no
+Kernel data never contains closures; nitrolean reads version 3 files but no
 closure object.
 
 `base_addr` is derived from the hash of the module name (`module.cpp:281-294`);
 for the later parts it is the first part's base plus the part's offset in the
 compactor's buffer (`module.cpp:322-329`), so the parts' ranges never overlap.
 
-leanqk accepts only files whose version string is `4.36.0`: other releases may
+nitrolean accepts only files whose version string is `4.36.0`: other releases may
 change the layouts below.
 
 ## Pointers and the object graph
@@ -82,7 +82,7 @@ offsets, then allocates the parent), and shares structurally equal objects
 (`save_max_sharing`, `compact.cpp:190-200`: a node equal to an earlier one is
 dropped and replaced by the earlier one). So every pointer points to a lower
 address than the object holding it, including pointers into earlier parts.
-leanqk requires this: a pointer that does not point strictly below its holder
+nitrolean requires this: a pointer that does not point strictly below its holder
 is an error. That makes the graph acyclic by construction, so no input can
 make a walk loop. Objects are 8-byte aligned (`alloc`, `compact.cpp:163-180`).
 
@@ -120,7 +120,7 @@ Kinds used by kernel data:
   sign byte at 8, the digit count at 16, the digit pointer at 24, then 32-bit
   digits from 32. `Nat`s below 2^63 are boxed scalars instead.
 
-leanqk checks that every object it reads lies wholly inside one part's data,
+nitrolean checks that every object it reads lies wholly inside one part's data,
 that its header is a compacted header of an expected kind, and that a
 constructor has the tag, field count and size its type requires.
 
@@ -142,7 +142,7 @@ with `pre`, `i : Nat`; both carry the cached `hash : UInt64` (line 4895) at
 scalar byte 0.
 
 `Level` (`src/Lean/Level.lean:90-106`), each with `data : UInt64` (hash,
-depth, flags) at scalar byte 0: `zero` tag 0 with no pointer fields (leanqk
+depth, flags) at scalar byte 0: `zero` tag 0 with no pointer fields (nitrolean
 also accepts the boxed scalar 0, as the C++ kernel does at
 `src/kernel/level.h:47`), `succ` 1 `[l]`, `max` 2 `[l, r]`, `imax` 3 `[l, r]`,
 `param` 4 `[name]`, `mvar` 5 `[id]`.
@@ -192,7 +192,7 @@ its `ConstantVal` (`Declaration.lean:91-94`: `name`, `levelParams : List Name`,
 `abbrev` the scalar 1, `regular h` tag 2 with `h : UInt32` at scalar byte 0.
 `RecursorRule` (`Declaration.lean:326-332`): `ctor`, `nfields : Nat`, `rhs`.
 
-## What leanqk does with it
+## What nitrolean does with it
 
 * **Cached data is ignored.** The name hashes, `Level.data` and `Expr.data`
   are never read. The arenas recompute what the checker relies on (loose bound
@@ -207,7 +207,7 @@ its `ConstantVal` (`Declaration.lean:91-94`: `name`, `levelParams : List Name`,
   imports, in the order of Lean's `importModulesCore` (depth-first, imports in
   order). An import cycle is an error.
 * **Order.** A module's `constants` are in hash-map order (`mkModuleData`,
-  `Environment.lean:2201-2230`). leanqk groups them like `leanexport` (an
+  `Environment.lean:2201-2230`). nitrolean groups them like `leanexport` (an
   inductive family with its constructors and recursors; the quotient
   constants) and sorts each module's groups depth-first by the constants
   their terms mention, so that every declaration comes after the ones it uses.
@@ -216,7 +216,7 @@ its `ConstantVal` (`Declaration.lean:91-94`: `name`, `levelParams : List Name`,
   applied at 2699-2710): theorems (or a theorem and an axiom, or two
   propositional axioms) with the same type and universe parameters, as made by
   realized constants such as `congr_simp` and `eq_def` lemmas. Lean keeps the
-  later theorem; leanqk keeps the first one under the name, which earlier
+  later theorem; nitrolean keeps the first one under the name, which earlier
   declarations may use, and also checks every later copy whose proof differs.
 
 ## Untrusted input
@@ -227,7 +227,7 @@ to point below its holder; each object's header and size are checked against
 its expected type; scalars and enumerations are range-checked; strings must be
 NUL-terminated UTF-8; counts must fit the arenas' 32-bit ids. All walks are
 iterative. Malformed input is reported with the file and exits with status 2;
-it never panics. The memory map is the only `unsafe` code in leanqk
+it never panics. The memory map is the only `unsafe` code in nitrolean
 (`src/olean/file.rs`): Lean writes `.olean` files under a temporary name and
 renames them into place, so a mapped file does not change; if another program
 truncates it anyway, reads past the new end fault instead of returning wrong

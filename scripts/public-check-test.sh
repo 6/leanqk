@@ -15,7 +15,7 @@ git init -q "$repo"
 mkdir "$repo/scripts"
 cp "$SRC/public-check.sh" "$repo/scripts/"
 printf '# test allowlist\nallowed.bin\nbig-allowed.txt  # trailing comment\n' >"$repo/scripts/public-check.allow"
-echo "Lean quick kernel - work in progress" >"$repo/README.md"
+echo '`nitrolean` - work in progress' >"$repo/README.md"
 echo "documentation address 192.0.2.17, version 4.36.0" >"$repo/notes.txt"
 g add -A
 g commit -qm "Initial commit"
@@ -46,8 +46,14 @@ commit() { g commit -q --allow-empty -m "$1"; }
 
 expect_pass "clean tree"
 
-printf 'Lean quick kernel - work in progress\nmore\n' >"$repo/README.md"
+printf '`nitrolean` - work in progress\nmore\n' >"$repo/README.md"
 expect_fail "README with two lines" "README.md must be exactly"
+
+printf '`nitrolean` - work in progress' >"$repo/README.md"
+expect_fail "README without a final newline" "README.md must be exactly"
+
+echo 'nitrolean - work in progress' >"$repo/README.md"
+expect_fail "README without the backticks" "README.md must be exactly"
 
 plant a.txt "see /ho""me/alice/x"
 expect_fail "home path" "home directory path: a.txt:1"

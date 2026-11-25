@@ -65,7 +65,7 @@ const STACK_BYTES: usize = 1 << 30;
 pub fn check_env(env: &Env) -> Result<Report, Failure> {
     std::thread::scope(|s| {
         std::thread::Builder::new()
-            .name("leanqk-check".into())
+            .name("nitrolean-check".into())
             .stack_size(STACK_BYTES)
             .spawn_scoped(s, || check_env_here(env))
             .expect("spawn checker thread")
@@ -132,7 +132,7 @@ fn check_env_here(env: &Env) -> Result<Report, Failure> {
 }
 
 /// Whether Lean's checker skips `d`: like `Environment.replay`, which
-/// `leanchecker --from-export` runs, leanqk does not check unsafe and
+/// `leanchecker --from-export` runs, nitrolean does not check unsafe and
 /// partial declarations. They carry no logical content: no safe
 /// declaration can refer to them.
 fn skipped(d: &Decl) -> bool {

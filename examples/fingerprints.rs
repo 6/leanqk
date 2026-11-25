@@ -8,9 +8,9 @@
 
 use std::collections::BTreeMap;
 
-use leanqk::check::ext::NAT_OPS;
-use leanqk::check::{Fingerprints, fingerprint_key, hex_digest};
-use leanqk::reader::read_file;
+use nitrolean::check::ext::NAT_OPS;
+use nitrolean::check::{Fingerprints, fingerprint_key, hex_digest};
+use nitrolean::reader::read_file;
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: fingerprints EXPORT");

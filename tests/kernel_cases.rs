@@ -4,8 +4,8 @@
 
 use std::path::Path;
 
-use leanqk::check::check_env;
-use leanqk::reader::read_file;
+use nitrolean::check::check_env;
+use nitrolean::reader::read_file;
 
 #[test]
 fn committed_kernel_cases_get_their_verdicts() {

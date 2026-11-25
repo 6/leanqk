@@ -1,7 +1,7 @@
 name: Corpus
 
-# Runs leanqk on the kernel-checker test corpus (see corpus/SOURCES.md) and
-# compares its verdicts with corpus/expected-leanqk.tsv.
+# Runs nitrolean on the kernel-checker test corpus (see corpus/SOURCES.md) and
+# compares its verdicts with corpus/expected-nitrolean.tsv.
 
 on:
   push:
@@ -89,7 +89,7 @@ jobs:
       - name: Install GNU time
         run: test -x /usr/bin/time || { sudo apt-get update -q && sudo apt-get install -yq time; }
 
-      - name: Build leanqk
+      - name: Build nitrolean
         run: cargo build --release --locked
 
       # Every export the reader should be able to read must parse.

@@ -64,7 +64,7 @@ jobs:
       - name: Reader tests on the toolchain's files
         run: |
           prefix=$(elan run "$LEAN_TOOLCHAIN" lean --print-prefix)
-          LEANQK_LEAN_LIB="$prefix/lib/lean" cargo test --release --locked olean
+          NITROLEAN_LEAN_LIB="$prefix/lib/lean" cargo test --release --locked olean
 
       - name: Init matches the export
         run: scripts/olean-equivalence.sh Init "$RUNNER_TEMP/eq"

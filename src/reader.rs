@@ -1328,15 +1328,15 @@ mod tests {
     }
 
     /// Differential check of every line of a real export. Run with
-    /// `LEANQK_EXPORT=file cargo test --release -- --ignored`.
+    /// `NITROLEAN_EXPORT=file cargo test --release -- --ignored`.
     #[test]
-    #[ignore = "needs LEANQK_EXPORT"]
+    #[ignore = "needs NITROLEAN_EXPORT"]
     fn fast_path_agrees_on_real_export() {
-        let Some(path) = std::env::var_os("LEANQK_EXPORT") else {
-            eprintln!("LEANQK_EXPORT not set; skipping");
+        let Some(path) = std::env::var_os("NITROLEAN_EXPORT") else {
+            eprintln!("NITROLEAN_EXPORT not set; skipping");
             return;
         };
-        let f = BufReader::new(File::open(path).expect("open LEANQK_EXPORT"));
+        let f = BufReader::new(File::open(path).expect("open NITROLEAN_EXPORT"));
         let (mut taken, mut declined, mut total) = (0u64, 0u64, 0u64);
         for line in f.lines().skip(1) {
             let line = line.expect("read line");

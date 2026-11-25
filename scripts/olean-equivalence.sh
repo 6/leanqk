@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check that leanqk's .olean reader builds the same environment as Lean's
+# Check that nitrolean's .olean reader builds the same environment as Lean's
 # NDJSON exporter: every exported declaration must be in the oleans with a
 # structurally identical type, value and other fields.
 #
@@ -25,7 +25,7 @@ lean_prefix=$(elan run "$toolchain" lean --print-prefix)
 export PATH="$lean_prefix/bin:$PATH"
 
 (cd "$repo" && cargo build --release --quiet)
-leanqk="$repo/target/release/leanqk"
+nitrolean="$repo/target/release/nitrolean"
 timefmt='%e s, peak RSS %M KB'
 
 case "$mod" in
@@ -63,4 +63,4 @@ if [ ! -s "$out" ]; then
 fi
 ls -l "$out"
 echo "comparing"
-(cd "$run_dir" && /usr/bin/time -f "compare: $timefmt" "$leanqk" compare "$out" "$target")
+(cd "$run_dir" && /usr/bin/time -f "compare: $timefmt" "$nitrolean" compare "$out" "$target")
