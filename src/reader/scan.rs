@@ -50,40 +50,64 @@ pub(super) trait Sink {
     }
 }
 
-/// A cursor over the rest of the input, starting at a line.
+/// Bytes of the window a line is scanned from: a record the scanner
+/// takes ends before byte [`MASK`], and loads at a position below that
+/// reach at most 32 bytes further.
+const W: usize = 288;
+const MASK: usize = 255;
+
+/// A cursor over a line. Bytes are read from `w`, the first [`W`] bytes
+/// of the input from the line on (padded with zeros at the end of the
+/// input), at positions masked with [`MASK`], so that no read needs a
+/// bounds check. A position past [`MASK`] would read the wrong bytes, so
+/// [`C::eol`] declines the line then (positions only grow); and it
+/// declines a line that would end past `len`, the bytes really there.
 struct C<'a> {
+    /// The rest of the input.
     s: &'a [u8],
+    w: &'a [u8; W],
     p: usize,
 }
 
 impl C<'_> {
-    /// Expect the bytes `w`.
+    /// The byte `k` (below 32) past the cursor.
+    #[inline(always)]
+    fn at(&self, k: usize) -> u8 {
+        self.w[self.p + k]
+    }
+
+    /// The eight bytes from `k` (below 24) past the cursor.
+    #[inline(always)]
+    fn word(&self, k: usize) -> u64 {
+        let i = self.p + k;
+        u64::from_le_bytes(self.w[i..i + 8].try_into().expect("8 bytes"))
+    }
+
+    /// Expect the bytes `w` (at most 16).
     #[inline(always)]
     fn lit<const N: usize>(&mut self, w: &[u8; N]) -> Option<()> {
-        let ok = if N <= 16 && self.p + 16 <= self.s.len() {
-            // Compare words: the literal, padded with zeros, against the
-            // input with the bytes past the literal masked off.
-            let mut pad = [0u8; 16];
-            pad[..N].copy_from_slice(w);
-            let lo = u64::from_le_bytes(pad[..8].try_into().expect("8"));
-            let hi = u64::from_le_bytes(pad[8..].try_into().expect("8"));
-            let at = &self.s[self.p..self.p + 16];
-            let x = u64::from_le_bytes(at[..8].try_into().expect("8"));
-            let mask = |n: usize| {
-                if n >= 8 {
-                    u64::MAX
-                } else {
-                    (1u64 << (8 * n)) - 1
-                }
-            };
-            if N <= 8 {
-                x & mask(N) == lo
+        const { assert!(N <= 16) };
+        if self.p > MASK {
+            return None;
+        }
+        // Compare words: the literal, padded with zeros, against the
+        // input with the bytes past the literal masked off.
+        let mut pad = [0u8; 16];
+        pad[..N].copy_from_slice(w);
+        let lo = u64::from_le_bytes(pad[..8].try_into().expect("8"));
+        let hi = u64::from_le_bytes(pad[8..].try_into().expect("8"));
+        let mask = |n: usize| {
+            if n >= 8 {
+                u64::MAX
             } else {
-                let y = u64::from_le_bytes(at[8..].try_into().expect("8"));
-                x == lo && y & mask(N - 8) == hi
+                (1u64 << (8 * n)) - 1
             }
+        };
+        let x = self.word(0);
+        let ok = if N <= 8 {
+            x & mask(N) == lo
         } else {
-            self.s.get(self.p..self.p + N)? == w
+            x == lo && self.word(8) & mask(N - 8) == hi
         };
         if ok {
             self.p += N;
@@ -103,13 +127,10 @@ impl C<'_> {
     /// (so that it fits a `u64`).
     #[inline(always)]
     fn nat(&mut self) -> Option<u64> {
-        let start = self.p;
-        let Some(b) = self.s.get(start..start + 8) else {
-            let (v, p) = nat_slow(self.s, start)?;
-            self.p = p;
-            return Some(v);
-        };
-        let w = u64::from_le_bytes(b.try_into().expect("8 bytes"));
+        if self.p > MASK {
+            return None;
+        }
+        let w = self.word(0);
         let x = w.wrapping_sub(0x3030_3030_3030_3030);
         // The high bit of each byte that is not a digit. A byte below a
         // non-digit is a digit, so no borrow or carry reaches the first
@@ -128,23 +149,39 @@ impl C<'_> {
         d = (d & 0x0F0F_0F0F_0F0F_0F0F).wrapping_mul(2561) >> 8;
         d = (d & 0x00FF_00FF_00FF_00FF).wrapping_mul(6_553_601) >> 16;
         d = (d & 0x0000_FFFF_0000_FFFF).wrapping_mul(42_949_672_960_001) >> 32;
-        self.p += (n8 / 8) as usize;
         if n8 == 64 {
             // A ninth digit (ids of a big export), or more.
-            match self.s.get(self.p) {
-                Some(&c) if c.is_ascii_digit() => {
-                    if self.s.get(self.p + 1).is_some_and(u8::is_ascii_digit) {
-                        let (v, p) = nat_slow(self.s, start)?;
-                        self.p = p;
-                        return Some(v);
-                    }
-                    self.p += 1;
-                    return Some(d * 10 + (c - b'0') as u64);
+            let c = self.at(8);
+            if c.is_ascii_digit() {
+                if self.at(9).is_ascii_digit() {
+                    return self.nat_slow();
                 }
-                _ => {}
+                self.p += 9;
+                return Some(d * 10 + (c - b'0') as u64);
             }
         }
+        self.p += (n8 / 8) as usize;
         Some(d)
+    }
+
+    /// [`C::nat`] a digit at a time.
+    #[cold]
+    #[inline(never)]
+    fn nat_slow(&mut self) -> Option<u64> {
+        let mut v: u64 = 0;
+        let mut n = 0;
+        while self.at(n).is_ascii_digit() {
+            if n == 19 {
+                return None;
+            }
+            v = v * 10 + (self.at(n) - b'0') as u64;
+            n += 1;
+        }
+        if n == 0 || (n > 1 && self.at(0) == b'0') {
+            return None;
+        }
+        self.p += n;
+        Some(v)
     }
 
     /// The contents of a string without escapes or control characters
@@ -153,7 +190,10 @@ impl C<'_> {
     fn string(&mut self) -> Option<(u32, u32)> {
         let start = self.p;
         loop {
-            match *self.s.get(self.p)? {
+            if self.p >= MASK {
+                return None;
+            }
+            match self.at(0) {
                 b'"' => break,
                 b'\\' => return None,
                 c if c < 0x20 => return None,
@@ -162,7 +202,7 @@ impl C<'_> {
         }
         let end = self.p;
         self.p += 1;
-        let text = &self.s[start..end];
+        let text = self.s.get(start..end)?;
         if !text.is_ascii() {
             std::str::from_utf8(text).ok()?;
         }
@@ -171,7 +211,7 @@ impl C<'_> {
 
     #[inline(always)]
     fn binder_info(&mut self) -> Option<BinderInfo> {
-        Some(match self.s.get(self.p)? {
+        Some(match self.at(0) {
             b'd' if self.opt(b"default\"") => BinderInfo::Default,
             b'i' if self.opt(b"implicit\"") => BinderInfo::Implicit,
             b'i' if self.opt(b"instImplicit\"") => BinderInfo::InstImplicit,
@@ -196,25 +236,34 @@ impl C<'_> {
         Some((bi, name, ty, body))
     }
 
-    /// The end of a line: a newline, or the end of the input.
+    /// The end of a line: a newline, or the end of the input. This also
+    /// checks that the line was read from the right bytes (see [`C`]).
     #[inline(always)]
     fn eol(&mut self) -> Option<()> {
-        match self.s.get(self.p) {
-            None => Some(()),
-            Some(b'\n') => {
-                self.p += 1;
-                Some(())
-            }
-            _ => None,
+        if self.p >= MASK || self.p > self.s.len() {
+            return None;
         }
+        if self.p == self.s.len() {
+            return Some(());
+        }
+        if self.at(0) == b'\n' {
+            self.p += 1;
+            return Some(());
+        }
+        None
     }
+}
 
+impl C<'_> {
     /// A list of numbers (the opening bracket is already read), pushed to
     /// `us`: the range they take there.
     fn nats(&mut self, us: &mut Vec<u64>) -> Option<(usize, usize)> {
         let start = us.len();
         if !self.opt(b"]") {
             loop {
+                if self.p >= MASK {
+                    return None;
+                }
                 us.push(self.nat()?);
                 if self.opt(b"]") {
                     break;
@@ -280,38 +329,31 @@ impl C<'_> {
     }
 }
 
-/// [`C::nat`] a digit at a time, from `p`: the value and the position
-/// after it.
-#[cold]
-#[inline(never)]
-fn nat_slow(s: &[u8], start: usize) -> Option<(u64, usize)> {
-    let mut p = start;
-    let mut v: u64 = 0;
-    while let Some(&c) = s.get(p) {
-        if !c.is_ascii_digit() {
-            break;
-        }
-        if p - start == 19 {
-            return None;
-        }
-        v = v * 10 + (c - b'0') as u64;
-        p += 1;
-    }
-    let len = p - start;
-    if len == 0 || (len > 1 && s[start] == b'0') {
-        return None;
-    }
-    Some((v, p))
-}
-
 /// Read the record at the start of `s` (a line, and maybe more input
 /// after it), and give it to `sink`. On success, the length of the line,
 /// newline included, and what the sink returned. `us` is scratch space.
 #[inline(always)]
 pub(super) fn line<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option<(usize, R<()>)> {
-    let mut c = C { s, p: 0 };
+    match s.first_chunk::<W>() {
+        Some(w) => line_in(C { s, w, p: 0 }, us, sink),
+        None => line_padded(s, us, sink),
+    }
+}
+
+/// [`line`] near the end of the input, with the window padded.
+#[cold]
+#[inline(never)]
+fn line_padded<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option<(usize, R<()>)> {
+    let mut w = [0u8; W];
+    w[..s.len()].copy_from_slice(s);
+    line_in(C { s, w: &w, p: 0 }, us, sink)
+}
+
+#[inline(always)]
+fn line_in<S: Sink>(mut c: C<'_>, us: &mut Vec<u64>, sink: &mut S) -> Option<(usize, R<()>)> {
+    let s = c.s;
     c.lit(b"{\"")?;
-    let item = match *s.get(2)? {
+    let item = match c.at(0) {
         b'a' => {
             c.lit(b"app\":{\"arg\":")?;
             let a = c.nat()?;
@@ -337,16 +379,7 @@ pub(super) fn line<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option
             let name = c.nat()?;
             c.lit(b",\"us\":[")?;
             us.clear();
-            let start = 0;
-            if !c.opt(b"]") {
-                loop {
-                    us.push(c.nat()?);
-                    if c.opt(b"]") {
-                        break;
-                    }
-                    c.lit(b",")?;
-                }
-            }
+            let (start, _) = c.nats(us)?;
             c.lit(b"},\"ie\":")?;
             let id = c.nat()?;
             c.lit(b"}")?;
@@ -357,7 +390,7 @@ pub(super) fn line<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option
             }
         }
         b't' | b'd' => {
-            let thm = s[2] == b't';
+            let thm = c.at(0) == b't';
             if thm {
                 c.lit(b"thm\":")?;
             } else {
@@ -377,12 +410,12 @@ pub(super) fn line<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option
                 node: RawExpr::BVar(i),
             }
         }
-        b'i' => match *s.get(3)? {
+        b'i' => match c.at(1) {
             b'e' => {
                 c.lit(b"ie\":")?;
                 let id = c.nat()?;
                 c.lit(b",\"")?;
-                let node = match *c.s.get(c.p)? {
+                let node = match c.at(0) {
                     b'l' if c.opt(b"lam\":{") => {
                         let (bi, name, ty, body) = c.binder()?;
                         c.lit(b"}")?;
@@ -470,7 +503,7 @@ pub(super) fn line<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option
                 c.lit(b"il\":")?;
                 let id = c.nat()?;
                 c.lit(b",\"")?;
-                let node = match *c.s.get(c.p)? {
+                let node = match c.at(0) {
                     b's' => {
                         c.lit(b"succ\":")?;
                         RawLevel::Succ(c.nat()?)

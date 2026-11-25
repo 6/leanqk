@@ -2066,12 +2066,28 @@ mod tests {
     /// Check the contract of [`scan::line`] on one line; returns whether
     /// it took the line.
     fn scanned_as_general(line: &str) -> bool {
+        // Alone (so scanned from a padded window), and followed by more
+        // input (scanned in place).
+        let alone = scanned_one(line, line.len());
+        let mut more = line.to_string();
+        if !more.ends_with('\n') {
+            more.push('\n');
+        }
+        let n = more.len();
+        more.push_str(&r#"{"bvar":0,"ie":1}"#.repeat(20));
+        assert_eq!(scanned_one(&more, n), alone, "line: {line}");
+        alone
+    }
+
+    /// The scanner on `input`, which starts with a line of `n` bytes.
+    fn scanned_one(input: &str, n: usize) -> bool {
         let mut b = Batch::default();
         let mut us = Vec::new();
-        let Some((n, res)) = scan::line(line.as_bytes(), &mut us, &mut ToBatch(&mut b)) else {
+        let Some((got, res)) = scan::line(input.as_bytes(), &mut us, &mut ToBatch(&mut b)) else {
             return false;
         };
-        assert_eq!(n, line.len(), "line: {line}");
+        let line = &input[..n];
+        assert_eq!(got, n, "line: {line}");
         assert!(res.is_ok());
         let fast = describe(&b, b.items[0]);
         let general_line = line.strip_suffix('\n').unwrap_or(line);
@@ -2188,6 +2204,15 @@ mod tests {
         ];
         for l in taken {
             assert!(scanned_as_general(l), "scanner should take: {l}");
+        }
+        // Long lines: the scanner reads a line from a window of its first
+        // bytes, and declines one that does not fit.
+        for k in [10, 50, 80, 120] {
+            let us = vec!["7"; k].join(",");
+            let l = format!(r#"{{"const":{{"name":1,"us":[{us}]}},"ie":2}}"#);
+            assert_eq!(scanned_as_general(&l), l.len() < 250, "{l}");
+            let l = format!(r#"{{"ie":9,"strVal":"{}"}}"#, "x".repeat(2 * k));
+            assert_eq!(scanned_as_general(&l), l.len() < 250, "{l}");
         }
         let declined = [
             r#"{"in":1,"str":{"pre":0,"str":"a\"b"}}"#,
