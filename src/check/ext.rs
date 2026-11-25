@@ -103,9 +103,17 @@ pub enum ListOp {
     /// `List.eraseDupsBy.loop r l acc`: the elements `x` of `l` with no
     /// `r x y` among those kept before, pushed onto `acc`, then reversed
     EraseDupsLoop,
+    /// `List.map f l`: the first cell, `f x :: map f t`, lazily
+    Map,
+    /// `List.zipWith f l₁ l₂`: the first cell, lazily
+    ZipWith,
+    /// `List.append l₁ l₂`: the first cell, lazily
+    Append,
+    /// `List.length l`
+    Length,
 }
 
-pub const LIST_OPS: [(&str, ListOp); 8] = [
+pub const LIST_OPS: [(&str, ListOp); 12] = [
     ("List.any", ListOp::Any),
     ("List.all", ListOp::All),
     ("List.filter", ListOp::Filter),
@@ -114,6 +122,10 @@ pub const LIST_OPS: [(&str, ListOp); 8] = [
     ("List.getLast", ListOp::GetLast),
     ("List.elem", ListOp::Elem),
     ("List.eraseDupsBy.loop", ListOp::EraseDupsLoop),
+    ("List.map", ListOp::Map),
+    ("List.zipWith", ListOp::ZipWith),
+    ("List.append", ListOp::Append),
+    ("List.length", ListOp::Length),
 ];
 
 /// `DecidableEq` instances of the core library that the evaluator decides
@@ -142,6 +154,45 @@ pub const DEC_EQ_OPS: [(&str, DecEqOp); 4] = [
     ("Subtype.instDecidableEq", DecEqOp::Subtype),
 ];
 
+/// `Int` operations the evaluator runs on values `Int.ofNat n` and
+/// `Int.negSucc n` with literal `n`, by the case analysis of their
+/// definitions with the kernel's `Nat` operations. The definitions are the
+/// same in every known version. Enabled like `LIST_OPS`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IntOp {
+    Add,
+    Sub,
+    Mul,
+    Neg,
+    /// Euclidean division and remainder (`/` and `%` on `Int`)
+    Ediv,
+    Emod,
+    /// Division and remainder rounding toward zero
+    Tdiv,
+    Tmod,
+    Pow,
+    SubNatNat,
+    NegOfNat,
+    NatAbs,
+    ToNat,
+}
+
+pub const INT_OPS: [(&str, IntOp); 13] = [
+    ("Int.add", IntOp::Add),
+    ("Int.sub", IntOp::Sub),
+    ("Int.mul", IntOp::Mul),
+    ("Int.neg", IntOp::Neg),
+    ("Int.ediv", IntOp::Ediv),
+    ("Int.emod", IntOp::Emod),
+    ("Int.tdiv", IntOp::Tdiv),
+    ("Int.tmod", IntOp::Tmod),
+    ("Int.pow", IntOp::Pow),
+    ("Int.subNatNat", IntOp::SubNatNat),
+    ("Int.negOfNat", IntOp::NegOfNat),
+    ("Int.natAbs", IntOp::NatAbs),
+    ("Int.toNat", IntOp::ToNat),
+];
+
 /// `instBEqProd`, whose `==` the evaluator runs on pairs: `(a₁, b₁) ==
 /// (a₂, b₂)` is `a₁ == a₂ && b₁ == b₂`. Enabled like `LIST_OPS`.
 pub const BEQ_PROD: &str = "instBEqProd";
@@ -159,6 +210,9 @@ pub struct FastNames {
     pub subtype: Option<NameId>,
     pub decidable: Option<NameId>,
     pub beq: Option<NameId>,
+    pub int: Option<NameId>,
+    pub int_of_nat: Option<NameId>,
+    pub int_neg_succ: Option<NameId>,
     pub is_true: Option<NameId>,
     pub is_false: Option<NameId>,
 }
@@ -194,6 +248,7 @@ pub struct Ext {
     pub dec_eq_ops: IdMap<NameId, DecEqOp>,
     pub fast: Option<FastNames>,
     pub beq_prod: Option<NameId>,
+    pub int_ops: IdMap<NameId, IntOp>,
     pub strings: Option<StrExt>,
     pub eager_reduce: Option<NameId>,
     pub quot: Option<QuotNames>,
@@ -291,6 +346,9 @@ impl Ext {
                 subtype: f("Subtype"),
                 decidable: f("Decidable"),
                 beq: f("BEq"),
+                int: f("Int"),
+                int_of_nat: f("Int.ofNat"),
+                int_neg_succ: f("Int.negSucc"),
                 is_true: f("Decidable.isTrue"),
                 is_false: f("Decidable.isFalse"),
             });
@@ -301,6 +359,19 @@ impl Ext {
                 match fp.matches(n) {
                     Ok(_) => {
                         x.list_ops.insert(n, op);
+                    }
+                    Err(why) => x
+                        .notes
+                        .push(format!("no fast `{name}` in the evaluator: {why}")),
+                }
+            }
+            for (name, op) in INT_OPS {
+                let Some(n) = f(name) else {
+                    continue;
+                };
+                match fp.matches(n) {
+                    Ok(_) => {
+                        x.int_ops.insert(n, op);
                     }
                     Err(why) => x
                         .notes

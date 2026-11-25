@@ -13,6 +13,7 @@ under `out/`, the sources and build trees live under `cache/` (both git-ignored;
 | `fetch-zenodo` | benchmark **a**: builds the published planar-graph result and exports it |
 | `fetch-lrat` | benchmark **b**: kernel-only LRAT proofs of growing size, as exports |
 | `fetch-mathlib-decide` | benchmark **c**: 150 Mathlib declarations proved by kernel `decide` |
+| `fetch-arith` | benchmark **d**: Mathlib arithmetic by kernel computation at growing sizes |
 | `build-checkers` | builds the four checkers at pinned commits |
 | `measure` | runs the checkers on exports under a time and memory limit, writes a TSV |
 | `summarize` | prints a table of a `measure` TSV and the largest LRAT each checker accepts |
@@ -29,6 +30,7 @@ cargo xtask kc build-checkers
 cargo xtask kc fetch-zenodo          # builds Mathlib from its cache: ~10 GB of disk
 cargo xtask kc fetch-lrat
 cargo xtask kc fetch-mathlib-decide  # needs fetch-zenodo first
+cargo xtask kc fetch-arith           # needs fetch-zenodo first
 cd bench/kernel-compute
 cargo xtask kc measure --timeout 60 --out out/measurements.tsv out/lrat/*.ndjson out/zenodo/*.ndjson out/mathlib/*.ndjson
 cargo xtask kc summarize out/measurements.tsv out/lrat/manifest.tsv
@@ -103,6 +105,49 @@ of the source of that revision: about 410 `by decide`, 8 `decide +kernel`, 6 `na
 `mathlib-decide-deps.ndjson` is the same without the 150 declarations themselves. Kernel times of
 these declarations are milliseconds each: most of the export is the Mathlib definitions the
 statements need, and checking is dominated by that, not by the `decide` terms.
+
+## d. Mathlib arithmetic at growing sizes (`fetch-arith`)
+
+`lean/arith/BenchArith.lean` states five families of claims, each decided by
+kernel computation, against the same Mathlib:
+
+- `cartan_An`: `(CartanMatrix.A n).det = n + 1` for n = 4 … 9. `Matrix.det` is
+  the Leibniz sum over all n! permutations.
+- `fermat_p`: `(3 : ZMod p) ^ (p - 1) = 1` for p = 101 … 1000003. The power is
+  unary (`npowRec`), so it is p − 1 nested multiplications.
+- `qnr_p`: `∀ x : ZMod p, x ^ 2 ≠ -1` for p = 103 … 100003 (p ≡ 3 mod 4).
+- `prime_p`: `Nat.Prime p` for p = 1009 … 1000003, by `Nat.decidablePrime1`
+  (trial division by every number below p).
+- `sumsq_n`: `∑ i ∈ Finset.range (n + 1), i ^ 2 = …` for n = 100, 1000, 10000.
+
+Each export holds one theorem and its closure. The `_checked` ones are small
+instances proved by `decide +kernel`; Lean's elaborator checked them. The
+others are added with `debug.skipKernelTC true`. The `-deps` export of each family
+is what every size shares.
+
+Seconds and peak MB (one machine, one run each). The other checkers are at
+the commits `build-checkers` pins, limited to 60 s and 4 GiB. nitrolean is
+limited to 600 s and 24 GB. It is the build with the read-back terms kept
+(see `docs/kernel-compute.md`), except ¹ the build before this round's
+evaluator changes (60 s, 4 GiB) and ² the build with tail calls.
+
+| export | nitrolean | gruszka | nano-lean | leanchecker |
+| --- | --- | --- | --- | --- |
+| cartan_A6 | 0.81 s, 71 ¹ | 0.45 s, 378 | 0.53 s, 611 | 4.79 s, 1 220 |
+| cartan_A7 | 3.7 s, 202 | 6.3 s, 904 | oom | oom |
+| cartan_A8 | 34 s, 473 | timeout | oom | oom |
+| cartan_A9 | 443 s, 3 492 | timeout | oom | oom |
+| fermat_100003 | 0.34 s, 489 ² | 0.66 s, 558 | 0.27 s, 672 | timeout |
+| fermat_1000003 | 3.3 s, 4 816 | 32.1 s, 1 599 | error | oom |
+| qnr_100003 | 1.5 s, 567 | 8.0 s, 3 571 | 2.6 s, 2 983 | oom |
+| prime_10007 | 3.1 s, 41 ² | 18.1 s, 1 070 | oom | oom |
+| prime_100003 | 523 s, 300 | timeout | oom | oom |
+| sumsq_10000 | 0.10 s, 55 ² | 0.07 s, 115 | 0.08 s, 141 | 0.71 s, 331 |
+
+Build ¹ took 12.8 s on cartan_A7, timed out on cartan_A8 and ran out of
+memory on fermat_1000003. fermat_1000003's memory is
+the unary power's recursion: a million nested multiplications, each with its
+`brecOn` table entry.
 
 ## Checkers and measurement
 

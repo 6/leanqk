@@ -129,6 +129,24 @@ pub enum Cmd {
         #[arg(long)]
         rerank: bool,
     },
+    /// Mathlib arithmetic checked by kernel computation, at growing sizes.
+    ///
+    /// Builds lean/arith/BenchArith.lean against the Mathlib of the published
+    /// planar-graph result (so run `kc fetch-zenodo` first: this reuses its build, Lean
+    /// v4.34.0) and exports each of its theorems with its closure: determinants of the
+    /// Cartan matrices of type A, Fermat's little theorem in ZMod p, -1 not a square mod
+    /// p, primality by trial division and sums over Finset.range (the file has the
+    /// statements). The `_checked` ones are proved by `decide +kernel`; the others are
+    /// added with `debug.skipKernelTC true`, so only the checkers check them.
+    ///
+    /// Writes, in OUT/arith: NAME.ndjson per theorem (it and everything it depends on),
+    /// FAMILY-deps.ndjson per family (the closure of the first statement's constants
+    /// without the theorem: what every size shares; subtract its checking time to time
+    /// one theorem), and names.txt. Needs elan.
+    FetchArith {
+        #[command(flatten)]
+        dirs: Dirs,
+    },
     /// Build the four checkers that `kc measure` compares, each at a pinned commit.
     ///
     /// nitrolean is built from this checkout (or --nitrolean DIR), its commit
@@ -249,6 +267,7 @@ pub fn main(c: Cmd) -> Result<()> {
         Cmd::FetchZenodo { .. } => "fetch-zenodo",
         Cmd::FetchLrat { .. } => "fetch-lrat",
         Cmd::FetchMathlibDecide { .. } => "fetch-mathlib-decide",
+        Cmd::FetchArith { .. } => "fetch-arith",
         Cmd::BuildCheckers { .. } => "build-checkers",
         Cmd::Measure { .. } => "measure",
         Cmd::Summarize { .. } => "summarize",
@@ -273,6 +292,10 @@ pub fn main(c: Cmd) -> Result<()> {
         Cmd::FetchMathlibDecide { dirs, rerank } => {
             let k = Kc::new(name, &dirs, update_env);
             fetch_mathlib_decide(&k, rerank)
+        }
+        Cmd::FetchArith { dirs } => {
+            let k = Kc::new(name, &dirs, update_env);
+            fetch_arith(&k)
         }
         Cmd::BuildCheckers {
             cache,
@@ -1130,6 +1153,92 @@ fn fetch_mathlib_decide(k: &Kc, rerank: bool) -> Result<()> {
         .stdout(stderr_stdio())
         .status();
     k.log(&io, &format!("wrote {}", ml.display()));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// fetch-arith
+
+/// The families of lean/arith/BenchArith.lean: theorem name prefixes.
+const ARITH_FAMILIES: [&str; 5] = ["cartan_A", "fermat", "qnr", "prime", "sumsq"];
+
+fn fetch_arith(k: &Kc) -> Result<()> {
+    let io = Io(None);
+    k.need(&["elan"])?;
+    let dir = util::abs_dir(&k.out.join("arith"))?;
+    let work = util::abs_dir(&k.cache.join("arith"))?;
+    let cache = fs::canonicalize(&k.cache)?;
+    let lean = cache.join("zenodo/project/lean");
+    if !lean.join(".lake/build").is_dir() {
+        bail!("run `cargo xtask kc fetch-zenodo` first (it builds the Mathlib this uses)");
+    }
+    let exp434 = k.build_exporter("434", LEAN4EXPORT_434, TC_MAIN)?;
+    let src = k.here.join("lean/arith/BenchArith.lean");
+    let src_dir = src.parent().expect("a file has a directory");
+
+    k.log(&io, &format!("building BenchArith ({TC_MAIN})"));
+    util::run(
+        lake_env(&lean)
+            .args(["lean", "-R"])
+            .arg(src_dir)
+            .arg("-o")
+            .arg(work.join("BenchArith.olean"))
+            .arg(&src),
+    )?;
+    let leanpath = util::output(lake_env(&lean).args(["printenv", "LEAN_PATH"]))?
+        .trim_end_matches('\n')
+        .to_string();
+    let leanpath = format!("{}:{leanpath}", work.display());
+
+    let names: Vec<String> = fs::read_to_string(&src)?
+        .lines()
+        .filter_map(|l| l.strip_prefix("theorem "))
+        .filter_map(|l| l.split_whitespace().next())
+        .map(String::from)
+        .collect();
+    let mut list = String::new();
+    for n in &names {
+        list.push_str(&format!("BenchArith.{n}\n"));
+    }
+    fs::write(dir.join("names.txt"), list)?;
+    let export = |out: &Path, consts: &[String]| -> Result<()> {
+        let mut c = cmd_in(&exp434, &lean);
+        c.args(["BenchArith", "--"])
+            .args(consts)
+            .env("LEAN_PATH", &leanpath);
+        util::unlimited_stack(&mut c);
+        run_to_file(&mut c, out)
+    };
+    for n in &names {
+        k.log(&io, &format!("export {n}"));
+        export(
+            &dir.join(format!("{n}.ndjson")),
+            &[format!("BenchArith.{n}")],
+        )?;
+    }
+    // The closure of each family's first statement without its proof.
+    for fam in ARITH_FAMILIES {
+        let Some(first) = names
+            .iter()
+            .find(|n| n.starts_with(fam) && !n.ends_with("_checked"))
+        else {
+            continue;
+        };
+        let fam_names = work.join(format!("{fam}.names.txt"));
+        fs::write(&fam_names, format!("BenchArith.{first}\n"))?;
+        let deps = work.join(format!("{fam}.deps-names.txt"));
+        run_to_file(
+            lake_env(&lean)
+                .args(["lean", "--run"])
+                .arg(k.here.join("lean/ListDepsOfNames.lean"))
+                .arg(&fam_names)
+                .args(["BenchArith", "Mathlib"])
+                .env("LEAN_PATH", &leanpath),
+            &deps,
+        )?;
+        export(&dir.join(format!("{fam}-deps.ndjson")), &words_of(&deps)?)?;
+    }
+    k.log(&io, &format!("wrote {}", dir.display()));
     Ok(())
 }
 

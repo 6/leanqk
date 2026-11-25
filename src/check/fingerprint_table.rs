@@ -549,6 +549,146 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x7,
     ),
     (
+        "sInt",
+        "d81660bf85668f90f52edc7d9e0fc9e4868080d7059d3187faa5c82f8a2f2271",
+        0x7,
+    ),
+    (
+        "sInt.sadd",
+        "3806dc43922763d28f807d9a175dd9544494bbcdf8df4de2f2827ce0dcd76307",
+        0x7,
+    ),
+    (
+        "sInt.sadd.smatch_1",
+        "d4d315a87e982f7336114572db450e15c174cc5bbf0cee962714a502d8a3f688",
+        0x7,
+    ),
+    (
+        "sInt.scasesOn",
+        "2ac5c9fea3a83d1967a8becebde8affe63861954e9eee5193858fdc5295b118e",
+        0x7,
+    ),
+    (
+        "sInt.sediv",
+        "cb9323b4e1383f13547765a1345067f6106d6a4be07c8d242d10e2ebaa5b8ef7",
+        0x7,
+    ),
+    (
+        "sInt.sediv.smatch_1",
+        "36e6fae7865b9c74cdbb5152c315f0252a7478e76c83ab3c25173e3725417f02",
+        0x7,
+    ),
+    (
+        "sInt.semod",
+        "42ee5324959a48910e583fec9d5873611b1928be300c62b4f8e2816c0a4bc5d3",
+        0x7,
+    ),
+    (
+        "sInt.semod.smatch_1",
+        "c58c5c39945602466236cd56f7c769fa8978a112d22a935ec18b086fdb74a20b",
+        0x7,
+    ),
+    (
+        "sInt.sinstAdd",
+        "21f5043eb040b3cb5484e44908b8ce4cd7daa4a140b6b11ade6a214796b8a5ff",
+        0x7,
+    ),
+    (
+        "sInt.sinstNegInt",
+        "c7d18c36e3d6b4b0d92368e51c940ad133121c1f5ef24f3397d4faa04eb069a0",
+        0x7,
+    ),
+    (
+        "sInt.smul",
+        "595e6f62c3e3455323d73ebb4f650871a97fbe256776c2013ec341dcc70673bc",
+        0x7,
+    ),
+    (
+        "sInt.snatAbs",
+        "111bc6c6e9cad69c5817adbdf8ea439edb60eebaf437279bc64d442471823636",
+        0x7,
+    ),
+    (
+        "sInt.sneg",
+        "de328401fecf662643f3f15a5eb3b9159fa97385fafb5822587fcba52059515b",
+        0x7,
+    ),
+    (
+        "sInt.sneg.smatch_1",
+        "51e051546bb3220278daced586210dc3fda143cb401d2af6094b1f6528f9f2ae",
+        0x7,
+    ),
+    (
+        "sInt.snegOfNat",
+        "b7ecd001ae1bc95e733bf182aa25d3743ea0663b170c97010d5aa181d0547fd9",
+        0x7,
+    ),
+    (
+        "sInt.snegOfNat.smatch_1",
+        "ada315cf635825fe97d0beaeb465ad264e20032bbdcdc1988f8dc7f68c2f0914",
+        0x7,
+    ),
+    (
+        "sInt.snegSucc",
+        "f3851e977caa9de4cd52e9819a45aa18e886680578ba5b1a01e5d2713e4cf5b3",
+        0x7,
+    ),
+    (
+        "sInt.sofNat",
+        "00b4c137bffbee7226ea73f2f9569ff5b48a01316e8802504f1a81dea4444408",
+        0x7,
+    ),
+    (
+        "sInt.spow",
+        "e48aea6e4a14bd70e8229291b7470317a975398158a389a0234af818427aef9d",
+        0x7,
+    ),
+    (
+        "sInt.spow.smatch_1",
+        "aac408a3fb2a6fc95aa0f5a5604efdc721e29887f57f9b837ebd21f38d068884",
+        0x7,
+    ),
+    (
+        "sInt.srec",
+        "f3265abfee4964e131a56b388abd1ae596eb14d87baf2b3aa8d162a36a013eb9",
+        0x7,
+    ),
+    (
+        "sInt.ssub",
+        "381a8c916e574e4e75fd1776283fc59bef446953ec0057c37f783ff68dd0e11f",
+        0x7,
+    ),
+    (
+        "sInt.ssubNatNat",
+        "d33467a2793b3b760e772038f2e517903f9c7f11508a4d829fd8bb62eea803c3",
+        0x7,
+    ),
+    (
+        "sInt.stdiv",
+        "26c0beded8082f540e5b48ac22284647293eeb71955dd1df027697c2b1582b39",
+        0x7,
+    ),
+    (
+        "sInt.stdiv.smatch_1",
+        "54c08432c73aaba0fbd990942d6bfe55f5f7a5b17108dbfadafb4abe95dd88b6",
+        0x7,
+    ),
+    (
+        "sInt.stmod",
+        "1c664e3663c4ec67e13c3c56997dbc30ef4d30c9a7417ea53f02654621c88090",
+        0x7,
+    ),
+    (
+        "sInt.stoNat",
+        "c2492ab9d968b1a292c0343fea6b25dd50db2061e36a0025082cc893d80cd4a2",
+        0x7,
+    ),
+    (
+        "sInt.stoNat.smatch_1",
+        "2dd58918ebefd5d96ba36f419eaf306b8e02071d6943f8bf132a2c1f2c8659b2",
+        0x7,
+    ),
+    (
         "sInvImage",
         "6c2a6c487af1cd76319ecfb710278fa8003b553ba9879333e27282ea620d98d2",
         0x7,
@@ -974,6 +1114,21 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x7,
     ),
     (
+        "sList.szipWith",
+        "653263db979bd990d2543f0e4cb047f5fa95568c4de6039667a0e93ce8e2fef4",
+        0x7,
+    ),
+    (
+        "sList.szipWith.s_f",
+        "056b4973583bf2999c2ed114e96114ea914b7a37f083071d8e164e78ddd57a3a",
+        0x7,
+    ),
+    (
+        "sList.szipWith.smatch_1",
+        "498d942bdfa12dbef533b02a72f82b11be7dbabd07345da5f6804a888be0d8e1",
+        0x7,
+    ),
+    (
         "sMod",
         "7e55479f4f059acedfaf908b5f9994046bb8422ff5336be3d0d0914ba2c87188",
         0x7,
@@ -1081,6 +1236,11 @@ pub static TABLE: &[(&str, &str, u32)] = &[
     (
         "sNat.scasesOn",
         "6cb332f7ab9cc027730c1b329be5cd682973ec45680fdfb72b12611755f00dba",
+        0x7,
+    ),
+    (
+        "sNat.scast",
+        "ac6b0707b5b6c17e1e6df9cbddc9c0eccaa4a29796cb2456028b566cffbfb87f",
         0x7,
     ),
     (
@@ -1374,6 +1534,21 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x7,
     ),
     (
+        "sNatCast",
+        "0d5356aa4b12b03d0d92a9024e62a5876ca220a2164f6391b1753e365dd7bfa8",
+        0x7,
+    ),
+    (
+        "sNatCast.smk",
+        "a73e139aca000f7225da5d30ab01d562488cbc9a59fbf24e729493e784129f6e",
+        0x7,
+    ),
+    (
+        "sNatCast.snatCast",
+        "12054aef2a8634c2697cc10aa3ea41c4bcc8280703a864e80b89bfb3f681e90b",
+        0x7,
+    ),
+    (
         "sNatPow",
         "306cafd801b50ac5aee7ae7d15d7c5b17856e196c70be45d63686d018c479268",
         0x7,
@@ -1391,6 +1566,21 @@ pub static TABLE: &[(&str, &str, u32)] = &[
     (
         "sNe",
         "2dc48f5644031307d69286df1594d49e907c0064c11aa3aeb402728b3404cde0",
+        0x7,
+    ),
+    (
+        "sNeg",
+        "9c177ad82054e416c32fe6ae7dab9b55782de78c1a7aaa8eab95e8236bf68c4b",
+        0x7,
+    ),
+    (
+        "sNeg.smk",
+        "26f3a9201300758b212aff5401daef79f39723d10de3c4bf87d73d02405df2ca",
+        0x7,
+    ),
+    (
+        "sNeg.sneg",
+        "1f62b33d5ba6481adf07f467ef72c2e3f40f8d99af5281634ea7900e9da4b331",
         0x7,
     ),
     (
@@ -1874,8 +2064,18 @@ pub static TABLE: &[(&str, &str, u32)] = &[
         0x7,
     ),
     (
+        "sinstNatCastInt",
+        "78e19986e86269089f9f631c22d42e10235b83f5400de9414f3f80389fc2da30",
+        0x7,
+    ),
+    (
         "sinstNatPowNat",
         "2180f31ce66d7fa4767ff81daa9e364f23526ec91603825245ce83dc9a0f16c6",
+        0x7,
+    ),
+    (
+        "sinstOfNat",
+        "7d53f527117ac8e940e232064c64530db6036a83910e73ed9d6365c99051db9f",
         0x7,
     ),
     (

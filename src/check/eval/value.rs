@@ -50,7 +50,12 @@ pub enum Val {
 
 /// The constants of an array's type, at its universe level, and its
 /// elements.
-#[derive(Clone)]
+///
+/// The elements are a persistent array: one version (the root) holds them
+/// in a vector, and every other version is a change to a neighbour, so
+/// that `set` and `push` take constant time and memory however many
+/// versions are alive. Reading a version moves the root to it first,
+/// undoing and redoing the changes in between (Baker's rerooting).
 pub struct ArrVal {
     /// `Array.mk`, `List.cons` and `List.nil`, with the level.
     pub mk: ExprId,
@@ -58,7 +63,128 @@ pub struct ArrVal {
     pub nil: ExprId,
     /// The element type.
     pub ty: Th,
-    pub elems: Vec<Th>,
+    node: RefCell<Node>,
+}
+
+enum Node {
+    Root(Vec<Th>),
+    /// The neighbour with element `i` replaced by the thunk.
+    Set(usize, Th, Rc<ArrVal>),
+    /// The neighbour without its last element.
+    Pop(Rc<ArrVal>),
+    /// The neighbour with the thunk added at the end.
+    Push(Th, Rc<ArrVal>),
+}
+
+impl ArrVal {
+    pub fn new(mk: ExprId, cons: ExprId, nil: ExprId, ty: Th, elems: Vec<Th>) -> Rc<ArrVal> {
+        Rc::new(ArrVal {
+            mk,
+            cons,
+            nil,
+            ty,
+            node: RefCell::new(Node::Root(elems)),
+        })
+    }
+
+    fn version(&self, elems: Vec<Th>) -> Rc<ArrVal> {
+        ArrVal::new(self.mk, self.cons, self.nil, self.ty.clone(), elems)
+    }
+
+    /// Makes `a` the root.
+    fn reroot(a: &Rc<ArrVal>) {
+        if matches!(*a.node.borrow(), Node::Root(_)) {
+            return;
+        }
+        let mut path = vec![a.clone()];
+        loop {
+            let next = match &*path[path.len() - 1].node.borrow() {
+                Node::Root(_) => break,
+                Node::Set(_, _, n) | Node::Pop(n) | Node::Push(_, n) => n.clone(),
+            };
+            path.push(next);
+        }
+        for j in (0..path.len() - 1).rev() {
+            let (x, root) = (&path[j], &path[j + 1]);
+            let Node::Root(mut v) = root.node.replace(Node::Root(Vec::new())) else {
+                unreachable!()
+            };
+            let back = match x.node.replace(Node::Root(Vec::new())) {
+                Node::Set(i, t, _) => Node::Set(i, std::mem::replace(&mut v[i], t), x.clone()),
+                Node::Pop(_) => Node::Push(v.pop().expect("pop of an empty version"), x.clone()),
+                Node::Push(t, _) => {
+                    v.push(t);
+                    Node::Pop(x.clone())
+                }
+                Node::Root(_) => unreachable!(),
+            };
+            *root.node.borrow_mut() = back;
+            *x.node.borrow_mut() = Node::Root(v);
+        }
+    }
+
+    /// Runs `f` on the elements of `a`.
+    pub fn with<R>(a: &Rc<ArrVal>, f: impl FnOnce(&[Th]) -> R) -> R {
+        ArrVal::reroot(a);
+        match &*a.node.borrow() {
+            Node::Root(v) => f(v),
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn len(a: &Rc<ArrVal>) -> usize {
+        ArrVal::with(a, |v| v.len())
+    }
+
+    pub fn get(a: &Rc<ArrVal>, i: usize) -> Option<Th> {
+        ArrVal::with(a, |v| v.get(i).cloned())
+    }
+
+    /// `a` with element `i` replaced by `t`, if `i` is in bounds.
+    pub fn set(a: &Rc<ArrVal>, i: usize, t: Th) -> Option<Rc<ArrVal>> {
+        ArrVal::reroot(a);
+        let mut node = a.node.borrow_mut();
+        let Node::Root(v) = &mut *node else {
+            unreachable!()
+        };
+        if i >= v.len() {
+            return None;
+        }
+        let old = std::mem::replace(&mut v[i], t);
+        let b = a.version(std::mem::take(v));
+        *node = Node::Set(i, old, b.clone());
+        Some(b)
+    }
+
+    /// `a` with `t` added at the end.
+    pub fn push(a: &Rc<ArrVal>, t: Th) -> Rc<ArrVal> {
+        ArrVal::reroot(a);
+        let mut node = a.node.borrow_mut();
+        let Node::Root(v) = &mut *node else {
+            unreachable!()
+        };
+        v.push(t);
+        let b = a.version(std::mem::take(v));
+        *node = Node::Pop(b.clone());
+        b
+    }
+}
+
+impl Drop for ArrVal {
+    /// Drops a chain of versions in a loop rather than by recursion.
+    fn drop(&mut self) {
+        let mut n = std::mem::replace(self.node.get_mut(), Node::Root(Vec::new()));
+        loop {
+            let next = match n {
+                Node::Root(_) => break,
+                Node::Set(_, _, r) | Node::Pop(r) | Node::Push(_, r) => r,
+            };
+            match Rc::try_unwrap(next) {
+                Ok(mut a) => n = std::mem::replace(a.node.get_mut(), Node::Root(Vec::new())),
+                Err(_) => break,
+            }
+        }
+    }
 }
 
 pub enum TState {
@@ -227,7 +353,13 @@ impl Readback {
             }
             TState::Busy => unreachable!("reading back a thunk being evaluated"),
         };
-        self.thunks.insert(key, r);
+        if self.erased {
+            self.thunks.insert(key, r);
+        } else {
+            // The term the thunk stands for: kept with it, so that later
+            // read-backs (and memo keys) do not build it again.
+            t.1.set(Some(r));
+        }
         r
     }
 
@@ -256,7 +388,7 @@ impl Readback {
             Val::Arr(a) => {
                 let ty = self.thunk(tc, &a.ty);
                 let mut l = tc.st.app(a.nil, ty);
-                for e in a.elems.iter().rev() {
+                for e in ArrVal::with(a, |v| v.to_vec()).iter().rev() {
                     let x = self.thunk(tc, e);
                     let c = tc.st.app(a.cons, ty);
                     let c = tc.st.app(c, x);

@@ -178,6 +178,18 @@ theorem ev_arr_eq_wrong : decide (ev_arr 20 = (List.range 20).toArray) = true :=
 def ev_arr_fns : Array (Nat → Nat) := #[(· + 1), (· * 2)] |>.push (· + 10)
 theorem ev_arr_fn : ev_arr_fns[2]! 5 + ev_arr_fns[1]! 4 = 23 := sorry
 theorem ev_arr_fn_wrong : ev_arr_fns[2]! 5 + ev_arr_fns[1]! 4 = 24 := sorry
+theorem ev_arr_vers :
+    (let a := ev_arr 10; let b := a.set! 2 7; let c := b.push 5; let d := a.set! 2 8
+     a[2]! + b[2]! + c[10]! + d[2]! + c.size + a.size + b[2]! + a[2]!) = 56 := sorry
+theorem ev_arr_vers_wrong :
+    (let a := ev_arr 10; let b := a.set! 2 7; let c := b.push 5; let d := a.set! 2 8
+     a[2]! + b[2]! + c[10]! + d[2]! + c.size + a.size + b[2]! + a[2]!) = 57 := sorry
+def ev_arr_hist : List (Array Nat) :=
+  (List.range 20).foldl (fun vs i => match vs with
+    | v :: _ => (if i % 3 == 0 then v.push i else v.set! (i % 7) (i + 100)) :: vs
+    | [] => []) [ev_arr 7]
+theorem ev_arr_hist_ok : (ev_arr_hist.map (fun v => v.foldl (· + ·) 0 + v.size)).sum = 12068 := sorry
+theorem ev_arr_hist_wrong : (ev_arr_hist.map (fun v => v.foldl (· + ·) 0 + v.size)).sum = 12067 := sorry
 
 -- `List` operations with fast paths.
 theorem ev_lists :
@@ -189,6 +201,19 @@ theorem ev_lists :
 theorem ev_lists_wrong : (List.range 50).foldl (· + ·) 0 = 1224 := sorry
 theorem ev_filter_lazy : ((List.range 10).filter (fun i => i == 0 || 10 / i > 2)).head? = some 0 := sorry
 theorem ev_filter_lazy_wrong : ((List.range 10).filter (fun i => i == 0 || 10 / i > 2)).head? = some 1 := sorry
+
+-- `Int` operations on every sign, zero divisors and big values, hashed,
+-- and lazy `List.map`, `zipWith`, `append` and `length`.
+def ev_xs : List Int := [-7, -1, 0, 1, 7, (1234567890 * 10 ^ 10 + 1234567890) * 1000 + 123, -(9876543210 * 10 ^ 10 + 9876543210)]
+def ev_ys : List Int := [-3, -1, 0, 1, 3, -12345678901, 98765432109]
+def ev_ints : List Int := ev_xs.flatMap fun x => ev_ys.flatMap fun y =>
+  [x + y, x - y, x * y, -x, x / y, x % y, x.tdiv y, x.tmod y, x ^ (y.natAbs % 5),
+   Int.subNatNat x.natAbs y.natAbs, Int.negOfNat y.natAbs, (x.natAbs : Int), (x.toNat : Int)]
+theorem ev_int : ev_ints.foldl (fun a b => (a * 31 + b) % 1000000007) 0 = 131563993 := sorry
+theorem ev_int_wrong : ev_ints.foldl (fun a b => (a * 31 + b) % 1000000007) 0 = 131563994 := sorry
+def ev_zip : List Nat := ((List.range 30).map (· * 3)).zipWith (· + ·) ((List.range 40) ++ [7, 8])
+theorem ev_lists2 : (ev_zip.length, ev_zip.foldl (· + ·) 0) = (30, 1740) := sorry
+theorem ev_lists2_wrong : ev_zip.length = 31 := sorry
 
 -- Erased proofs that are needed after all: a cast over a theorem applied to
 -- a variable (a `K`-like major premise), `And.rec` on a constructed proof,
@@ -203,6 +228,43 @@ theorem ev_and_wrong : ev_and 3 = 5 := sorry
 def ev_sub (n : Nat) : {x : Nat // x = n + 1} := ⟨n + 1, Eq.refl (n + 1)⟩
 theorem ev_sub_ok : ev_sub 3 = ⟨4, Eq.refl 4⟩ := sorry
 theorem ev_sub_wrong : (ev_sub 3).val = 3 := sorry
+
+-- Class methods at many instances: `+` through instances built from a
+-- number (more of them than the evaluator remembers per method), through
+-- an instance passed as an argument, and through a computed field.
+def ev_addN (n : Nat) : Add Nat := ⟨fun a b => a + b + n⟩
+def ev_plus {α} [Add α] (x y : α) : α := x + y
+def ev_methods : Nat :=
+  (List.range 20).foldl (fun s n => s + @HAdd.hAdd Nat Nat Nat (@instHAdd Nat (ev_addN n)) n 1) 0
+  + (List.range 20).foldl (fun s n => s + @ev_plus Nat (ev_addN (n % 3)) n n) 0
+  + @ev_plus Nat ⟨fun a b => a * b + (List.range 10).foldl (· + ·) 0⟩ 6 7
+theorem ev_methods_ok : ev_methods = 886 := sorry
+theorem ev_methods_wrong : ev_methods = 887 := sorry
+
+-- Matches, run through `casesOn` and the sparse `casesOn` of matchers:
+-- several constructors, wildcards (the sparse form's `else`), a `Nat`
+-- literal scrutinee, a structure, an `Option` of a function, and a match
+-- whose result is a function applied to more arguments.
+inductive EvShape | dot | seg (n : Nat) | tri (a b : Nat) (s : EvShape)
+def ev_shape_size : EvShape → Nat
+  | .dot => 1
+  | .seg n => n + 2
+  | .tri a b s => a * b + ev_shape_size s
+def ev_shapes (n : Nat) : EvShape :=
+  (List.range n).foldl (fun s i => if i % 3 == 0 then .tri i (i + 1) s else s) (.seg n)
+def ev_kind : Nat → List Nat → Nat
+  | 0, _ => 7
+  | n + 1, x :: _ => n + x
+  | _, _ => 100
+def ev_pick (o : Option (Nat → Nat)) : Nat → Nat := match o with
+  | some f => f
+  | none => (· + 1)
+def ev_pair2 : Nat × Nat → Nat | (a, b) => a * 10 + b
+def ev_cases : Nat :=
+  ev_shape_size (ev_shapes 30) + ev_kind 0 [] + ev_kind 5 [9] + ev_kind 4 [] +
+  ev_pick (some (· * 2)) 21 + ev_pick none 41 + ev_pair2 (3, 4)
+theorem ev_cases_ok : ev_cases = 2970 := sorry
+theorem ev_cases_wrong : ev_cases = 2971 := sorry
 
 /-! Found by differential fuzzing (tests/fuzz) -/
 theorem fz_quot_direct :

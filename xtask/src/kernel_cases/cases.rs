@@ -2546,6 +2546,38 @@ fn eval_cases(v: &mut Cases) {
     );
     eval(
         v,
+        "eval-arr-vers",
+        "K.ev_arr_vers",
+        "accept",
+        "old versions of an array read after set! and push on them",
+        &[],
+    );
+    eval(
+        v,
+        "eval-arr-vers-wrong",
+        "K.ev_arr_vers_wrong",
+        "reject",
+        "the same, off by one",
+        &[],
+    );
+    eval(
+        v,
+        "eval-arr-hist",
+        "K.ev_arr_hist_ok",
+        "accept",
+        "twenty versions of an array, each made from the last, all read",
+        &[],
+    );
+    eval(
+        v,
+        "eval-arr-hist-wrong",
+        "K.ev_arr_hist_wrong",
+        "reject",
+        "the same, off by one",
+        &[],
+    );
+    eval(
+        v,
         "eval-list",
         "K.ev_lists",
         "accept",
@@ -2574,6 +2606,70 @@ fn eval_cases(v: &mut Cases) {
         "K.ev_filter_lazy_wrong",
         "reject",
         "the same, the wrong head",
+        &[],
+    );
+    eval(
+        v,
+        "eval-int",
+        "K.ev_int",
+        "accept",
+        "Int +, -, *, neg, / and % (Euclidean and toward zero), ^, subNatNat, negOfNat, natAbs and toNat on every sign, zero and big values, hashed",
+        &[],
+    );
+    eval(
+        v,
+        "eval-int-wrong",
+        "K.ev_int_wrong",
+        "reject",
+        "the same hash, off by one",
+        &[],
+    );
+    eval(
+        v,
+        "eval-list-lazy",
+        "K.ev_lists2",
+        "accept",
+        "List.map, zipWith, append and length",
+        &[],
+    );
+    eval(
+        v,
+        "eval-list-lazy-wrong",
+        "K.ev_lists2_wrong",
+        "reject",
+        "the length, off by one",
+        &[],
+    );
+    eval(
+        v,
+        "eval-methods",
+        "K.ev_methods_ok",
+        "accept",
+        "+ through 20 instances built from a number, an instance argument and a computed field",
+        &[],
+    );
+    eval(
+        v,
+        "eval-methods-wrong",
+        "K.ev_methods_wrong",
+        "reject",
+        "the same sum, off by one",
+        &[],
+    );
+    eval(
+        v,
+        "eval-cases",
+        "K.ev_cases_ok",
+        "accept",
+        "matches through casesOn and sparse casesOn: wildcards, a literal, a structure, a function result",
+        &[],
+    );
+    eval(
+        v,
+        "eval-cases-wrong",
+        "K.ev_cases_wrong",
+        "reject",
+        "the same sum, off by one",
         &[],
     );
 
@@ -2737,6 +2833,34 @@ fn eval_cases(v: &mut Cases) {
         "K34.ev_filter_lazy_wrong",
         "reject",
         "the same, the wrong head",
+    );
+    eval_old(
+        v,
+        "eval434-dec-cast",
+        "K34.ev_dec_cast",
+        "accept",
+        "a cast along a proof from Nat.decEq: evaluated again keeping proofs",
+    );
+    eval_old(
+        v,
+        "eval434-dec-cast-wrong",
+        "K34.ev_dec_cast_wrong",
+        "reject",
+        "the same sum, off by one",
+    );
+    eval_old(
+        v,
+        "eval434-cases",
+        "K34.ev_cases_ok",
+        "accept",
+        "matches through casesOn and sparse casesOn, as in eval-cases",
+    );
+    eval_old(
+        v,
+        "eval434-cases-wrong",
+        "K34.ev_cases_wrong",
+        "reject",
+        "the same sum, off by one",
     );
 }
 
