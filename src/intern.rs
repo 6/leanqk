@@ -636,36 +636,32 @@ impl<T: Node> Big<T> {
                 sorted[*c as usize] = *e;
                 *c += 1;
             }
-            let mut last = None;
+            // Unlike the first entry's.
+            let mut last = sorted.first().map_or(0, |e| !e[0]);
+            let spilled = spill.len();
             for (i, &[l, hi, id]) in sorted.iter().enumerate() {
-                let h = (hi as u64) << 32 | l as u64;
                 // An equal key has an equal hash, so it is among the ones
                 // just before with the same low half.
-                if last == Some(l) {
-                    let node = nodes.get(id);
-                    for &[l2, hi2, other] in sorted[..i].iter().rev() {
-                        if l2 != l {
-                            break;
-                        }
-                        if hi2 == hi && nodes.get(other).same(node) {
-                            return Err((id.max(other), id.min(other)));
-                        }
-                    }
+                if l == last
+                    && let Some(d) = equal_before(nodes, sorted, i)
+                {
+                    return Err(d);
                 }
-                last = Some(l);
+                last = l;
                 // The first slot from its line on that is after the last
                 // filled: the slots between are all in use, as a probe
                 // needs.
                 let at = next.max(((l as u64 * lines) >> 32) as usize * LINE);
+                let tagged = tag_of((hi as u64) << 32) | id as u64;
                 match slots.get_mut(at) {
                     Some(s) => {
-                        *s.get_mut() = tag_of(h) | id as u64;
+                        *s.get_mut() = tagged;
                         next = at + 1;
-                        added += 1;
                     }
-                    None => spill.push((h, id)),
+                    None => spill.push(((hi as u64) << 32 | l as u64, id)),
                 }
             }
+            added += k - (spill.len() - spilled);
         }
         table.add_len(added);
         for (h, id) in spill {
@@ -689,6 +685,24 @@ impl<T: Node> Big<T> {
     pub fn heap_bytes(&self) -> usize {
         self.nodes.heap_bytes() + self.table.heap_bytes()
     }
+}
+
+/// Whether entry `i` of `sorted` (hash halves and id, in hash order) is
+/// a node equal to one before it: their ids (the later, the earlier).
+#[cold]
+#[inline(never)]
+fn equal_before<T: Node>(nodes: &Chunked<T>, sorted: &[[u32; 3]], i: usize) -> Option<(u32, u32)> {
+    let [l, hi, id] = sorted[i];
+    let node = nodes.get(id);
+    for &[l2, hi2, other] in sorted[..i].iter().rev() {
+        if l2 != l {
+            break;
+        }
+        if hi2 == hi && nodes.get(other).same(node) {
+            return Some((id.max(other), id.min(other)));
+        }
+    }
+    None
 }
 
 /// Shards of the loader's locked tables (strings, level lists, big
