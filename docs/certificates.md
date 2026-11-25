@@ -184,8 +184,97 @@ an LU factorisation checked the same way.
 
 ### Results
 
-RESULTS
+12-core aarch64 Linux, 95 GB, one run each, with `measure.sh`'s limits (60 s wall clock,
+4 GiB resident), plus 600 s runs: nitrolean where it timed out, and leanchecker on the two
+`n = 64` exports with a 32 GiB limit. Checkers as in `bench/kernel-compute/README.md`:
+nitrolean at the commit that added this benchmark (no change to the checker itself),
+leanchecker of Lean v4.36.0, gruszka `43d2d12` (susz 0.4.0), nano-lean `b5602a4`. Wall time
+and peak resident memory in MiB; `oom` is over 4 GiB, `timeout` over 60 s. Every export
+contains the checker's closure (5.05 MB, `inverse-1`); export sizes are in the manifest
+`matcert exports` writes (37.6 MB for `inverse-512`).
+
+| export | n | certificate bytes | nitrolean | leanchecker | gruszka | nano-lean |
+| --- | ---: | ---: | --- | --- | --- | --- |
+| inverse-1 | 1 | 28 | 0.10 s, 17 | 0.33 s, 113 | 0.01 s, 46 | 0.05 s, 52 |
+| inverse-4 | 4 | 202 | 0.10 s, 17 | 0.35 s, 113 | 0.01 s, 46 | 0.04 s, 53 |
+| inverse-8 | 8 | 760 | 0.10 s, 17 | 0.36 s, 124 | 0.01 s, 49 | 0.04 s, 59 |
+| inverse-16 | 16 | 3 007 | 0.13 s, 17 | 0.64 s, 230 | 0.04 s, 71 | 0.07 s, 83 |
+| inverse-32 | 32 | 11 949 | 0.32 s, 21 | 3.61 s, 992 | 0.28 s, 237 | 0.21 s, 294 |
+| inverse-32-corrupt | 32 | 11 949 | rejected | rejected | rejected | rejected |
+| inverse-64 | 64 | 47 750 | 1.80 s, 28 | oom; 33.4 s, 6 832 at 600 s | 3.40 s, 1 072 | 1.57 s, 1 903 |
+| inverse-128 | 128 | 191 114 | 14.4 s, 69 | oom | 31.1 s, 1 234 | oom |
+| inverse-256 | 256 | 764 095 | timeout; 130.7 s, 192 at 600 s | oom | timeout | oom |
+| inverse-512 | 512 | 3 056 762 | timeout; timeout at 600 s | oom | timeout | oom |
+| nonsingular-4 | 4 | 126 | 0.10 s, 16 | 0.34 s, 112 | 0.01 s, 44 | 0.04 s, 51 |
+| nonsingular-8 | 8 | 726 | 0.11 s, 16 | 0.37 s, 124 | 0.01 s, 49 | 0.04 s, 55 |
+| nonsingular-16 | 16 | 5 401 | 0.13 s, 19 | 0.65 s, 226 | 0.04 s, 68 | 0.07 s, 85 |
+| nonsingular-32 | 32 | 44 813 | 0.35 s, 25 | 3.37 s, 940 | 0.23 s, 223 | 0.20 s, 280 |
+| nonsingular-32-corrupt | 32 | 44 813 | rejected | rejected | rejected | rejected |
+| nonsingular-64 | 64 | 383 580 | 2.15 s, 29 | oom; 27.5 s, 6 075 at 600 s | 3.16 s, 1 005 | 1.61 s, 1 479 |
+| nonsingular-128 | 128 | 3 334 160 | 16.4 s, 75 | oom | 33.0 s, 1 257 | oom |
+
+All four checkers accept every certificate they finish and reject both corrupted ones.
+The kernel work is `n³` multiply-adds: 2.1 million for `n = 128`, 16.8 million for
+`n = 256`. nitrolean's time grows with it (14.4 s → 130.7 s from 128 to 256, about 13
+million evaluator steps a second) with little memory (192 MiB at `n = 256`). gruszka is about
+twice as slow and uses 1.2 GiB at `n = 128`; nano-lean and leanchecker run out of 4 GiB at
+`n = 128` and `n = 64`. Lean's kernel needs 6.8 GiB for `n = 64`. With the evaluator
+off (`NITROLEAN_EVAL=0`), nitrolean takes 24.2 s and 3.2 GiB for `inverse-64` (1.80 s with
+it) and 21.5 s and 3.2 GiB for `nonsingular-64` (2.15 s).
+
+The two series cost about the same per multiply-add, although the adjugate entries have
+hundreds of digits at `n = 128` (inverse-128: 213 million evaluator steps, 13.9 s;
+nonsingular-128: 244 million, 16.8 s): the time is in the steps around each
+operation, not in the arithmetic.
 
 ### What the evaluator spends its time on
 
-PROFILE
+From `nitrolean check --stats` and `NITROLEAN_EVAL_PROFILE=1` on `inverse-128`,
+`inverse-256`, `nonsingular-64` and `nonsingular-128`: every evaluator call is answered
+(nothing stuck, too deep, over the limit or evaluated again), and the evaluator is almost
+all of the time (133.7 s of 133.9 s for `inverse-256`). It takes about 100 steps per
+multiply-add `acc + a * b`, in every export. The constants reached most for `inverse-256`
+(1.68 billion steps, 16.8 million multiply-adds), as reaches per multiply-add:
+
+| constant | per multiply-add | from |
+| --- | ---: | --- |
+| `Int.rec`, `Int.casesOn` | 4 + 4 | matching both arguments of `Int.add` and `Int.mul` |
+| `List.rec` | 3 | the structural recursion of `axpy` and `rowTimes` (compiled with `brecOn`) |
+| `HAdd.hAdd`, `Add.add`, `HMul.hMul`, `Mul.mul` | 2 each | the instance chain from `+`, `*` to `Int.add`, `Int.mul` |
+| `List.cons` | 2 | the rows built by `axpy` |
+| `MatCert.axpy._sparseCasesOn_1`, `axpy.match_1` | 2 + 1 | the compiled `match` of `axpy` |
+| `Int.ofNat`, `Int.add.match_1` | 2 + 2 | rebuilding the result |
+| `PProd.mk` | 1 | the `below` tuples of `brecOn` |
+
+With negative entries (`nonsingular-128`, 244 million steps), `Int.add` of mixed signs adds
+`Int.subNatNat`, `Int.negOfNat`, `Int.negSucc` and `Nat.rec` / `Nat.casesOn` on literals
+(2.2 million each, plus 3.6 million `Nat.succ`): `Int.negOfNat` matches its argument with
+`Nat.casesOn`, which takes a literal apart into `Nat.succ`.
+
+The evaluator fast paths that would help most, in order:
+
+1. **`Int` arithmetic on literals.** Treat `Int.ofNat n` / `Int.negSucc n` with literal `n`
+   as one signed literal (a word, or a big integer), and evaluate `Int.add`, `Int.sub`,
+   `Int.mul`, `Int.neg`, `Int.emod`, `Int.ediv`, `Int.decEq` and the order tests on them
+   in one step, the way `Nat` literal arithmetic is evaluated. This replaces the `Int.rec`,
+   `Int.casesOn`, `match_1`, `Int.ofNat` and, for mixed signs, the `subNatNat` /
+   `negOfNat` / `Nat.casesOn` steps: by the counts above, about half of all steps. Lean's
+   kernel has no `Int` acceleration either, so this is where nitrolean can be faster than
+   Lean on every numeric certificate stated over `Int` (and `ZMod`, `Rat`, matrices
+   over `ℤ`).
+2. **The arithmetic instance chain.** `HAdd.hAdd Int Int Int (instHAdd …)` → `Add.add` →
+   `Int.add` is unfolded on every operation (8 reaches per multiply-add); resolving the chain
+   once for a known instance (as part of 1, for `Int` and `Nat`) removes it.
+3. **Structural recursion compiled with `brecOn`.** `List.rec`, `PProd.mk`, the
+   `_sparseCasesOn` and `match_1` auxiliaries cost about 10 steps per list element. A
+   direct rule for `brecOn` (the recursive call evaluated where the `below` tuple is
+   projected, without building the tuple), or evaluating the definition through its
+   compiled `match` when the major premise is a constructor, would cut most of them.
+   Every kernel-reducible checker written with ordinary pattern matching on lists (this one,
+   LRAT-Catcher's kernel mode) goes through this.
+4. **Packed literal lists.** A `List Int` (or `Array Int`) literal could be held as a vector
+   of literals, read lazily as `List.cons` cells. Not a bottleneck here (192 MiB for the
+   131 072 entries of `A` and `B` at `n = 256`), so lower priority; modular reduction is not one
+   either, as this checker reduces once per entry.
+
+Exports to reproduce these: `matcert exports --only inverse-256,nonsingular-128`.
