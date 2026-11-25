@@ -438,13 +438,21 @@ impl Builder {
                 r
             }
         };
+        // The same, for the records (so `pend` is not empty), without a
+        // branch: whether a child is pending is unpredictable. When it is
+        // not, the load is from a clamped index, and unused.
+        let last = n.saturating_sub(1);
+        let kid = |pend: &[Pend], r: u32| -> u32 {
+            let new = pend[((r & !KIND) as usize).min(last)].r;
+            if r & KIND == PEND { new } else { r }
+        };
         for i in 0..n {
             let Pend { id, node, mut r } = pend[i];
             if r == NONE {
                 r = STORED | words.len() as u32;
                 match node {
-                    Node::App(f, a) => words.extend([T_APP, tr(pend, f), tr(pend, a)]),
-                    node => push_node(words, node.map(|c| tr(pend, c))),
+                    Node::App(f, a) => words.extend([T_APP, kid(pend, f), kid(pend, a)]),
+                    node => push_node(words, node.map(|c| kid(pend, c))),
                 }
                 pend[i].r = r;
             }
