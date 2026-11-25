@@ -422,6 +422,65 @@ impl<T: Node> Big<T> {
         self.table = self.table.grown(n, |id| nodes.get(id).hash());
     }
 
+    /// Add `node` without looking it up or indexing it: until
+    /// [`Big::index`], lookups do not see it.
+    pub fn push_unindexed(&mut self, node: T) -> Result<u32, Overflow> {
+        let id = self.nodes.len();
+        if id >= u32::MAX as usize - 1 {
+            return Err(Overflow(self.what));
+        }
+        self.nodes.push(node);
+        Ok(id as u32)
+    }
+
+    /// Index every node anew, on `threads` threads. If two nodes are
+    /// equal, the first such pair found (the later id, the earlier one).
+    pub fn index(&mut self, threads: usize) -> Result<(), (u32, u32)>
+    where
+        T: Sync,
+    {
+        let n = self.nodes.len();
+        let table = IdTable::with_capacity(n);
+        let threads = threads.clamp(1, n.div_ceil(1 << 16).max(1));
+        let nodes = &self.nodes;
+        let dup = std::sync::Mutex::new(None);
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        const STEP: usize = 1 << 14;
+        std::thread::scope(|s| {
+            for _ in 0..threads {
+                s.spawn(|| {
+                    loop {
+                        let lo = next.fetch_add(STEP, Ordering::Relaxed);
+                        if lo >= n {
+                            return;
+                        }
+                        for id in lo..(lo + STEP).min(n) {
+                            let node = nodes.get(id as u32);
+                            let (got, fresh) = table.insert_shared(
+                                node.hash(),
+                                |o| nodes.get(o).same(node),
+                                || id as u32,
+                            );
+                            if !fresh {
+                                let mut d = dup.lock().unwrap_or_else(|e| e.into_inner());
+                                let (a, b) = (got.max(id as u32), got.min(id as u32));
+                                if d.is_none_or(|(x, _)| a < x) {
+                                    *d = Some((a, b));
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        if let Some(d) = dup.into_inner().unwrap_or_else(|e| e.into_inner()) {
+            return Err(d);
+        }
+        table.add_len(n);
+        self.table = table;
+        Ok(())
+    }
+
     /// Make room for `extra` more nodes without growing the table.
     pub fn reserve(&mut self, extra: usize) {
         self.nodes.reserve(extra);

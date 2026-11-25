@@ -41,6 +41,7 @@ use crate::name::{NameId, NameNode};
 use crate::strings::Overflow;
 
 mod fast;
+mod lazy;
 
 /// The format major version this reader understands.
 pub const FORMAT_MAJOR: &str = "3";
@@ -130,30 +131,128 @@ impl From<ExprError> for Fail {
 
 /// Read an export from a file.
 pub fn read_file(path: &Path) -> Result<(Env, ReadStats), ReadError> {
+    read_file_with(path, &Options::default())
+}
+
+/// How to read an export.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Options {
+    /// Leave theorem values unbuilt, to be built when checked (see
+    /// [`crate::env::Env::value_into`]).
+    pub lazy_proofs: bool,
+    /// Threads for parsing a regular file (0: all cores; 1: one thread
+    /// parses while another interns, as for a stream).
+    pub threads: usize,
+}
+
+/// Read an export from a file, with options.
+pub fn read_file_with(path: &Path, opts: &Options) -> Result<(Env, ReadStats), ReadError> {
     let f = File::open(path).map_err(|e| io_error(path, e))?;
-    read_open_file(f)
+    read_open_file(f, opts)
 }
 
 /// Read an export from standard input. When it is redirected from a
 /// regular file, its size is used to pre-size the tables.
 pub fn read_stdin() -> Result<(Env, ReadStats), ReadError> {
+    read_stdin_with(&Options::default())
+}
+
+/// Read an export from standard input, with options.
+pub fn read_stdin_with(opts: &Options) -> Result<(Env, ReadStats), ReadError> {
     use std::os::fd::AsFd;
     match io::stdin().as_fd().try_clone_to_owned() {
-        Ok(fd) => read_open_file(File::from(fd)),
+        Ok(fd) => read_open_file(File::from(fd), opts),
         Err(_) => read(io::stdin()),
     }
 }
 
-fn read_open_file(f: File) -> Result<(Env, ReadStats), ReadError> {
+fn read_open_file(f: File, opts: &Options) -> Result<(Env, ReadStats), ReadError> {
     // Only a regular file's length says anything about its contents.
     let size = match f.metadata() {
         Ok(m) if m.is_file() => m.len(),
         _ => 0,
     };
+    let threads = match opts.threads {
+        0 => std::thread::available_parallelism().map_or(1, |n| n.get()),
+        n => n,
+    };
+    if size == 0 {
+        return run(
+            state(opts, size, false),
+            BufReader::with_capacity(1 << 20, f),
+        );
+    }
+    // A regular file is read optimistically: expressions are added
+    // without hash-consing (an export lists each term once) and indexed
+    // at the end, on all threads. If two turn out equal after all, the
+    // file is read again with hash-consing.
+    let t0 = std::time::Instant::now();
+    let (mut env, stats) = read_regular(&f, size, threads, state(opts, size, true))?;
+    let t1 = std::time::Instant::now();
+    let ix = env.exprs.index(threads);
+    if std::env::var_os("NITROLEAN_READ_PROFILE").is_some() {
+        eprintln!(
+            "read {:.3} s (interning thread waited {:.3} s), index {:.3} s, duplicate {:?}",
+            (t1 - t0).as_secs_f64(),
+            WAIT_NS.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9,
+            t1.elapsed().as_secs_f64(),
+            ix.err()
+        );
+    }
+    match ix {
+        Ok(()) => Ok((env, stats)),
+        Err(_) => {
+            drop(env);
+            read_regular(&f, size, threads, state(opts, size, false))
+        }
+    }
+}
+
+fn state(opts: &Options, size: u64, append: bool) -> State {
     let mut st = State::new();
-    // About 94% of the lines of a real export are expressions, and a line
-    // averages 55 bytes; reserving up front avoids rehashing the big table.
-    st.env.exprs.reserve((size / 64).min(1 << 31) as usize);
+    st.append = append;
+    if opts.lazy_proofs {
+        st.lazy = Some(Box::new(lazy::Builder::with_capacity(size)));
+        // Export ids map to references (about one expression per 56
+        // bytes of a real export).
+        st.expr_ids.reserve((size / 56).min(1 << 31) as usize);
+    }
+    // About one name per 1 KiB of a real export.
+    st.env.names.reserve((size / 1024).min(1 << 31) as usize);
+    if !append {
+        // About 94% of the lines of a real export are expressions, and a
+        // line averages 55 bytes; reserving up front avoids rehashing the
+        // big table. With lazy proofs, about a third of them are interned.
+        let per = if opts.lazy_proofs { 192 } else { 64 };
+        st.env.exprs.reserve((size / per).min(1 << 31) as usize);
+    }
+    st
+}
+
+fn read_regular(
+    f: &File,
+    size: u64,
+    threads: usize,
+    st: State,
+) -> Result<(Env, ReadStats), ReadError> {
+    if threads > 1 {
+        // The interning stage runs on this thread.
+        let parsers = threads - 1;
+        return run_with(st, |full, empty| {
+            produce_parallel(f, size, parsers, full, empty)
+        });
+    }
+    use std::io::{Seek, SeekFrom};
+    let mut f = f.try_clone().map_err(|e| ReadError {
+        line: 0,
+        class: ErrorClass::Io,
+        msg: format!("read error: {e}"),
+    })?;
+    f.seek(SeekFrom::Start(0)).map_err(|e| ReadError {
+        line: 0,
+        class: ErrorClass::Io,
+        msg: format!("read error: {e}"),
+    })?;
     run(st, BufReader::with_capacity(1 << 20, f))
 }
 
@@ -292,18 +391,199 @@ impl Batch {
     }
 }
 
-fn run<B: BufRead + Send>(mut st: State, r: B) -> Result<(Env, ReadStats), ReadError> {
+fn run<B: BufRead + Send>(st: State, r: B) -> Result<(Env, ReadStats), ReadError> {
+    run_with(st, |full, empty| produce(r, full, empty))
+}
+
+fn run_with(
+    mut st: State,
+    produce: impl FnOnce(SyncSender<Batch>, Receiver<Batch>) + Send,
+) -> Result<(Env, ReadStats), ReadError> {
+    let res = run_inner(&mut st, produce);
+    if let Some(b) = st.lazy.take() {
+        st.env.lazy = b.finish();
+    }
+    let stats = res?;
+    Ok((st.env, stats))
+}
+
+fn run_inner(
+    st: &mut State,
+    produce: impl FnOnce(SyncSender<Batch>, Receiver<Batch>) + Send,
+) -> Result<ReadStats, ReadError> {
     let (full_tx, full_rx) = mpsc::sync_channel::<Batch>(4);
     let (empty_tx, empty_rx) = mpsc::sync_channel::<Batch>(8);
     let res = std::thread::scope(|s| {
-        s.spawn(move || produce(r, full_tx, empty_rx));
+        s.spawn(move || produce(full_tx, empty_rx));
         st.consume(full_rx, empty_tx)
     });
     let mut stats = res?;
     stats.shared_exprs = st.shared_exprs;
     stats.id_map_bytes =
         st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
-    Ok((st.env, stats))
+    Ok(stats)
+}
+
+/// Time the interning stage waited for batches (for
+/// `NITROLEAN_READ_PROFILE`).
+static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Bytes of a file each parsing thread reads at a time.
+const CHUNK: u64 = 4 << 20;
+
+/// The parsing stage for a regular file, on `threads` threads: thread `t`
+/// parses chunks `t`, `t + threads`, ... (each the whole lines that start
+/// in it), and this thread forwards their batches in file order, with
+/// line numbers made absolute.
+fn produce_parallel(
+    f: &File,
+    size: u64,
+    threads: usize,
+    full: SyncSender<Batch>,
+    empty: Receiver<Batch>,
+) {
+    let chunks = size.div_ceil(CHUNK).max(1) as usize;
+    let threads = threads.clamp(1, chunks);
+    // Batches the interning stage is done with, for the parsers to reuse
+    // (so that their buffers are not freed and allocated again).
+    let pool = std::sync::Mutex::new(Vec::<Batch>::new());
+    std::thread::scope(|s| {
+        let mut rxs = Vec::new();
+        for t in 0..threads {
+            let (tx, rx) = mpsc::sync_channel::<Batch>(1);
+            rxs.push(rx);
+            let pool = &pool;
+            s.spawn(move || {
+                let mut tape = Tape::new();
+                let mut buf = Vec::new();
+                for c in (t..chunks).step_by(threads) {
+                    let b = pool.lock().unwrap_or_else(|e| e.into_inner()).pop();
+                    let b = parse_chunk(f, size, c as u64, &mut tape, &mut buf, b);
+                    let stop = b.end.as_ref().is_some_and(|e| e.is_err());
+                    if tx.send(b).is_err() || stop {
+                        return;
+                    }
+                }
+            });
+        }
+        let (mut lines, mut bytes) = (0u64, 0u64);
+        for c in 0..chunks {
+            while let Ok(mut b) = empty.try_recv() {
+                b.clear();
+                b.end = None;
+                pool.lock().unwrap_or_else(|e| e.into_inner()).push(b);
+            }
+            let Ok(mut b) = rxs[c % threads].recv() else {
+                return;
+            };
+            for l in &mut b.lines {
+                *l += lines;
+            }
+            let err = match b.end.take() {
+                Some(Err(mut e)) => {
+                    e.line += lines;
+                    Some(e)
+                }
+                _ => None,
+            };
+            lines += b.lines_read;
+            bytes += b.bytes_read;
+            let last = err.is_some() || c + 1 == chunks;
+            if last {
+                b.end = Some(err.map_or(Ok(()), Err));
+                b.lines_read = lines;
+                b.bytes_read = bytes;
+            }
+            if full.send(b).is_err() || last {
+                // Unblock the parsers before the scope joins them.
+                drop(rxs);
+                return;
+            }
+        }
+    });
+}
+
+/// Parse chunk `c` of a file: the lines that start in bytes
+/// `[c * CHUNK, (c + 1) * CHUNK)`. Line numbers are relative to the
+/// chunk; `lines_read` and `bytes_read` are the chunk's.
+fn parse_chunk(
+    f: &File,
+    size: u64,
+    c: u64,
+    tape: &mut Tape,
+    buf: &mut Vec<u8>,
+    batch: Option<Batch>,
+) -> Batch {
+    use std::os::unix::fs::FileExt;
+    let mut batch = batch.unwrap_or_default();
+    let (lo, hi) = (c * CHUNK, ((c + 1) * CHUNK).min(size));
+    // Read the chunk, one byte before it (to see whether a line starts at
+    // `lo`), and on until the end of its last line.
+    let from = lo.saturating_sub(1);
+    buf.clear();
+    let mut end = hi;
+    let res: io::Result<()> = (|| {
+        buf.resize((hi - from) as usize, 0);
+        f.read_exact_at(buf, from)?;
+        while end < size && buf.last() != Some(&b'\n') {
+            let n = (64 << 10).min(size - end) as usize;
+            let k = buf.len();
+            buf.resize(k + n, 0);
+            f.read_exact_at(&mut buf[k..], end)?;
+            end += n as u64;
+            // Keep only up to the first newline of what was added.
+            if let Some(p) = buf[k..].iter().position(|&b| b == b'\n') {
+                end -= (n - p - 1) as u64;
+                buf.truncate(k + p + 1);
+            }
+        }
+        Ok(())
+    })();
+    if let Err(e) = res {
+        batch.end = Some(Err(ReadError {
+            line: 1,
+            class: ErrorClass::Io,
+            msg: format!("read error: {e}"),
+        }));
+        return batch;
+    }
+    // Skip the line that started before `lo`.
+    let mut pos = if c == 0 {
+        0
+    } else {
+        match buf.iter().position(|&b| b == b'\n') {
+            Some(p) => p + 1,
+            None => buf.len(),
+        }
+    };
+    let mut seen_first = c != 0;
+    let mut lines = 0u64;
+    let mut bytes = 0u64;
+    while pos < buf.len() {
+        let next = match buf[pos..].iter().position(|&b| b == b'\n') {
+            Some(p) => pos + p + 1,
+            None => buf.len(),
+        };
+        let line = &buf[pos..next];
+        lines += 1;
+        bytes += line.len() as u64;
+        let before = batch.items.len();
+        if let Err(f) = parse_line(tape, line, &mut batch, &mut seen_first) {
+            batch.end = Some(Err(ReadError {
+                line: lines,
+                class: f.class,
+                msg: f.msg,
+            }));
+            break;
+        }
+        if batch.items.len() > before {
+            batch.lines.push(lines);
+        }
+        pos = next;
+    }
+    batch.lines_read = lines;
+    batch.bytes_read = bytes;
+    batch
 }
 
 /// The parsing stage. Stops at the end of input, at the first error (which
@@ -653,6 +933,10 @@ struct State {
     levels_buf: Vec<LevelId>,
     names_buf: Vec<NameId>,
     rules_buf: Vec<RecRule>,
+    /// With lazy proofs: the pending and stored records (see `lazy`).
+    lazy: Option<Box<lazy::Builder>>,
+    /// Add expressions without hash-consing them (see `read_open_file`).
+    append: bool,
 }
 
 /// The single-constant declaration records.
@@ -727,6 +1011,8 @@ impl State {
             levels_buf: Vec::new(),
             names_buf: Vec::new(),
             rules_buf: Vec::new(),
+            lazy: None,
+            append: false,
         }
     }
 
@@ -767,6 +1053,24 @@ impl State {
 
     fn expr(&self, id: u64) -> R<ExprId> {
         Ok(ExprId(self.lookup(Table::Expr, id)?))
+    }
+
+    /// A declaration's term, interned.
+    fn root(&mut self, id: u64) -> R<ExprId> {
+        let r = self.lookup(Table::Expr, id)?;
+        match &mut self.lazy {
+            None => Ok(ExprId(r)),
+            Some(b) => b.promote(&mut self.env, self.append, r),
+        }
+    }
+
+    /// A theorem's value: interned, or with lazy proofs, left for later.
+    fn thm_value(&mut self, id: u64) -> R<ExprId> {
+        let r = self.lookup(Table::Expr, id)?;
+        match &mut self.lazy {
+            None => Ok(ExprId(r)),
+            Some(b) => b.value(r),
+        }
     }
 
     fn meta(&mut self, doc: Doc<'_>, members: &[Member]) -> R<()> {
@@ -810,7 +1114,13 @@ impl State {
         let mut tape = Tape::new();
         let mut seen_meta = false;
         loop {
-            let Ok(mut batch) = full.recv() else {
+            let w = std::time::Instant::now();
+            let got = full.recv();
+            WAIT_NS.fetch_add(
+                w.elapsed().as_nanos() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            let Ok(mut batch) = got else {
                 return Err(ReadError {
                     line: 0,
                     class: ErrorClass::Io,
@@ -890,6 +1200,69 @@ impl State {
     }
 
     fn apply_expr(&mut self, batch: &Batch, id: u64, node: RawExpr) -> R<()> {
+        if self.lazy.is_some() {
+            // Compound records wait for their declaration (see `lazy`).
+            let r = |m: &IdMap, x: u64| match m.get(x) {
+                Some(v) => Ok(v),
+                None => bad(format!(
+                    "reference to undefined expression id {x} (ids must be defined on an earlier line)"
+                )),
+            };
+            let m = &self.expr_ids;
+            let n = match node {
+                RawExpr::App(f, a) => Some(lazy::Node::App(r(m, f)?, r(m, a)?)),
+                RawExpr::Binder {
+                    pi,
+                    bi,
+                    name,
+                    ty,
+                    body,
+                } => {
+                    let name = NameId(self.lookup(Table::Name, name)?);
+                    Some(lazy::Node::Bind {
+                        pi,
+                        bi,
+                        name,
+                        ty: r(m, ty)?,
+                        body: r(m, body)?,
+                    })
+                }
+                RawExpr::Let {
+                    name,
+                    ty,
+                    value,
+                    body,
+                    nondep,
+                } => {
+                    let name = NameId(self.lookup(Table::Name, name)?);
+                    Some(lazy::Node::Let {
+                        name,
+                        ty: r(m, ty)?,
+                        value: r(m, value)?,
+                        body: r(m, body)?,
+                        nondep,
+                    })
+                }
+                RawExpr::Proj(s, i, e) => {
+                    let s = NameId(self.lookup(Table::Name, s)?);
+                    Some(lazy::Node::Proj(s, i, r(m, e)?))
+                }
+                RawExpr::MData(inner) => {
+                    let inner = r(m, inner)?;
+                    self.shared_exprs += 1;
+                    self.bind(Table::Expr, id, inner)?;
+                    if inner & (lazy::PEND | lazy::STORED) != 0 {
+                        self.lazy.as_mut().expect("lazy").alias(id, inner);
+                    }
+                    return Ok(());
+                }
+                _ => None,
+            };
+            if let Some(n) = n {
+                let p = self.lazy.as_mut().expect("lazy").pend(id, n)?;
+                return self.bind(Table::Expr, id, p);
+            }
+        }
         let node = match node {
             RawExpr::BVar(i) => match u32::try_from(i) {
                 Ok(i) => ExprNode::BVar(i),
@@ -961,9 +1334,16 @@ impl State {
                 return self.bind(Table::Expr, id, inner.0);
             }
         };
-        let (e, fresh) = self.env.exprs.intern(node, &self.env.levels)?;
+        let (e, fresh) = if self.append {
+            (self.env.exprs.append(node, &self.env.levels)?, true)
+        } else {
+            self.env.exprs.intern(node, &self.env.levels)?
+        };
         if !fresh {
             self.shared_exprs += 1;
+        }
+        if self.lazy.is_some() && e.0 >= lazy::PEND {
+            return Err(Overflow("too many expressions").into());
         }
         self.bind(Table::Expr, id, e.0)
     }
@@ -976,7 +1356,7 @@ impl State {
         }
         let m = &members[0];
         let kind = doc.key(m);
-        match kind {
+        let res = match kind {
             "axiom" => self.single(doc, m.val, Single::Axiom),
             "def" => self.single(doc, m.val, Single::Def),
             "thm" => self.single(doc, m.val, Single::Thm),
@@ -985,7 +1365,18 @@ impl State {
             "inductive" => self.inductive(doc, m.val),
             "meta" => bad("meta record after the first line"),
             _ => bad(format!("unknown record kind '{kind}'")),
+        };
+        res?;
+        if let Some(mut b) = self.lazy.take() {
+            let m = &mut self.expr_ids;
+            let res = b.flush(|id, r| {
+                m.rebind(id, r);
+                Ok(())
+            });
+            self.lazy = Some(b);
+            res?;
         }
+        Ok(())
     }
 
     fn name_list(&mut self, o: &Obj<'_>, k: &str) -> R<NameList> {
@@ -1019,7 +1410,7 @@ impl State {
     fn header(&mut self, o: &Obj<'_>) -> R<(NameId, NameList, ExprId)> {
         let name = self.name(o.nat("name")?)?;
         let lps = self.name_list(o, "levelParams")?;
-        let ty = self.expr(o.nat("type")?)?;
+        let ty = self.root(o.nat("type")?)?;
         Ok((name, lps, ty))
     }
 
@@ -1049,7 +1440,7 @@ impl State {
                 is_unsafe: o.bool("isUnsafe")?,
             },
             Single::Def => {
-                let value = self.expr(o.nat("value")?)?;
+                let value = self.root(o.nat("value")?)?;
                 let hints = match o.field("hints")? {
                     h if doc.str(h) == Some("opaque") => Hints::Opaque,
                     h if doc.str(h) == Some("abbrev") => Hints::Abbrev,
@@ -1080,11 +1471,11 @@ impl State {
                 }
             }
             Single::Thm => DeclKind::Theorem {
-                value: self.expr(o.nat("value")?)?,
+                value: self.thm_value(o.nat("value")?)?,
                 all: self.name_list(&o, "all")?,
             },
             Single::Opaque => DeclKind::Opaque {
-                value: self.expr(o.nat("value")?)?,
+                value: self.root(o.nat("value")?)?,
                 all: self.name_list(&o, "all")?,
                 // Lean's reader defaults this when absent; so do we.
                 is_unsafe: match o.opt("isUnsafe") {
@@ -1169,7 +1560,7 @@ impl State {
                     rules.push(RecRule {
                         ctor: self.name(ro.nat("ctor")?)?,
                         nfields: ro.u32("nfields")?,
-                        rhs: self.expr(ro.nat("rhs")?)?,
+                        rhs: self.root(ro.nat("rhs")?)?,
                     });
                 }
                 match self.env.push_rules(&rules) {

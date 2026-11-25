@@ -62,7 +62,8 @@ impl IdMap {
                 self.count += 1;
                 return Ok(());
             }
-            self.dense = (0..self.identity as u32).collect();
+            self.dense.clear();
+            self.dense.extend(0..self.identity as u32);
             self.dense_mode = true;
         }
         let limit = self.count.saturating_mul(2).saturating_add(SLACK);
@@ -91,6 +92,29 @@ impl IdMap {
         }
         self.count += 1;
         Ok(())
+    }
+
+    /// Make room for ids up to `n` without copying the table as it grows.
+    pub fn reserve(&mut self, n: usize) {
+        self.dense.reserve(n.saturating_sub(self.dense.len()));
+    }
+
+    /// Change the target of a bound id.
+    pub fn rebind(&mut self, id: u64, target: u32) {
+        if !self.dense_mode {
+            if id < self.identity && target as u64 == id {
+                return;
+            }
+            self.dense.clear();
+            self.dense.extend(0..self.identity as u32);
+            self.dense_mode = true;
+        }
+        match self.dense.get_mut(id as usize) {
+            Some(slot) => *slot = target,
+            None => {
+                self.sparse.insert(id, target);
+            }
+        }
     }
 
     /// Whether the map is still in its zero-cost identity mode.

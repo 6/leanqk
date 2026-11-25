@@ -76,6 +76,11 @@ impl Names {
         *self.arena.get(n.0)
     }
 
+    /// Make room for `extra` more names.
+    pub fn reserve(&mut self, extra: usize) {
+        self.arena.reserve(extra);
+    }
+
     pub fn intern(&mut self, node: NameNode) -> Result<(NameId, bool), Overflow> {
         let (id, fresh) = self.arena.intern(node)?;
         Ok((NameId(id), fresh))

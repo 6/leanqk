@@ -56,7 +56,8 @@ enum Command {
         /// Directory to search for imported modules (repeatable).
         #[arg(long, value_name = "DIR")]
         search_path: Vec<PathBuf>,
-        /// Threads for loading .olean files (default: all cores).
+        /// Threads for loading .olean files or parsing an export file
+        /// (default: all cores).
         #[arg(long, default_value_t = 0)]
         threads: usize,
         /// Threads for checking declarations (default: NITROLEAN_JOBS, else
@@ -180,7 +181,7 @@ pub fn main() -> ExitCode {
                     lazy_proofs: lazy_proofs(true),
                 })
             } else {
-                Source::Export
+                Source::Export(threads)
             };
             let jobs = if jobs == 0 {
                 check::default_jobs()
@@ -210,14 +211,15 @@ pub fn main() -> ExitCode {
 }
 
 enum Source {
-    Export,
+    /// With the number of parsing threads.
+    Export(usize),
     Olean(olean::Options),
 }
 
 fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: usize) -> u8 {
     let start = Instant::now();
     let opts = match src {
-        Source::Export => None,
+        Source::Export(_) => None,
         Source::Olean(o) => Some(o),
     };
     let (env, rs, os) = if let Some(opts) = opts {
@@ -232,10 +234,17 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: us
             }
         }
     } else {
+        let opts = reader::Options {
+            lazy_proofs: lazy_proofs(true),
+            threads: match src {
+                Source::Export(t) => *t,
+                Source::Olean(_) => 0,
+            },
+        };
         let res = if file.as_os_str() == "-" {
-            reader::read_stdin()
+            reader::read_stdin_with(&opts)
         } else {
-            reader::read_file(file)
+            reader::read_file_with(file, &opts)
         };
         match res {
             Ok((env, rs)) => (env, Some(rs), None),
