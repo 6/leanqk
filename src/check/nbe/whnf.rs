@@ -176,7 +176,7 @@ impl Nbe<'_> {
         Ok(Some(self.apply_all(r, &args[mk_pos + 1..])))
     }
 
-    fn major_induct(&mut self, rec: NameId, d: &Decl) -> Option<NameId> {
+    pub(super) fn major_induct(&mut self, rec: NameId, d: &Decl) -> Option<NameId> {
         if let Some(&n) = self.major_induct.get(&rec) {
             return Some(n);
         }
@@ -727,6 +727,12 @@ impl Nbe<'_> {
                     self.a.rm(n).whnf = n.0;
                     return Ok(n);
                 }
+            }
+            if super::cases::CASES_DIRECT
+                && let Some(n) = self.cases_direct(t_l)?
+            {
+                t = n;
+                continue;
             }
             match self.unfold_definition(t_l) {
                 Some(n) => t = n,

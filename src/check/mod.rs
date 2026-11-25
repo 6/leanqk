@@ -12,6 +12,7 @@
 //! are checked on several threads (`check_env_jobs`).
 
 mod eval;
+mod shape;
 pub use eval::stats as eval_stats;
 pub mod ext;
 mod fingerprint;
