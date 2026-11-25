@@ -194,6 +194,9 @@ pub(super) struct Builder {
     stack: Vec<u32>,
     /// For [`Builder::exprs`] (see `run`).
     digits: (u32, u64),
+    /// Its batches of records and side records.
+    batch: Vec<u64>,
+    side_batch: Vec<u32>,
 }
 
 impl Builder {
@@ -244,16 +247,21 @@ impl Builder {
         if e + s.len() as u64 / 32 >= MAX_IDS {
             return (0, 0);
         }
-        // Local vectors, which the loop can keep in registers.
+        if self.batch.is_empty() {
+            self.batch = vec![0; BATCH];
+            self.side_batch = vec![0; 3 * BATCH];
+        }
         let mut out = Out {
-            recs: std::mem::take(&mut self.recs),
-            side: std::mem::take(&mut self.side),
+            batch: (&mut self.batch[..]).try_into().expect("a batch"),
+            side_batch: (&mut self.side_batch[..]).try_into().expect("a batch"),
+            n: 0,
+            sn: 0,
+            o: self.side.len(),
+            recs: &mut self.recs,
+            side: &mut self.side,
             names,
         };
-        let r = super::run::all_exprs(s, e, &mut self.digits, &mut out);
-        self.recs = out.recs;
-        self.side = out.side;
-        r
+        super::run::all_exprs(s, e, &mut self.digits, &mut out)
     }
 
     /// Push a side record of `fields` with tag `t` and `flags`.
@@ -567,10 +575,21 @@ impl Builder {
     }
 }
 
-/// Where [`Builder::exprs`] puts records.
+/// Lines in a batch of [`Builder::exprs`].
+const BATCH: usize = super::run::BATCH as usize;
+
+/// Where [`Builder::exprs`] puts records: a batch at a time, to `recs`
+/// and `side`.
 struct Out<'a> {
-    recs: Vec<u64>,
-    side: Vec<u32>,
+    batch: &'a mut [u64; BATCH],
+    side_batch: &'a mut [u32; 3 * BATCH],
+    /// Records and side words in the batch.
+    n: usize,
+    sn: usize,
+    /// The side table's length with the batch.
+    o: usize,
+    recs: &'a mut Vec<u64>,
+    side: &'a mut Vec<u32>,
     names: &'a IdMap,
 }
 
@@ -580,23 +599,36 @@ impl super::run::Records for Out<'_> {
         if f >= id || a >= id {
             return false;
         }
-        self.recs.push(T_APP << TAG | f << ID_BITS | a);
+        // At most a batch between flushes.
+        self.batch[self.n % BATCH] = T_APP << TAG | f << ID_BITS | a;
+        self.n += 1;
         true
     }
 
     #[inline(always)]
     fn binder(&mut self, id: u64, pi: bool, bi: BinderInfo, name: u64, ty: u64, body: u64) -> bool {
-        let Some(name) = self.names.get(name) else {
+        // A sparse name takes the slow way.
+        let Some(name) = self.names.get_near(name) else {
             return false;
         };
-        let o = self.side.len();
+        let o = self.o;
         if ty >= id || body >= id || o > u32::MAX as usize - 4 {
             return false;
         }
-        self.side.extend_from_slice(&[name, ty as u32, body as u32]);
+        let at = self.sn % BATCH;
+        self.side_batch[3 * at..3 * at + 3].copy_from_slice(&[name, ty as u32, body as u32]);
+        self.sn += 1;
+        self.o = o + 3;
         let t = if pi { T_PI } else { T_LAM };
-        self.recs.push(t << TAG | bi_bits(bi) << 32 | o as u64);
+        self.batch[self.n % BATCH] = t << TAG | bi_bits(bi) << 32 | o as u64;
+        self.n += 1;
         true
+    }
+
+    fn flush(&mut self) {
+        self.recs.extend_from_slice(&self.batch[..self.n]);
+        self.side.extend_from_slice(&self.side_batch[..3 * self.sn]);
+        (self.n, self.sn) = (0, 0);
     }
 }
 

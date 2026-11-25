@@ -21,13 +21,20 @@ fn ld(w: &[u8; WIN], p: usize) -> u64 {
     u64::from_le_bytes(w[p..p + 8].try_into().expect("8 bytes"))
 }
 
-/// Where the records go.
+/// Lines [`exprs`] reads at most at a time.
+pub(super) const BATCH: u64 = 128;
+
+/// Where the records go: at most [`BATCH`] between flushes.
 pub(super) trait Records {
     /// Application `id`; false to refuse it (and end the run).
     fn app(&mut self, id: u64, f: u64, a: u64) -> bool;
 
     /// Binder `id`; as [`Records::app`].
     fn binder(&mut self, id: u64, pi: bool, bi: BinderInfo, name: u64, ty: u64, body: u64) -> bool;
+
+    /// After each [`exprs`] (which makes no calls, so that the loop keeps
+    /// its state in registers).
+    fn flush(&mut self);
 }
 
 /// The constants of the loop, loaded from memory rather than built in
@@ -278,7 +285,8 @@ pub(super) fn exprs(
     (pos, e2 - e)
 }
 
-/// [`exprs`] for any ids: from `e`, across their lengths. `digits` is
+/// [`exprs`] for any ids, a batch at a time: from `e`, across their
+/// lengths. `digits` is
 /// the length and limit of the ids at or after `e`'s length (updated).
 #[inline(always)]
 pub(super) fn all_exprs(
@@ -292,11 +300,13 @@ pub(super) fn all_exprs(
         if e2 >= digits_of.1 {
             *digits_of = digits(e2);
         }
-        let (n, m) = exprs(&s[pos..], e2, *digits_of, out);
+        let limit = digits_of.1.min(e2 + BATCH);
+        let (n, m) = exprs(&s[pos..], e2, (digits_of.0, limit), out);
+        out.flush();
         pos += n;
         e2 += m;
-        // Stopped before the next length.
-        if e2 != digits_of.1 {
+        // Stopped before the limit.
+        if e2 != limit {
             return (pos, e2 - e);
         }
     }
@@ -327,6 +337,8 @@ mod tests {
             self.0.push((id, format!("{pi} {bi:?} {name} {ty} {body}")));
             !self.1
         }
+
+        fn flush(&mut self) {}
     }
 
     fn run(text: &str, e: u64) -> (Vec<(u64, String)>, usize, u64) {
