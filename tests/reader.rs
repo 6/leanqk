@@ -713,3 +713,37 @@ fn errors_stop_at_the_first_bad_line() {
         "undefined expression id 20001",
     );
 }
+
+/// A regular file is read without hash-consing first; one that repeats a
+/// name or a term is then read again with it, on any number of threads.
+#[test]
+fn files_that_repeat_records_are_read_again() {
+    let text = export(&[
+        r#"{"in":1,"str":{"pre":0,"str":"a"}}"#,
+        r#"{"in":2,"str":{"pre":0,"str":"a"}}"#,
+        r#"{"ie":0,"sort":0}"#,
+        r#"{"ie":1,"sort":0}"#,
+        r#"{"ie":2,"natVal":"18446744073709551616"}"#,
+        r#"{"ie":3,"natVal":"18446744073709551616"}"#,
+        r#"{"app":{"arg":2,"fn":0},"ie":4}"#,
+        r#"{"app":{"arg":3,"fn":1},"ie":5}"#,
+        r#"{"axiom":{"isUnsafe":false,"levelParams":[],"name":1,"type":4}}"#,
+    ]);
+    let dir = std::env::temp_dir().join(format!("nitrolean-repeat-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("repeat.ndjson");
+    std::fs::write(&path, text).unwrap();
+    for threads in [1, 3] {
+        for lazy_proofs in [false, true] {
+            let opts = nitrolean::reader::Options {
+                lazy_proofs,
+                threads,
+            };
+            let (env, _) = nitrolean::reader::read_file_with(&path, &opts).unwrap();
+            assert_eq!(env.names.len(), 2, "threads={threads}");
+            // sort, big literal, app.
+            assert_eq!(env.exprs.len(), 3, "threads={threads}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

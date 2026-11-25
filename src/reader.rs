@@ -31,7 +31,8 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use num_bigint::BigUint;
 
 use crate::env::{
-    Block, BlockKind, Decl, DeclKind, Env, Hints, Meta, NameList, QuotKind, RecRule, Safety,
+    Block, BlockKind, Decl, DeclKind, Env, Hints, LAZY_BASE, Meta, NameList, QuotKind, RecRule,
+    Safety, is_lazy,
 };
 use crate::expr::{BinderInfo, ExprError, ExprId, ExprNode, LetBinder};
 use crate::idmap::IdMap;
@@ -42,6 +43,8 @@ use crate::strings::Overflow;
 
 mod fast;
 mod lazy;
+mod run;
+mod scan;
 
 /// The format major version this reader understands.
 pub const FORMAT_MAJOR: &str = "3";
@@ -177,33 +180,36 @@ fn read_open_file(f: File, opts: &Options) -> Result<(Env, ReadStats), ReadError
         n => n,
     };
     if size == 0 {
-        return run(
+        let r = run(
             state(opts, size, false),
             BufReader::with_capacity(1 << 20, f),
-        );
+        )?;
+        return Ok((r.env, r.stats));
     }
-    // A regular file is read optimistically: expressions are added
-    // without hash-consing (an export lists each term once) and indexed
-    // at the end, on all threads. If two turn out equal after all, the
-    // file is read again with hash-consing.
+    // A regular file is read optimistically: names and expressions are
+    // added without hash-consing (an export lists each once) and indexed
+    // at the end. If two turn out equal after all, the file is read again
+    // with hash-consing.
     let t0 = std::time::Instant::now();
-    let (mut env, stats) = read_regular(&f, size, threads, state(opts, size, true))?;
-    let t1 = std::time::Instant::now();
-    let ix = env.exprs.index(threads);
+    let mut st = state(opts, size, true);
+    st.index_threads = Some(threads);
+    let r = read_regular(&f, size, threads, st)?;
     if std::env::var_os("NITROLEAN_READ_PROFILE").is_some() {
+        let index = INDEX_NS.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
         eprintln!(
             "read {:.3} s (interning thread waited {:.3} s), index {:.3} s, duplicate {:?}",
-            (t1 - t0).as_secs_f64(),
+            t0.elapsed().as_secs_f64() - index,
             WAIT_NS.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9,
-            t1.elapsed().as_secs_f64(),
-            ix.err()
+            index,
+            r.dup
         );
     }
-    match ix {
-        Ok(()) => Ok((env, stats)),
-        Err(_) => {
-            drop(env);
-            read_regular(&f, size, threads, state(opts, size, false))
+    match r.dup {
+        None => Ok((r.env, r.stats)),
+        Some(_) => {
+            drop(r);
+            let r = read_regular(&f, size, threads, state(opts, size, false))?;
+            Ok((r.env, r.stats))
         }
     }
 }
@@ -217,9 +223,9 @@ fn state(opts: &Options, size: u64, append: bool) -> State {
         // bytes of a real export).
         st.expr_ids.reserve((size / 56).min(1 << 31) as usize);
     }
-    // About one name per 1 KiB of a real export.
-    st.env.names.reserve((size / 1024).min(1 << 31) as usize);
     if !append {
+        // About one name per 1 KiB of a real export.
+        st.env.names.reserve((size / 1024).min(1 << 31) as usize);
         // About 94% of the lines of a real export are expressions, and a
         // line averages 55 bytes; reserving up front avoids rehashing the
         // big table. With lazy proofs, about a third of them are interned.
@@ -229,18 +235,16 @@ fn state(opts: &Options, size: u64, append: bool) -> State {
     st
 }
 
-fn read_regular(
-    f: &File,
-    size: u64,
-    threads: usize,
-    st: State,
-) -> Result<(Env, ReadStats), ReadError> {
+fn read_regular(f: &File, size: u64, threads: usize, st: State) -> Result<Done, ReadError> {
     if threads > 1 {
         // The interning stage runs on this thread.
         let parsers = threads - 1;
         return run_with(st, |full, empty| {
             produce_parallel(f, size, parsers, full, empty)
         });
+    }
+    if threads == 1 {
+        return read_single(f, st);
     }
     use std::io::{Seek, SeekFrom};
     let mut f = f.try_clone().map_err(|e| ReadError {
@@ -276,7 +280,7 @@ pub fn read_str(s: &str) -> Result<Env, ReadError> {
 
 /// Read an export from a buffered stream, line by line.
 pub fn read_buffered<B: BufRead + Send>(r: B) -> Result<(Env, ReadStats), ReadError> {
-    run(State::new(), r)
+    run(State::new(), r).map(|r| (r.env, r.stats))
 }
 
 // The read is a two-stage pipeline. A parsing thread reads lines, parses
@@ -362,6 +366,8 @@ struct Batch {
     lines: Vec<u64>,
     text: String,
     us: Vec<u64>,
+    /// Scratch space for [`scan::line`].
+    scratch: Vec<u64>,
     /// Set on the last batch: how the input ended, and the totals.
     end: Option<Result<(), ReadError>>,
     lines_read: u64,
@@ -389,40 +395,314 @@ impl Batch {
     fn text(&self, a: u32, b: u32) -> &str {
         &self.text[a as usize..b as usize]
     }
+
+    fn src(&self) -> Src<'_> {
+        Src {
+            text: self.text.as_bytes(),
+            us: &self.us,
+        }
+    }
+
+    /// Add an item read by [`scan::line`] from `line`, copying its text
+    /// into the batch.
+    fn push_scanned(&mut self, line: &[u8], item: Item) -> R<()> {
+        let mut copy = |a: u32, b: u32| -> R<(u32, u32)> {
+            match std::str::from_utf8(&line[a as usize..b as usize]) {
+                Ok(t) => self.push_text(t),
+                Err(_) => bad("internal error: scanned text is not UTF-8"),
+            }
+        };
+        let item = match item {
+            Item::Name {
+                id,
+                pre,
+                comp: Comp::Str(a, b),
+            } => {
+                let (a, b) = copy(a, b)?;
+                Item::Name {
+                    id,
+                    pre,
+                    comp: Comp::Str(a, b),
+                }
+            }
+            Item::Expr {
+                id,
+                node: RawExpr::Nat(a, b),
+            } => {
+                let (a, b) = copy(a, b)?;
+                Item::Expr {
+                    id,
+                    node: RawExpr::Nat(a, b),
+                }
+            }
+            Item::Expr {
+                id,
+                node: RawExpr::Str(a, b),
+            } => {
+                let (a, b) = copy(a, b)?;
+                Item::Expr {
+                    id,
+                    node: RawExpr::Str(a, b),
+                }
+            }
+            other => other,
+        };
+        self.items.push(item);
+        Ok(())
+    }
 }
 
-fn run<B: BufRead + Send>(st: State, r: B) -> Result<(Env, ReadStats), ReadError> {
+/// Adds scanned records to a batch.
+struct ToBatch<'a>(&'a mut Batch, Option<Fail>);
+
+impl scan::Sink for ToBatch<'_> {
+    fn app(&mut self, id: u64, f: u64, a: u64) -> R<()> {
+        let node = RawExpr::App(f, a);
+        self.0.items.push(Item::Expr { id, node });
+        Ok(())
+    }
+
+    fn binder(
+        &mut self,
+        id: u64,
+        pi: bool,
+        bi: BinderInfo,
+        name: u64,
+        ty: u64,
+        body: u64,
+    ) -> R<()> {
+        let node = RawExpr::Binder {
+            pi,
+            bi,
+            name,
+            ty,
+            body,
+        };
+        self.0.items.push(Item::Expr { id, node });
+        Ok(())
+    }
+
+    fn item(&mut self, item: Item, line: &[u8], us: &[u64]) -> R<()> {
+        let item = match item {
+            Item::Expr {
+                id,
+                node: RawExpr::Const(n, a, b),
+            } => {
+                let start = self.0.us.len();
+                self.0.us.extend_from_slice(&us[a as usize..b as usize]);
+                let Ok(end) = u32::try_from(self.0.us.len()) else {
+                    return bad("too many universe levels in one batch");
+                };
+                Item::Expr {
+                    id,
+                    node: RawExpr::Const(n, start as u32, end),
+                }
+            }
+            other => other,
+        };
+        self.0.push_scanned(line, item)
+    }
+
+    #[cold]
+    fn fail(&mut self, f: Fail) {
+        self.1 = Some(f);
+    }
+}
+
+/// Applies scanned records at once.
+impl scan::Sink for State {
+    #[inline(never)]
+    fn app(&mut self, id: u64, f: u64, a: u64) -> R<()> {
+        if let Some(b) = self.lazy.as_deref_mut() {
+            if b.app(id, f, a) {
+                return Ok(());
+            }
+            self.eager()?;
+        }
+        let src = Src { text: &[], us: &[] };
+        self.apply_expr(src, id, RawExpr::App(f, a))
+    }
+
+    #[inline(never)]
+    fn binder(
+        &mut self,
+        id: u64,
+        pi: bool,
+        bi: BinderInfo,
+        name: u64,
+        ty: u64,
+        body: u64,
+    ) -> R<()> {
+        if let Some(b) = self.lazy.as_deref_mut() {
+            if let Some(n) = self.name_ids.get(name)
+                && b.binder(id, pi, bi, NameId(n), ty, body)
+            {
+                return Ok(());
+            }
+            self.eager()?;
+        }
+        let src = Src { text: &[], us: &[] };
+        let node = RawExpr::Binder {
+            pi,
+            bi,
+            name,
+            ty,
+            body,
+        };
+        self.apply_expr(src, id, node)
+    }
+
+    fn item(&mut self, item: Item, line: &[u8], us: &[u64]) -> R<()> {
+        self.apply(Src { text: line, us }, item)
+    }
+
+    fn decl(&mut self, d: &scan::Decl, us: &[u64]) -> Option<R<()>> {
+        Some(self.scanned_decl(d, us))
+    }
+
+    #[cold]
+    fn fail(&mut self, f: Fail) {
+        self.failed = Some(f);
+    }
+}
+
+/// Where the text and level ranges of an item point: a batch's buffers,
+/// or (for [`scan::line`]) the input line and a level list.
+#[derive(Clone, Copy)]
+struct Src<'a> {
+    text: &'a [u8],
+    us: &'a [u64],
+}
+
+impl<'a> Src<'a> {
+    fn text(&self, a: u32, b: u32) -> R<&'a str> {
+        match std::str::from_utf8(&self.text[a as usize..b as usize]) {
+            Ok(t) => Ok(t),
+            Err(_) => bad("internal error: item text is not UTF-8"),
+        }
+    }
+}
+
+fn run<B: BufRead + Send>(st: State, r: B) -> Result<Done, ReadError> {
     run_with(st, |full, empty| produce(r, full, empty))
 }
 
 fn run_with(
-    mut st: State,
+    st: State,
     produce: impl FnOnce(SyncSender<Batch>, Receiver<Batch>) + Send,
-) -> Result<(Env, ReadStats), ReadError> {
-    let res = run_inner(&mut st, produce);
+) -> Result<Done, ReadError> {
+    finish(st, |st| {
+        let (full_tx, full_rx) = mpsc::sync_channel::<Batch>(4);
+        let (empty_tx, empty_rx) = mpsc::sync_channel::<Batch>(8);
+        std::thread::scope(|s| {
+            s.spawn(move || produce(full_tx, empty_rx));
+            st.consume(full_rx, empty_tx)
+        })
+    })
+}
+
+/// What [`finish`] gives: the environment, the totals, and (when the
+/// read added names and expressions without hash-consing them) a pair of
+/// equal ones that indexing them found.
+struct Done {
+    env: Env,
+    stats: ReadStats,
+    dup: Option<(u32, u32)>,
+}
+
+/// Run `read` on `st`, then complete the environment and the totals (and
+/// index it, if `st` says so).
+fn finish(
+    mut st: State,
+    read: impl FnOnce(&mut State) -> Result<ReadStats, ReadError>,
+) -> Result<Done, ReadError> {
+    let res = read(&mut st);
+    let id_map_bytes =
+        st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
+    // The id maps are done with: free them before the lazy values are
+    // put together. The dense table of expression ids is working space
+    // for the index.
+    let mut scratch = std::mem::replace(&mut st.expr_ids, IdMap::new(0)).into_buffer();
+    for m in [&mut st.name_ids, &mut st.level_ids] {
+        *m = IdMap::new(0);
+    }
     if let Some(b) = st.lazy.take() {
         st.env.lazy = b.finish();
     }
-    let stats = res?;
-    Ok((st.env, stats))
-}
-
-fn run_inner(
-    st: &mut State,
-    produce: impl FnOnce(SyncSender<Batch>, Receiver<Batch>) + Send,
-) -> Result<ReadStats, ReadError> {
-    let (full_tx, full_rx) = mpsc::sync_channel::<Batch>(4);
-    let (empty_tx, empty_rx) = mpsc::sync_channel::<Batch>(8);
-    let res = std::thread::scope(|s| {
-        s.spawn(move || produce(full_tx, empty_rx));
-        st.consume(full_rx, empty_tx)
-    });
     let mut stats = res?;
     stats.shared_exprs = st.shared_exprs;
-    stats.id_map_bytes =
-        st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
-    Ok(stats)
+    stats.id_map_bytes = id_map_bytes;
+    let mut dup = None;
+    if let Some(threads) = st.index_threads {
+        let t = std::time::Instant::now();
+        dup = match st.env.names.index(threads, &mut scratch) {
+            Err((a, b)) => Some((a.0, b.0)),
+            Ok(()) => st
+                .env
+                .exprs
+                .index(threads, &mut scratch)
+                .err()
+                .map(|(a, b)| (a.0, b.0)),
+        };
+        INDEX_NS.store(
+            t.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+    Ok(Done {
+        env: st.env,
+        stats,
+        dup,
+    })
 }
+
+/// Read a regular file on this thread alone: blocks of whole lines are
+/// read into one buffer, and each line is scanned and applied at once.
+fn read_single(f: &File, st: State) -> Result<Done, ReadError> {
+    use std::os::unix::fs::FileExt;
+    const BLOCK: usize = 1 << 20;
+    finish(st, |st| {
+        let mut lines = Lines::default();
+        let mut buf = vec![0u8; BLOCK];
+        // Bytes in `buf`, and the file offset after them.
+        let (mut have, mut off) = (0usize, 0u64);
+        loop {
+            if have == buf.len() {
+                // A line longer than the buffer.
+                buf.resize(buf.len() * 2, 0);
+            }
+            let n = loop {
+                match f.read_at(&mut buf[have..], off) {
+                    Ok(n) => break n,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) => {
+                        return Err(ReadError {
+                            line: lines.lines + 1,
+                            class: ErrorClass::Io,
+                            msg: format!("read error: {e}"),
+                        });
+                    }
+                }
+            };
+            have += n;
+            off += n as u64;
+            if n == 0 {
+                st.lines(&mut lines, &buf[..have])?;
+                return st.end_lines(lines);
+            }
+            // Apply the whole lines, and keep the start of the last one.
+            if let Some(p) = buf[..have].iter().rposition(|&b| b == b'\n') {
+                st.lines(&mut lines, &buf[..p + 1])?;
+                buf.copy_within(p + 1..have, 0);
+                have -= p + 1;
+            }
+        }
+    })
+}
+
+/// Time the index at the end of a read took (for
+/// `NITROLEAN_READ_PROFILE`).
+static INDEX_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Time the interning stage waited for batches (for
 /// `NITROLEAN_READ_PROFILE`).
@@ -560,6 +840,29 @@ fn parse_chunk(
     let mut lines = 0u64;
     let mut bytes = 0u64;
     while pos < buf.len() {
+        if seen_first {
+            let mut us = std::mem::take(&mut batch.scratch);
+            let mut sink = ToBatch(&mut batch, None);
+            let got = scan::line(&buf[pos..], &mut us, &mut sink);
+            let failed = sink.1;
+            batch.scratch = us;
+            if let Some((n, took)) = got {
+                lines += 1;
+                bytes += n as u64;
+                if !took {
+                    let f = failed.expect("a failure");
+                    batch.end = Some(Err(ReadError {
+                        line: lines,
+                        class: f.class,
+                        msg: f.msg,
+                    }));
+                    break;
+                }
+                batch.lines.push(lines);
+                pos += n;
+                continue;
+            }
+        }
         let next = match buf[pos..].iter().position(|&b| b == b'\n') {
             Some(p) => pos + p + 1,
             None => buf.len(),
@@ -637,6 +940,20 @@ fn produce<B: BufRead>(mut r: B, full: SyncSender<Batch>, empty: Receiver<Batch>
 
 /// Parse one line into at most one item.
 fn parse_line(tape: &mut Tape, buf: &[u8], batch: &mut Batch, seen_first: &mut bool) -> R<()> {
+    if *seen_first {
+        let mut us = std::mem::take(&mut batch.scratch);
+        let mut sink = ToBatch(batch, None);
+        let got = scan::line(buf, &mut us, &mut sink);
+        let failed = sink.1;
+        batch.scratch = us;
+        if let Some((n, took)) = got {
+            debug_assert_eq!(n, buf.len());
+            return match failed {
+                Some(f) if !took => Err(f),
+                _ => Ok(()),
+            };
+        }
+    }
     let line = match std::str::from_utf8(buf) {
         Ok(s) => s,
         Err(e) => return bad(format!("invalid UTF-8 at column {}", e.valid_up_to() + 1)),
@@ -933,10 +1250,36 @@ struct State {
     levels_buf: Vec<LevelId>,
     names_buf: Vec<NameId>,
     rules_buf: Vec<RecRule>,
-    /// With lazy proofs: the pending and stored records (see `lazy`).
+    /// With lazy proofs: a record per expression id (see `lazy`).
     lazy: Option<Box<lazy::Builder>>,
     /// Add expressions without hash-consing them (see `read_open_file`).
     append: bool,
+    /// The failure of a line [`scan::line`] gave to this state.
+    failed: Option<Fail>,
+    /// With `append`: index the names and expressions at the end, on
+    /// this many threads.
+    index_threads: Option<usize>,
+}
+
+/// The state of [`State::lines`] between blocks of input.
+#[derive(Default)]
+struct Lines {
+    tape: Tape,
+    /// For lines the scanner leaves to the other parsers.
+    batch: Batch,
+    us: Vec<u64>,
+    seen_first: bool,
+    seen_meta: bool,
+    lines: u64,
+    bytes: u64,
+}
+
+/// The length of the line at the start of `s`, its newline included.
+fn line_len(s: &[u8]) -> usize {
+    match s.iter().position(|&b| b == b'\n') {
+        Some(p) => p + 1,
+        None => s.len(),
+    }
 }
 
 /// The single-constant declaration records.
@@ -979,6 +1322,18 @@ impl Table {
     }
 }
 
+#[cold]
+fn undefined<T>(t: Table, id: u64) -> R<T> {
+    bad(format!(
+        "reference to undefined {} id {id} (ids must be defined on an earlier line)",
+        t.noun()
+    ))
+}
+
+fn twice(t: Table, id: u64) -> R<()> {
+    bad(format!("{} id {id} is defined twice", t.noun()))
+}
+
 fn parse_nat_lit(s: &str) -> Option<BigUint> {
     if s.is_empty() || !s.bytes().all(|c| c.is_ascii_digit()) {
         return None;
@@ -1013,6 +1368,8 @@ impl State {
             rules_buf: Vec::new(),
             lazy: None,
             append: false,
+            failed: None,
+            index_threads: None,
         }
     }
 
@@ -1024,13 +1381,11 @@ impl State {
         };
         match m.get(id) {
             Some(x) => Ok(x),
-            None => bad(format!(
-                "reference to undefined {} id {id} (ids must be defined on an earlier line)",
-                t.noun()
-            )),
+            None => undefined(t, id),
         }
     }
 
+    #[inline(always)]
     fn bind(&mut self, t: Table, id: u64, target: u32) -> R<()> {
         let m = match t {
             Table::Name => &mut self.name_ids,
@@ -1039,7 +1394,7 @@ impl State {
         };
         match m.bind(id, target) {
             Ok(()) => Ok(()),
-            Err(_) => bad(format!("{} id {id} is defined twice", t.noun())),
+            Err(_) => twice(t, id),
         }
     }
 
@@ -1057,19 +1412,19 @@ impl State {
 
     /// A declaration's term, interned.
     fn root(&mut self, id: u64) -> R<ExprId> {
-        let r = self.lookup(Table::Expr, id)?;
         match &mut self.lazy {
-            None => Ok(ExprId(r)),
-            Some(b) => b.promote(&mut self.env, self.append, r),
+            None => self.expr(id),
+            Some(b) if b.has(id) => b.promote(&mut self.env, self.append, id),
+            Some(_) => undefined(Table::Expr, id),
         }
     }
 
     /// A theorem's value: interned, or with lazy proofs, left for later.
     fn thm_value(&mut self, id: u64) -> R<ExprId> {
-        let r = self.lookup(Table::Expr, id)?;
         match &mut self.lazy {
-            None => Ok(ExprId(r)),
-            Some(b) => b.value(r),
+            None => self.expr(id),
+            Some(b) if b.has(id) => b.value(id),
+            Some(_) => undefined(Table::Expr, id),
         }
     }
 
@@ -1105,6 +1460,113 @@ impl State {
         Ok(())
     }
 
+    /// Apply an item of `batch`: intern it, or read the record of a raw
+    /// line (the meta record first).
+    fn item(&mut self, tape: &mut Tape, batch: &Batch, item: Item, seen_meta: &mut bool) -> R<()> {
+        match item {
+            Item::Raw(a, b) => {
+                let line = batch.text(a, b);
+                parse_object(tape, line).and_then(|(doc, members)| {
+                    if *seen_meta {
+                        self.decl_record(doc, members)
+                    } else {
+                        *seen_meta = true;
+                        self.meta(doc, members)
+                    }
+                })
+            }
+            _ => self.apply(batch.src(), item),
+        }
+    }
+
+    /// Apply `data`, whole lines (the last one may lack its newline only
+    /// at the end of the input).
+    fn lines(&mut self, l: &mut Lines, data: &[u8]) -> Result<(), ReadError> {
+        let fail = |line: u64, f: Fail| ReadError {
+            line,
+            class: f.class,
+            msg: f.msg,
+        };
+        l.bytes += data.len() as u64;
+        let mut pos = 0;
+        let mut k = l.lines;
+        let mut res = Ok(());
+        while pos < data.len() {
+            // `{"app"`, `{"forallE"` or `{"ie"`.
+            if l.seen_first
+                && matches!(data.get(pos + 2..pos + 4), Some(b"ap" | b"fo" | b"ie"))
+                && let Some(b) = self.lazy.as_deref_mut()
+            {
+                let (n, m) = b.exprs(&data[pos..], &self.name_ids);
+                pos += n;
+                k += m;
+                if pos == data.len() {
+                    break;
+                }
+            }
+            k += 1;
+            if l.seen_first {
+                match scan::line(&data[pos..], &mut l.us, self) {
+                    Some((n, true)) => {
+                        pos += n;
+                        continue;
+                    }
+                    Some((_, false)) => {
+                        let f = self.failed.take().expect("a failure");
+                        res = Err(fail(k, f));
+                        break;
+                    }
+                    None => {}
+                }
+            }
+            let n = line_len(&data[pos..]);
+            if let Err(f) = self.other_line(l, &data[pos..pos + n]) {
+                res = Err(fail(k, f));
+                break;
+            }
+            pos += n;
+        }
+        l.lines = k;
+        res
+    }
+
+    /// A line the scanner left: parsed once, with the general parser.
+    fn other_line(&mut self, l: &mut Lines, line: &[u8]) -> R<()> {
+        let line = match std::str::from_utf8(line) {
+            Ok(s) => s,
+            Err(e) => return bad(format!("invalid UTF-8 at column {}", e.valid_up_to() + 1)),
+        };
+        if line.trim_ascii().is_empty() {
+            return Ok(());
+        }
+        let (doc, members) = parse_object(&mut l.tape, line)?;
+        if !l.seen_first {
+            l.seen_first = true;
+            l.seen_meta = true;
+            return self.meta(doc, members);
+        }
+        l.batch.clear();
+        match id_record(doc, members, &mut l.batch)? {
+            Some(item) => self.apply(l.batch.src(), item),
+            None => self.decl_record(doc, members),
+        }
+    }
+
+    fn end_lines(&mut self, l: Lines) -> Result<ReadStats, ReadError> {
+        if !l.seen_meta {
+            return Err(ReadError {
+                line: 0,
+                class: ErrorClass::Malformed,
+                msg: "empty input: expected the meta record".into(),
+            });
+        }
+        Ok(ReadStats {
+            lines: l.lines,
+            bytes: l.bytes,
+            ..ReadStats::default()
+        })
+    }
+
     /// The interning stage.
     fn consume(
         &mut self,
@@ -1128,20 +1590,7 @@ impl State {
                 });
             };
             for (k, item) in batch.items.iter().enumerate() {
-                let res = match *item {
-                    Item::Raw(a, b) => {
-                        let line = batch.text(a, b);
-                        parse_object(&mut tape, line).and_then(|(doc, members)| {
-                            if seen_meta {
-                                self.decl_record(doc, members)
-                            } else {
-                                seen_meta = true;
-                                self.meta(doc, members)
-                            }
-                        })
-                    }
-                    _ => self.apply(&batch, *item),
-                };
+                let res = self.item(&mut tape, &batch, *item, &mut seen_meta);
                 if let Err(f) = res {
                     return Err(ReadError {
                         line: batch.lines[k],
@@ -1171,17 +1620,21 @@ impl State {
     }
 
     /// Resolve and intern a name, level or expression item.
-    fn apply(&mut self, batch: &Batch, item: Item) -> R<()> {
+    fn apply(&mut self, src: Src<'_>, item: Item) -> R<()> {
         match item {
             Item::Name { id, pre, comp } => {
                 let pre = self.name(pre)?;
                 let node = match comp {
                     Comp::Str(a, b) => {
-                        NameNode::Str(pre, self.env.names.strings.intern(batch.text(a, b))?)
+                        NameNode::Str(pre, self.env.names.strings.intern(src.text(a, b)?)?)
                     }
                     Comp::Num(n) => NameNode::Num(pre, n),
                 };
-                let (n, _) = self.env.names.intern(node)?;
+                let n = if self.append {
+                    self.env.names.append(node)?
+                } else {
+                    self.env.names.intern(node)?.0
+                };
                 self.bind(Table::Name, id, n.0)
             }
             Item::Level { id, node } => {
@@ -1194,74 +1647,96 @@ impl State {
                 let (l, _) = self.env.levels.intern(node)?;
                 self.bind(Table::Level, id, l.0)
             }
-            Item::Expr { id, node } => self.apply_expr(batch, id, node),
+            Item::Expr { id, node } => self.apply_expr(src, id, node),
             Item::Raw(..) => bad("internal error: unexpected raw line"),
         }
     }
 
-    fn apply_expr(&mut self, batch: &Batch, id: u64, node: RawExpr) -> R<()> {
-        if self.lazy.is_some() {
-            // Compound records wait for their declaration (see `lazy`).
-            let r = |m: &IdMap, x: u64| match m.get(x) {
-                Some(v) => Ok(v),
-                None => bad(format!(
-                    "reference to undefined expression id {x} (ids must be defined on an earlier line)"
-                )),
-            };
-            let m = &self.expr_ids;
-            let n = match node {
-                RawExpr::App(f, a) => Some(lazy::Node::App(r(m, f)?, r(m, a)?)),
-                RawExpr::Binder {
-                    pi,
-                    bi,
-                    name,
-                    ty,
-                    body,
-                } => {
-                    let name = NameId(self.lookup(Table::Name, name)?);
-                    Some(lazy::Node::Bind {
-                        pi,
-                        bi,
-                        name,
-                        ty: r(m, ty)?,
-                        body: r(m, body)?,
-                    })
+    /// With lazy proofs: add compound record `node` to the table (see
+    /// `lazy`); whether it was (else, a leaf, or the reader is eager now).
+    fn lazy_expr(&mut self, id: u64, node: RawExpr) -> R<bool> {
+        let name = |st: &State, n: u64| st.name_ids.get(n).map(NameId);
+        let ok = match node {
+            RawExpr::App(f, a) => self.lazy.as_deref_mut().expect("lazy").app(id, f, a),
+            RawExpr::Binder {
+                pi,
+                bi,
+                name: n,
+                ty,
+                body,
+            } => match name(self, n) {
+                Some(n) => self
+                    .lazy
+                    .as_deref_mut()
+                    .expect("lazy")
+                    .binder(id, pi, bi, n, ty, body),
+                None => false,
+            },
+            RawExpr::Let {
+                name: n,
+                ty,
+                value,
+                body,
+                nondep,
+            } => match name(self, n) {
+                Some(n) => {
+                    self.lazy
+                        .as_deref_mut()
+                        .expect("lazy")
+                        .let_in(id, n, [ty, value, body], nondep)
                 }
-                RawExpr::Let {
-                    name,
-                    ty,
-                    value,
-                    body,
-                    nondep,
-                } => {
-                    let name = NameId(self.lookup(Table::Name, name)?);
-                    Some(lazy::Node::Let {
-                        name,
-                        ty: r(m, ty)?,
-                        value: r(m, value)?,
-                        body: r(m, body)?,
-                        nondep,
-                    })
-                }
-                RawExpr::Proj(s, i, e) => {
-                    let s = NameId(self.lookup(Table::Name, s)?);
-                    Some(lazy::Node::Proj(s, i, r(m, e)?))
-                }
-                RawExpr::MData(inner) => {
-                    let inner = r(m, inner)?;
+                None => false,
+            },
+            RawExpr::Proj(s, i, e) => match name(self, s) {
+                Some(s) => self.lazy.as_deref_mut().expect("lazy").proj(id, s, i, e),
+                None => false,
+            },
+            RawExpr::MData(inner) => {
+                let ok = self.lazy.as_deref_mut().expect("lazy").alias(id, inner);
+                if ok {
                     self.shared_exprs += 1;
-                    self.bind(Table::Expr, id, inner)?;
-                    if inner & (lazy::PEND | lazy::STORED) != 0 {
-                        self.lazy.as_mut().expect("lazy").alias(id, inner);
-                    }
-                    return Ok(());
                 }
-                _ => None,
-            };
-            if let Some(n) = n {
-                let p = self.lazy.as_mut().expect("lazy").pend(id, n)?;
-                return self.bind(Table::Expr, id, p);
+                ok
             }
+            _ => return Ok(false),
+        };
+        if !ok {
+            self.eager()?;
+        }
+        Ok(ok)
+    }
+
+    /// Give up lazy proofs (for an export whose expression ids are not
+    /// dense): intern every record, and map each expression id to its
+    /// arena id from now on.
+    #[cold]
+    #[inline(never)]
+    fn eager(&mut self) -> R<()> {
+        let Some(b) = self.lazy.take() else {
+            return Ok(());
+        };
+        let (ids, roots) = b.into_eager(&mut self.env, self.append)?;
+        let mut m = IdMap::new(0);
+        m.reserve(ids.len());
+        for (i, &a) in ids.iter().enumerate() {
+            if m.bind(i as u64, a).is_err() {
+                return twice(Table::Expr, i as u64);
+            }
+        }
+        self.expr_ids = m;
+        for d in &mut self.env.decls {
+            if let DeclKind::Theorem { value, .. } = &mut d.kind
+                && is_lazy(*value)
+            {
+                *value = ExprId(roots[(value.0 - LAZY_BASE) as usize]);
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_expr(&mut self, src: Src<'_>, id: u64, node: RawExpr) -> R<()> {
+        if self.lazy.is_some() && self.lazy_expr(id, node)? {
+            return Ok(());
         }
         let node = match node {
             RawExpr::BVar(i) => match u32::try_from(i) {
@@ -1274,7 +1749,7 @@ impl State {
                 let mut buf = std::mem::take(&mut self.levels_buf);
                 buf.clear();
                 let mut res = Ok(());
-                for &u in &batch.us[a as usize..b as usize] {
+                for &u in &src.us[a as usize..b as usize] {
                     match self.level(u) {
                         Ok(l) => buf.push(l),
                         Err(e) => {
@@ -1320,12 +1795,12 @@ impl State {
             }
             RawExpr::Proj(name, idx, e) => ExprNode::Proj(self.name(name)?, idx, self.expr(e)?),
             RawExpr::Nat(a, b) => {
-                let Some(n) = parse_nat_lit(batch.text(a, b)) else {
+                let Some(n) = parse_nat_lit(src.text(a, b)?) else {
                     return bad("expr.natVal must be a string of decimal digits");
                 };
                 self.env.exprs.nat_node(n)?
             }
-            RawExpr::Str(a, b) => ExprNode::Str(self.env.names.strings.intern(batch.text(a, b))?),
+            RawExpr::Str(a, b) => ExprNode::Str(self.env.names.strings.intern(src.text(a, b)?)?),
             RawExpr::MData(inner) => {
                 // Metadata is kernel-irrelevant: bind the id to the inner
                 // expression.
@@ -1342,8 +1817,11 @@ impl State {
         if !fresh {
             self.shared_exprs += 1;
         }
-        if self.lazy.is_some() && e.0 >= lazy::PEND {
-            return Err(Overflow("too many expressions").into());
+        if let Some(b) = self.lazy.as_deref_mut() {
+            if b.leaf(id, e.0) {
+                return Ok(());
+            }
+            self.eager()?;
         }
         self.bind(Table::Expr, id, e.0)
     }
@@ -1356,7 +1834,7 @@ impl State {
         }
         let m = &members[0];
         let kind = doc.key(m);
-        let res = match kind {
+        match kind {
             "axiom" => self.single(doc, m.val, Single::Axiom),
             "def" => self.single(doc, m.val, Single::Def),
             "thm" => self.single(doc, m.val, Single::Thm),
@@ -1365,18 +1843,70 @@ impl State {
             "inductive" => self.inductive(doc, m.val),
             "meta" => bad("meta record after the first line"),
             _ => bad(format!("unknown record kind '{kind}'")),
-        };
-        res?;
-        if let Some(mut b) = self.lazy.take() {
-            let m = &mut self.expr_ids;
-            let res = b.flush(|id, r| {
-                m.rebind(id, r);
-                Ok(())
-            });
-            self.lazy = Some(b);
-            res?;
+        }?;
+        if let Some(b) = self.lazy.as_deref_mut() {
+            b.decl_done();
         }
         Ok(())
+    }
+
+    /// A theorem or definition the scanner read; the same steps, in the
+    /// same order, as [`State::single`].
+    fn scanned_decl(&mut self, d: &scan::Decl, us: &[u64]) -> R<()> {
+        let name = self.name(d.name)?;
+        let level_params = self.name_ids(&us[d.level_params.0..d.level_params.1])?;
+        let ty = self.root(d.ty)?;
+        let all = &us[d.all.0..d.all.1];
+        let kind = if d.thm {
+            DeclKind::Theorem {
+                value: self.thm_value(d.value)?,
+                all: self.name_ids(all)?,
+            }
+        } else {
+            DeclKind::Definition {
+                value: self.root(d.value)?,
+                hints: d.hints,
+                safety: d.safety,
+                all: self.name_ids(all)?,
+            }
+        };
+        let start = self.env.decls.len() as u32;
+        self.push_decl(Decl {
+            name,
+            level_params,
+            ty,
+            kind,
+        })?;
+        self.env.blocks.push(Block {
+            start,
+            kind: BlockKind::Single,
+        });
+        if let Some(b) = self.lazy.as_deref_mut() {
+            b.decl_done();
+        }
+        Ok(())
+    }
+
+    /// A list of names, by export id.
+    fn name_ids(&mut self, ids: &[u64]) -> R<NameList> {
+        let mut buf = std::mem::take(&mut self.names_buf);
+        buf.clear();
+        let mut res = Ok(());
+        for &n in ids {
+            match self.name(n) {
+                Ok(n) => buf.push(n),
+                Err(e) => {
+                    res = Err(e);
+                    break;
+                }
+            }
+        }
+        let out = res.and_then(|()| match self.env.push_names(&buf) {
+            Some(l) => Ok(l),
+            None => Err(Overflow("too many names in declaration lists").into()),
+        });
+        self.names_buf = buf;
+        out
     }
 
     fn name_list(&mut self, o: &Obj<'_>, k: &str) -> R<NameList> {
@@ -1640,9 +2170,44 @@ mod tests {
         }
     }
 
+    /// Check the contract of [`scan::line`] on one line; returns whether
+    /// it took the line.
+    fn scanned_as_general(line: &str) -> bool {
+        // Alone (so scanned from a padded window), and followed by more
+        // input (scanned in place).
+        let alone = scanned_one(line, line.len());
+        let mut more = line.to_string();
+        if !more.ends_with('\n') {
+            more.push('\n');
+        }
+        let n = more.len();
+        more.push_str(&r#"{"bvar":0,"ie":1}"#.repeat(20));
+        assert_eq!(scanned_one(&more, n), alone, "line: {line}");
+        alone
+    }
+
+    /// The scanner on `input`, which starts with a line of `n` bytes.
+    fn scanned_one(input: &str, n: usize) -> bool {
+        let mut b = Batch::default();
+        let mut us = Vec::new();
+        let mut sink = ToBatch(&mut b, None);
+        let Some((got, took)) = scan::line(input.as_bytes(), &mut us, &mut sink) else {
+            return false;
+        };
+        let res = if took { Ok(()) } else { Err(sink.1) };
+        let line = &input[..n];
+        assert_eq!(got, n, "line: {line}");
+        assert!(res.is_ok());
+        let fast = describe(&b, b.items[0]);
+        let general_line = line.strip_suffix('\n').unwrap_or(line);
+        assert_eq!(general(general_line), Ok(Some(fast)), "line: {line}");
+        true
+    }
+
     /// Check the fast-path contract on one line; returns whether the fast
-    /// path took it.
+    /// path took it. The scanner is checked on it too.
     fn same_as_general(line: &str) -> bool {
+        scanned_as_general(line);
         let mut b = Batch::default();
         let Some(item) = fast::parse(line, &mut b) else {
             return false;
@@ -1716,6 +2281,234 @@ mod tests {
         for l in declined {
             assert!(!same_as_general(l), "fast path should decline: {l}");
         }
+    }
+
+    #[test]
+    fn scanner_agrees_with_general_path() {
+        let taken = [
+            r#"{"in":1,"str":{"pre":0,"str":"Nat"}}"#,
+            r#"{"in":7,"num":{"i":12,"pre":3}}"#,
+            r#"{"il":1,"succ":0}"#,
+            r#"{"il":3,"max":[1,2]}"#,
+            r#"{"il":3,"imax":[1,2]}"#,
+            r#"{"il":4,"param":9}"#,
+            r#"{"ie":0,"sort":1}"#,
+            r#"{"bvar":0,"ie":1}"#,
+            r#"{"const":{"name":1,"us":[]},"ie":1}"#,
+            r#"{"const":{"name":1,"us":[1,2,3]},"ie":2}"#,
+            r#"{"app":{"arg":2,"fn":1},"ie":3}"#,
+            "{\"app\":{\"arg\":2,\"fn\":1},\"ie\":3}\n",
+            r#"{"app":{"arg":123456789,"fn":12345678},"ie":1234567890123}"#,
+            r#"{"app":{"arg":0,"fn":10},"ie":9999999999999999999}"#,
+            r#"{"ie":4,"lam":{"binderInfo":"default","body":3,"name":4,"type":0}}"#,
+            r#"{"ie":4,"lam":{"binderInfo":"strictImplicit","body":3,"name":4,"type":0}}"#,
+            r#"{"forallE":{"binderInfo":"instImplicit","body":3,"name":4,"type":0},"ie":5}"#,
+            r#"{"forallE":{"binderInfo":"implicit","body":3,"name":4,"type":0},"ie":5}"#,
+            r#"{"ie":6,"letE":{"body":1,"name":2,"nondep":false,"type":3,"value":4}}"#,
+            r#"{"ie":6,"letE":{"body":1,"name":2,"nondep":true,"type":3,"value":4}}"#,
+            r#"{"ie":7,"proj":{"idx":0,"struct":3,"typeName":1}}"#,
+            r#"{"ie":8,"natVal":"123456789012345678901234567890"}"#,
+            r#"{"ie":9,"strVal":"héllo"}"#,
+            r#"{"ie":9,"strVal":""}"#,
+        ];
+        for l in taken {
+            assert!(scanned_as_general(l), "scanner should take: {l}");
+        }
+        // Long lines: the scanner reads a line from a window of its first
+        // bytes, and declines one that does not fit.
+        for k in [10, 50, 80, 120] {
+            let us = vec!["7"; k].join(",");
+            let l = format!(r#"{{"const":{{"name":1,"us":[{us}]}},"ie":2}}"#);
+            assert_eq!(scanned_as_general(&l), l.len() < 250, "{l}");
+            let l = format!(r#"{{"ie":9,"strVal":"{}"}}"#, "x".repeat(2 * k));
+            assert_eq!(scanned_as_general(&l), l.len() < 250, "{l}");
+        }
+        let declined = [
+            r#"{"in":1,"str":{"pre":0,"str":"a\"b"}}"#,
+            r#"{"ie":8,"natVal":"12a"}"#,
+            r#"{"ie":8,"natVal":""}"#,
+            r#"{"bvar":01,"ie":1}"#,
+            r#"{"bvar":00000000001,"ie":1}"#,
+            r#"{"bvar":1.0,"ie":1}"#,
+            r#"{"bvar":1e3,"ie":1}"#,
+            r#"{"bvar":-1,"ie":1}"#,
+            r#"{"bvar":18446744073709551616,"ie":1}"#,
+            r#"{"bvar":1,"ie":1} "#,
+            "{\"bvar\":1,\"ie\":1}\r\n",
+            r#"{"bvar":1,"ie":1}}"#,
+            r#"{"bvar":1,"ie":1"#,
+            r#"{"app":{"arg":2,"fn":1}, "ie":3}"#,
+            r#"{"ie":3,"app":{"fn":1,"arg":2}}"#,
+            r#"{"ie":4,"lam":{"binderInfo":"weird","body":3,"name":4,"type":0}}"#,
+            r#"{"ie":7,"proj":{"idx":4294967296,"struct":3,"typeName":1}}"#,
+            r#"{"il":3,"max":[1]}"#,
+            r#"{"il":3,"max":[1,2,3]}"#,
+            r#"{"ie":1,"mdata":{"data":{},"expr":0}}"#,
+            r#"{"const":{"name":1,"us":[1,]},"ie":1}"#,
+            r#"{"axiom":{"name":1,"levelParams":[],"type":0,"isUnsafe":false}}"#,
+            r#"{}"#,
+        ];
+        for l in declined {
+            assert!(!scanned_as_general(l), "scanner should decline: {l}");
+        }
+    }
+
+    /// Reading on one thread (the scanner, applied line by line) and on
+    /// several (batches) gives the same environment.
+    #[test]
+    fn one_thread_matches_several() {
+        let path = std::env::var_os("NITROLEAN_EXPORT");
+        let dir = std::env::temp_dir().join(format!("nitrolean-read-{}", std::process::id()));
+        let path = match path {
+            Some(p) => std::path::PathBuf::from(p),
+            None => {
+                let mut text = String::new();
+                text.push_str(r#"{"meta":{"exporter":{"name":"lean4export","version":"3.1.0"},"format":{"version":"3.1.0"}}}"#);
+                text.push('\n');
+                for l in [
+                    r#"{"in":1,"str":{"pre":0,"str":"A"}}"#,
+                    r#"{"in":2,"str":{"pre":0,"str":"x"}}"#,
+                    r#"{"il":1,"succ":0}"#,
+                    r#"{"ie":0,"sort":1}"#,
+                    r#"{"bvar":0,"ie":1}"#,
+                    r#"{"forallE":{"binderInfo":"default","body":0,"name":2,"type":0},"ie":2}"#,
+                    r#"{"axiom":{"isUnsafe":false,"levelParams":[],"name":1,"type":2}}"#,
+                    r#"{"in":3,"str":{"pre":0,"str":"t"}}"#,
+                    r#"{"ie":3,"lam":{"binderInfo":"default","body":1,"name":2,"type":0}}"#,
+                    r#"{"ie":4,"mdata":{"data":{},"expr":3}}"#,
+                    r#"{"thm":{"all":[3],"levelParams":[],"name":3,"type":2,"value":4}}"#,
+                    r#"{"in":4,"str":{"pre":0,"str":"d"}}"#,
+                    r#"{"in":5,"num":{"i":2,"pre":4}}"#,
+                    r#"{"in":6,"num":{"i":3,"pre":4}}"#,
+                    r#"{"in":7,"str":{"pre":0,"str":"u"}}"#,
+                    r#"{"def":{"all":[4],"hints":"abbrev","levelParams":[],"name":4,"safety":"safe","type":2,"value":3}}"#,
+                    r#"{"def":{"all":[5,6],"hints":{"regular":7},"levelParams":[7],"name":5,"safety":"unsafe","type":2,"value":3}}"#,
+                    r#"{"def":{"all":[5,6],"hints":"opaque","levelParams":[],"name":6,"safety":"partial","type":2,"value":4}}"#,
+                    r#"{"in":8,"str":{"pre":0,"str":"t2"}}"#,
+                    r#"{"thm":{"all":[8],"levelParams":[7],"name":8,"type":2,"value":3}}"#,
+                    // Aliases (`mdata`) in a promoted term: of an interned
+                    // term, of a stored one, of a recent one.
+                    r#"{"in":9,"str":{"pre":0,"str":"m"}}"#,
+                    r#"{"ie":5,"mdata":{"data":{},"expr":2}}"#,
+                    r#"{"app":{"arg":1,"fn":4},"ie":6}"#,
+                    r#"{"ie":7,"mdata":{"data":{},"expr":6}}"#,
+                    r#"{"ie":8,"mdata":{"data":{},"expr":7}}"#,
+                    r#"{"ie":9,"lam":{"binderInfo":"default","body":8,"name":2,"type":5}}"#,
+                    r#"{"def":{"all":[9],"hints":"abbrev","levelParams":[],"name":9,"safety":"safe","type":2,"value":9}}"#,
+                ] {
+                    text.push_str(l);
+                    text.push('\n');
+                }
+                std::fs::create_dir_all(&dir).expect("temp dir");
+                let p = dir.join("small.ndjson");
+                std::fs::write(&p, text).expect("write");
+                p
+            }
+        };
+        let read = |lazy_proofs, threads| {
+            read_file_with(
+                &path,
+                &Options {
+                    lazy_proofs,
+                    threads,
+                },
+            )
+            .expect("read")
+        };
+        // The comparison builds the lazy values of its second argument.
+        let (base, stats) = read(false, 1);
+        for (lazy_proofs, threads) in [(false, 3), (true, 1), (true, 3)] {
+            let (other, s) = read(lazy_proofs, threads);
+            assert_eq!((s.lines, s.bytes), (stats.lines, stats.bytes));
+            let d = crate::compare::compare(&base, &other);
+            assert!(
+                d.only_a.is_empty() && d.only_b.is_empty() && d.differ.is_empty(),
+                "lazy={lazy_proofs}, threads={threads}: the reads differ"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An export whose expression ids stop being dense after a theorem's
+    /// value was left lazy reads the same with lazy proofs as without
+    /// (the reader turns eager there); and a bad reference fails the same.
+    #[test]
+    fn lazy_falls_back_to_eager() {
+        let meta = r#"{"meta":{"exporter":{"name":"lean4export","version":"3.1.0"},"format":{"version":"3.1.0"}}}"#;
+        let start = [
+            r#"{"in":1,"str":{"pre":0,"str":"A"}}"#,
+            r#"{"in":2,"str":{"pre":0,"str":"x"}}"#,
+            r#"{"il":1,"succ":0}"#,
+            r#"{"ie":0,"sort":1}"#,
+            r#"{"bvar":0,"ie":1}"#,
+            r#"{"forallE":{"binderInfo":"default","body":0,"name":2,"type":0},"ie":2}"#,
+            r#"{"axiom":{"isUnsafe":false,"levelParams":[],"name":1,"type":2}}"#,
+            r#"{"in":3,"str":{"pre":0,"str":"t"}}"#,
+            r#"{"ie":3,"lam":{"binderInfo":"default","body":1,"name":2,"type":0}}"#,
+            r#"{"ie":4,"mdata":{"data":{},"expr":3}}"#,
+            r#"{"app":{"arg":4,"fn":3},"ie":5}"#,
+            r#"{"thm":{"all":[3],"levelParams":[],"name":3,"type":2,"value":4}}"#,
+            r#"{"in":4,"str":{"pre":0,"str":"u"}}"#,
+        ];
+        let dir = std::env::temp_dir().join(format!("nitrolean-eager-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let write = |name: &str, tail: &[&str]| {
+            let mut text = format!("{meta}\n");
+            for l in start.iter().chain(tail) {
+                text.push_str(l);
+                text.push('\n');
+            }
+            let p = dir.join(name);
+            std::fs::write(&p, text).expect("write");
+            p
+        };
+        let read = |p: &std::path::Path, lazy_proofs, threads| {
+            read_file_with(
+                p,
+                &Options {
+                    lazy_proofs,
+                    threads,
+                },
+            )
+        };
+        // Ids 7 and 9 (and 5's application interned by neither theorem).
+        for tail in [
+            &[r#"{"app":{"arg":3,"fn":5},"ie":7}"#][..],
+            &[r#"{"ie":9,"lam":{"binderInfo":"default","body":5,"name":2,"type":0}}"#],
+            &[r#"{"ie":9,"mdata":{"data":{},"expr":5}}"#],
+            &[r#"{"bvar":1,"ie":7}"#],
+        ] {
+            let mut tail = tail.to_vec();
+            let n = if tail[0].contains("\"ie\":7") { 7 } else { 9 };
+            let thm = format!(
+                r#"{{"thm":{{"all":[4],"levelParams":[],"name":4,"type":2,"value":{n}}}}}"#
+            );
+            tail.push(&thm);
+            let p = write("sparse.ndjson", &tail);
+            let (base, _) = read(&p, false, 1).expect("read");
+            for threads in [1, 3] {
+                let (other, _) = read(&p, true, threads).expect("read");
+                let d = crate::compare::compare(&base, &other);
+                assert!(
+                    d.only_a.is_empty() && d.only_b.is_empty() && d.differ.is_empty(),
+                    "{tail:?}, threads={threads}: the reads differ"
+                );
+                assert_eq!(d.common, 3);
+            }
+        }
+        for tail in [
+            &[r#"{"app":{"arg":3,"fn":9},"ie":6}"#][..],
+            &[r#"{"thm":{"all":[4],"levelParams":[],"name":4,"type":2,"value":6}}"#],
+            &[r#"{"app":{"arg":3,"fn":3},"ie":5}"#],
+        ] {
+            let p = write("bad.ndjson", tail);
+            let eager = read(&p, false, 1).map(|_| ()).expect_err("fails");
+            for threads in [1, 3] {
+                let lazy = read(&p, true, threads).map(|_| ()).expect_err("fails");
+                assert_eq!((lazy.line, &lazy.msg), (eager.line, &eager.msg), "{tail:?}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Differential check of every line of a real export. Run with

@@ -86,6 +86,26 @@ impl Names {
         Ok((NameId(id), fresh))
     }
 
+    /// Add a name without hash-consing it: lookups do not see it until
+    /// [`Names::index`]. For a reader that knows its input lists each name
+    /// once (and checks that when indexing).
+    pub fn append(&mut self, node: NameNode) -> Result<NameId, Overflow> {
+        self.arena.push_unindexed(node).map(NameId)
+    }
+
+    /// Index every name, on `threads` threads; if two are equal, a pair
+    /// of their ids (the later, the earlier).
+    /// On one thread, `scratch` is working space (see [`Big::index`]).
+    pub fn index(
+        &mut self,
+        threads: usize,
+        scratch: &mut Vec<u32>,
+    ) -> Result<(), (NameId, NameId)> {
+        self.arena
+            .index(threads, scratch)
+            .map_err(|(a, b)| (NameId(a), NameId(b)))
+    }
+
     pub fn str(&mut self, pre: NameId, s: &str) -> Result<(NameId, bool), Overflow> {
         let s = self.strings.intern(s)?;
         self.intern(NameNode::Str(pre, s))
