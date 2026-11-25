@@ -116,7 +116,8 @@ pub struct Nbe<'e> {
     /// `unused_positions` of definitions.
     unused_pos: IdMap<NameId, u64>,
     open_count: IdMap<(V, V), u32>,
-    trim_cache: IdMap<(val::Env, u32), val::Env>,
+    /// `trim_long` (direct-mapped): (environment, length, result).
+    trim_cache: Vec<[u32; 3]>,
     canon_fvar: IdMap<(V, V, u32), u32>,
     elims: Vec<Vec<val::Elim>>,
     terms: Vec<ExprId>,
@@ -260,7 +261,7 @@ impl<'e> Nbe<'e> {
             prop_pos: IdMap::default(),
             unused_pos: IdMap::default(),
             open_count: IdMap::default(),
-            trim_cache: IdMap::default(),
+            trim_cache: vec![[val::NONE; 3]; PRUNES],
             canon_fvar: IdMap::default(),
             elims: Vec::new(),
             terms: Vec::new(),
@@ -397,7 +398,7 @@ impl<'e> Nbe<'e> {
         self.vargs.clear();
         self.eager_depth = 0;
         shrink(&mut self.open_count);
-        shrink(&mut self.trim_cache);
+        self.trim_cache.fill([val::NONE; 3]);
         shrink(&mut self.key_envs);
         shrink(&mut self.canon_fvar);
         shrink(&mut self.level_checked);
@@ -759,8 +760,10 @@ impl<'e> Nbe<'e> {
     /// `trim` of an environment longer than `n`.
     #[inline(never)]
     fn trim_long(&mut self, env: val::Env, n: u32) -> val::Env {
-        if let Some(&e) = self.trim_cache.get(&(env, n)) {
-            return e;
+        let i = (hash2(env.0 as u64, n as u64) >> 52) as usize & (PRUNES - 1);
+        let s = self.trim_cache[i];
+        if s[0] == env.0 && s[1] == n {
+            return val::Env(s[2]);
         }
         let base = self.vargs.len();
         let mut cur = env;
@@ -773,7 +776,7 @@ impl<'e> Nbe<'e> {
             r = self.a.cons(r, self.vargs[k]);
         }
         self.vargs.truncate(base);
-        self.trim_cache.insert((env, n), r);
+        self.trim_cache[i] = [env.0, n, r.0];
         r
     }
 
