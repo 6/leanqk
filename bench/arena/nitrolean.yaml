@@ -1,0 +1,40 @@
+# Checker definition for the Lean Kernel Arena (checkers/nitrolean.yaml there).
+# Not submitted. Before submitting, set `ref` and `rev` to a released tag and
+# its commit; `rev` below is a placeholder.
+#
+# The arena clones `url` at `rev` (a depth-1 fetch of that commit; `ref` is only
+# shown on the site), runs `build` in the checkout inside its nix shell, and
+# runs `run` there with the export's path in $IN. Its nix shell has rustc and
+# cargo 1.95, older than the 1.100 that Cargo.toml asks for, so the build
+# installs that toolchain with rustup into the checkout first.
+description: |
+  **nitrolean** is an independent Lean 4 kernel checker written in Rust, with no
+  unsafe code and no C dependencies.
+
+  It reads lean4export's NDJSON (format 3) in one streaming pass into
+  hash-consed arenas of names, universe levels and expressions addressed by
+  32-bit ids; natural-number literals below 2^64 are stored inline, larger
+  ones as big integers. Definitions, theorems and opaque constants are
+  checked by evaluation: terms become weak-head values with closures,
+  hash-consed per worker, with free variables identified by their type, so
+  that the same computation reached twice is the same value and its
+  reduction, type and comparisons are remembered. A declaration that would
+  build too many values, and every inductive declaration, is checked by a
+  substitution kernel instead. Both follow Lean's C++ kernel: lazy delta
+  reduction, the Nat and String literal extensions, eta for structures,
+  proof irrelevance, quotients, and recursors for nested and mutual
+  inductive types, which it generates itself and compares with the export.
+
+  Declaration blocks are checked in parallel on eight worker threads. The
+  verdict is the first failure in file order and does not depend on the
+  number of threads.
+language: rust
+url: https://github.com/6/nitrolean
+ref: main
+rev: "0000000000000000000000000000000000000000"
+build: |
+  export RUSTUP_HOME="$PWD/.rustup" CARGO_HOME="$PWD/.cargo-home" RUSTUP_INIT_SKIP_PATH_CHECK=yes
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain 1.100.0
+  PATH="$CARGO_HOME/bin:$PATH" cargo build --release --locked
+run: target/release/nitrolean check -j 8 "$IN"
+threads: 8

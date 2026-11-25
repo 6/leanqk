@@ -8,6 +8,7 @@ mod kc;
 mod kernel_cases;
 mod limited;
 mod matcert;
+mod mathlib;
 mod oracle;
 mod proc;
 mod public_check;
@@ -51,6 +52,9 @@ enum Cmd {
     /// The matrix certificates (bench/certificates).
     #[command(subcommand)]
     Matcert(matcert::Cmd),
+    /// The benchmark on all of Mathlib: its export, and timings at several thread counts.
+    #[command(subcommand)]
+    Mathlib(mathlib::Cmd),
     /// The Lean Kernel Arena benchmark (bench/arena).
     #[command(subcommand)]
     Arena(arena::Cmd),
@@ -80,6 +84,7 @@ fn main() {
         Cmd::KernelCases(a) => kernel_cases::main(a),
         Cmd::Kc(c) => kc::main(c),
         Cmd::Matcert(c) => matcert::main(c),
+        Cmd::Mathlib(c) => mathlib::main(c),
         Cmd::Arena(c) => arena::main(c),
         Cmd::Oracle(c) => oracle::main(c),
         Cmd::Difffuzz(a) => difffuzz::main(a),
