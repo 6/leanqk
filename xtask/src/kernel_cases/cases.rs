@@ -2624,6 +2624,22 @@ fn eval_cases(v: &mut Cases) {
         "the same sum, off by one",
         &[],
     );
+    eval(
+        v,
+        "eval-cases",
+        "K.ev_cases_ok",
+        "accept",
+        "matches through casesOn and sparse casesOn: wildcards, a literal, a structure, a function result",
+        &[],
+    );
+    eval(
+        v,
+        "eval-cases-wrong",
+        "K.ev_cases_wrong",
+        "reject",
+        "the same sum, off by one",
+        &[],
+    );
 
     eval_old(
         v,
@@ -2797,6 +2813,20 @@ fn eval_cases(v: &mut Cases) {
         v,
         "eval434-dec-cast-wrong",
         "K34.ev_dec_cast_wrong",
+        "reject",
+        "the same sum, off by one",
+    );
+    eval_old(
+        v,
+        "eval434-cases",
+        "K34.ev_cases_ok",
+        "accept",
+        "matches through casesOn and sparse casesOn, as in eval-cases",
+    );
+    eval_old(
+        v,
+        "eval434-cases-wrong",
+        "K34.ev_cases_wrong",
         "reject",
         "the same sum, off by one",
     );

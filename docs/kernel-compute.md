@@ -348,6 +348,39 @@ argument and an instance whose field is computed.
 On a 40 × 40 and a 60 × 60 integer matrix product mod 65521, the steps go
 from 8.8 to 6.4 million and the evaluator's time from 0.55 to 0.49 s.
 
+## Matches
+
+Every `match` compiles to a matcher that unfolds to `casesOn`, or to the
+sparse `casesOn` of matchers that leave out some constructors, and
+`casesOn` unfolds to the recursor with minor premises that drop the
+inductive hypotheses. A definition of that shape is recognized when its
+value is looked at (`cases_shape`):
+
+- It is `fun x₀ … xₖ₋₁ => I.rec a₀ … aₙ`, where `I.rec` is not `K`-like,
+  has one motive and a minor premise per constructor, and takes exactly its
+  arguments up to the major premise, a variable `xⱼ`.
+- Each minor premise is `fun fields ihs extras => x_l fields`, applying an
+  argument to the fields in order, or `fun fields ihs extras => z t₁ … tₙ`,
+  applying one of the extra binders (the sparse form's `else`) to closed
+  terms. The number of inductive hypotheses is read from the recursor's rule.
+
+Applied to its arguments, with the major premise evaluated to a constructor,
+it becomes that rule's minor premise body directly (`cases_n`): `x_l` applied
+to the constructor's fields, or `z` applied to `t₁ … tₙ`, and then to the
+arguments past the extra binders. Unfolding the definition, reducing the
+recursor with the rule's right-hand side and beta-reducing the minor
+premise gives the same term. It is a property of the definition's term, so
+no version check is needed. Any other major premise makes it its
+definition. The tests `eval-cases` and `eval434-cases` (with their false
+twins) match on a three-constructor type with a recursive field, on a
+`Nat` literal and a list with wildcards, on a structure, and on an `Option`
+whose result is a function.
+
+On the certificate session's `nonsingular-128`, the steps go from 84 to 54
+million and the evaluator's time from 5.0 to 4.0 s. On lrat06 they go from
+81 to 52 million steps (4.8 to 3.9 s). On `cartan_A7` they go from 65 to 42
+million steps (3.8 to 3.1 s).
+
 ## Built-in operations of several Lean versions
 
 The fingerprint table (`src/check/fingerprint_table.rs`, written by
@@ -365,9 +398,9 @@ out of memory.
 
 ## Tests
 
-`xtask/src/kernel_cases/cases.rs` has 73 `eval*` cases. Each is a claim proved by
+`xtask/src/kernel_cases/cases.rs` has 77 `eval*` cases. Each is a claim proved by
 `Eq.refl`, so only reduction decides it, and nearly every one has a false
-twin. The 25 `eval434-*` cases are exported from Lean v4.34.0, where the
+twin. The 27 `eval434-*` cases are exported from Lean v4.34.0, where the
 `DecidableEq` fast paths apply. They cover:
 
 - K-like recursors whose indices do or do not match;

@@ -67,11 +67,38 @@ pub struct RecInfo {
     /// `params + motives + minors`.
     pub pmm: usize,
     pub nparams: u32,
+    /// One motive, and a minor premise per rule (not a mutual or nested
+    /// block's recursor).
+    pub single: bool,
     pub induct: NameId,
     pub k: bool,
     /// Per rule: constructor, fields, right-hand side with this constant's
     /// levels.
     pub rules: Vec<(NameId, u32, ExprId)>,
+}
+
+/// A definition `fun x₀ … xₖ₋₁ => I.rec … (fun fields ihs => x_m fields) …
+/// x_major`: a `casesOn`, as Lean generates it for every inductive type
+/// and as matchers use it.
+#[derive(Debug)]
+pub struct CasesInfo {
+    arity: usize,
+    /// The argument that is the major premise.
+    major: usize,
+    /// Per rule of the recursor: its constructor, fields, the number `e`
+    /// of the minor premise's binders past the fields and inductive
+    /// hypotheses (they take the first arguments past the `k`), and what
+    /// the minor premise's body is.
+    rules: Vec<(NameId, u32, u32, Minor)>,
+}
+
+#[derive(Debug)]
+enum Minor {
+    /// `x_l y₁ … y_f`: argument `l` applied to the fields.
+    Arg(usize),
+    /// `z_j t₁ … tₙ`: the `j`-th binder past the inductive hypotheses
+    /// applied to closed terms.
+    Extra(u32, Vec<ExprId>),
 }
 
 /// What a constant (with its levels) does in the machine.
@@ -102,6 +129,9 @@ enum CInfo {
     BEqProd(ExprId),
     /// An `Int` operation run on values; its definition.
     Int(IntOp, ExprId),
+    /// A definition of the shape of a `casesOn` (see `cases_shape`); its
+    /// value.
+    Cases(Rc<CasesInfo>, ExprId),
     /// An inductive type, axiom, opaque constant, `Quot` or `Quot.mk`:
     /// it does not reduce.
     Neutral,
@@ -117,7 +147,7 @@ static BAILS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
 static NANOS: AtomicU64 = AtomicU64::new(0);
 /// Fast paths taken: `List` operations, `DecidableEq` decisions, `==` on
 /// pairs.
-static FAST: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+static FAST: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
 
 /// Giving up on a stuck term; `NITROLEAN_EVAL_DEBUG=1` says where.
 #[cold]
@@ -139,7 +169,7 @@ pub fn enabled() -> bool {
 pub fn stats() -> String {
     let b = |i: usize| BAILS[i].load(Relaxed);
     format!(
-        "evaluator: {} calls, {} answered, {} steps, {:.3} s; gave up: {} stuck, {} deep, {} limit, {} loop; {} evaluated again keeping proofs; fast: {} list, {} decidable-eq, {} pair ==, {} int, {} shared method",
+        "evaluator: {} calls, {} answered, {} steps, {:.3} s; gave up: {} stuck, {} deep, {} limit, {} loop; {} evaluated again keeping proofs; fast: {} list, {} decidable-eq, {} pair ==, {} int, {} shared method, {} cases",
         CALLS.load(Relaxed),
         HITS.load(Relaxed),
         STEPS.load(Relaxed),
@@ -153,7 +183,8 @@ pub fn stats() -> String {
         FAST[1].load(Relaxed),
         FAST[2].load(Relaxed),
         FAST[3].load(Relaxed),
-        FAST[4].load(Relaxed)
+        FAST[4].load(Relaxed),
+        FAST[5].load(Relaxed)
     )
 }
 
@@ -284,7 +315,8 @@ impl<'a, 'e> Machine<'a, 'e> {
                 | Head::DecEq(..)
                 | Head::BEqProd(..)
                 | Head::BEqProdFn
-                | Head::Int(..),
+                | Head::Int(..)
+                | Head::Cases(..),
             ..
         } = &*v
         {
@@ -733,6 +765,11 @@ impl<'a, 'e> Machine<'a, 'e> {
                     return CInfo::Int(op, v);
                 }
                 let k = proj_fn_arity(&self.tc.st, v);
+                if k == 0
+                    && let Some(ci) = self.cases_shape(v)
+                {
+                    return CInfo::Cases(Rc::new(ci), v);
+                }
                 CInfo::Unfold(v, k)
             }
             DeclKind::Constructor {
@@ -762,6 +799,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                     major_idx: (num_params + num_motives + num_minors + num_indices) as usize,
                     pmm: (num_params + num_motives + num_minors) as usize,
                     nparams: num_params,
+                    single: num_motives == 1 && num_minors as usize == rs.len(),
                     induct,
                     k,
                     rules,
@@ -809,6 +847,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             CInfo::DecEq(op, v) => self.saturate_n(c, Head::DecEq(op, v), args),
             CInfo::BEqProd(v) => self.saturate_n(c, Head::BEqProd(v), args),
             CInfo::Int(op, v) => self.saturate_n(c, Head::Int(op, v), args),
+            CInfo::Cases(ci, v) => self.saturate_n(c, Head::Cases(ci, v), args),
             CInfo::Ctor(info) if args.is_empty() => {
                 // One shared value per constructor constant.
                 if let Some(v) = self.s.nullary.get(&c) {
@@ -982,11 +1021,18 @@ impl<'a, 'e> Machine<'a, 'e> {
 
     /// A head that reduces once it has `arity` arguments.
     fn saturate_n(&mut self, c: ExprId, kind: Head, args: Vec<Th>) -> ER<Next> {
-        if let Head::Rec(r) = &kind
-            && args.len() >= kind.arity()
-        {
-            let r = r.clone();
-            return self.iota_n(&r, args);
+        if args.len() >= kind.arity() {
+            match &kind {
+                Head::Rec(r) => {
+                    let r = r.clone();
+                    return self.iota_n(&r, args);
+                }
+                Head::Cases(ci, v) => {
+                    let (ci, v) = (ci.clone(), *v);
+                    return self.cases_n(&ci, v, args);
+                }
+                _ => {}
+            }
         }
         self.saturate(c, kind, args).map(Next::V)
     }
@@ -1016,6 +1062,10 @@ impl<'a, 'e> Machine<'a, 'e> {
             Head::BEqProdFn => self.beq_prod_fn(c, args),
             Head::Int(op, def) => self.int_op(op, def, args),
             Head::QuotLift | Head::QuotInd => self.quot_head(matches!(kind, Head::QuotLift), args),
+            Head::Cases(ci, v) => {
+                let n = self.cases_n(&ci, v, args)?;
+                self.finish(n)
+            }
         }
     }
 
@@ -1269,6 +1319,145 @@ impl<'a, 'e> Machine<'a, 'e> {
         let t = self.closed(rhs);
         let f = self.force(&t)?;
         self.apply_n(f, a)
+    }
+
+    /// A `casesOn` applied to (at least) its arguments, with its major
+    /// premise a constructor: the argument for that constructor applied to
+    /// its fields (and the rest). That is what unfolding the definition and
+    /// reducing the recursor give: the rule's right-hand side applied to
+    /// the fields and inductive hypotheses, then the wrapper `fun fields
+    /// ihs => x_m fields`. Else the definition.
+    fn cases_n(&mut self, ci: &CasesInfo, v: ExprId, mut args: Vec<Th>) -> ER<Next> {
+        let mut mv = self.force(&args[ci.major])?;
+        if matches!(&*mv, Val::Nat(_) | Val::Str(_) | Val::Arr(_)) {
+            mv = self.as_ctor(mv)?;
+        }
+        if let Val::Ctor { c, args: margs, .. } = &*mv
+            && let ExprNode::Const(cn, _) = self.tc.st.node(*c)
+            && let Some((_, nf, e, minor)) = ci.rules.iter().find(|r| r.0 == cn)
+            && *nf as usize <= margs.len()
+            && args.len() >= ci.arity + *e as usize
+        {
+            FAST[5].fetch_add(1, Relaxed);
+            let (nf, e) = (*nf as usize, *e as usize);
+            let mut rest = args.split_off(ci.arity);
+            let tail = rest.split_off(e);
+            let (f, mut a) = match minor {
+                Minor::Arg(l) => {
+                    let f = self.force(&args[*l])?;
+                    (f, margs[margs.len() - nf..].to_vec())
+                }
+                Minor::Extra(j, ts) => {
+                    let f = self.force(&rest[*j as usize])?;
+                    (f, ts.iter().map(|&t| self.closed(t)).collect())
+                }
+            };
+            a.extend(tail);
+            return self.apply_n(f, a);
+        }
+        let t = self.closed(v);
+        let f = self.force(&t)?;
+        self.apply_n(f, args)
+    }
+
+    /// `Some` if `v` is `fun x₀ … xₖ₋₁ => I.rec a₀ … aₙ` for a recursor
+    /// `I.rec` that is not `K`-like, taking exactly its arguments up to the
+    /// major premise, which is a variable `xⱼ`; and each minor premise is
+    /// `fun y₁ … yₘ => x_l y₁ … y_f`, applying a variable to the first `f`
+    /// binders, `f` the constructor's fields. The other arguments are not
+    /// looked at: the recursor's reduction does not use them on the way to
+    /// the minor premise.
+    #[inline(never)]
+    fn cases_shape(&mut self, v: ExprId) -> Option<CasesInfo> {
+        let mut e = v;
+        let mut k = 0usize;
+        while let ExprNode::Lam(_, _, _, b) = self.tc.st.node(e) {
+            k += 1;
+            e = b;
+        }
+        if k == 0 {
+            return None;
+        }
+        let mut a = Vec::new();
+        let h = self.tc.st.spine(e, &mut a);
+        if !matches!(self.tc.st.node(h), ExprNode::Const(..)) {
+            return None;
+        }
+        let CInfo::Rec(r) = self.info(h) else {
+            return None;
+        };
+        if r.k || !r.single || a.len() != r.major_idx + 1 {
+            return None;
+        }
+        let outer = |st: &super::store::Store<'_>, x: ExprId, under: usize| -> Option<usize> {
+            match st.node(x) {
+                ExprNode::BVar(j) if (j as usize) >= under && (j as usize) - under < k => {
+                    Some(k - 1 - (j as usize - under))
+                }
+                _ => None,
+            }
+        };
+        let major = outer(&self.tc.st, a[r.major_idx], 0)?;
+        let first_minor = r.pmm.checked_sub(r.rules.len())?;
+        let mut rules = Vec::with_capacity(r.rules.len());
+        for (i, &(cn, nf, rhs)) in r.rules.iter().enumerate() {
+            let nf = nf as usize;
+            let nih = self.rule_ihs(rhs, r.pmm + nf, nf)?;
+            let mut m = a[first_minor + i];
+            let mut nb = 0usize;
+            while let ExprNode::Lam(_, _, _, b) = self.tc.st.node(m) {
+                nb += 1;
+                m = b;
+            }
+            let ne = nb.checked_sub(nf + nih)?;
+            let mut ma = Vec::new();
+            let mh = self.tc.st.spine(m, &mut ma);
+            let minor = if let Some(l) = outer(&self.tc.st, mh, nb) {
+                if ma.len() != nf {
+                    return None;
+                }
+                for (f, &x) in ma.iter().enumerate() {
+                    // Field `f` is binder `f`: the variable `#(nb - 1 - f)`.
+                    if !matches!(self.tc.st.node(x), ExprNode::BVar(j) if j as usize == nb - 1 - f)
+                    {
+                        return None;
+                    }
+                }
+                Minor::Arg(l)
+            } else {
+                // `z_j t₁ … tₙ` with `z_j` an extra binder (`#(ne-1-j)`)
+                // and closed `tᵢ`.
+                let ExprNode::BVar(b) = self.tc.st.node(mh) else {
+                    return None;
+                };
+                let b = b as usize;
+                if b >= ne || ma.iter().any(|&x| self.tc.st.has_loose_bvars(x)) {
+                    return None;
+                }
+                Minor::Extra((ne - 1 - b) as u32, ma)
+            };
+            rules.push((cn, nf as u32, ne as u32, minor));
+        }
+        Some(CasesInfo {
+            arity: k,
+            major,
+            rules,
+        })
+    }
+
+    /// The number of inductive hypotheses of a recursor rule `fun x₁ … xₙ
+    /// => m y₁ … y_f ih₁ … ihᵣ` (`n` binders, `f` fields): `r`.
+    fn rule_ihs(&mut self, rhs: ExprId, n: usize, nf: usize) -> Option<usize> {
+        let mut e = rhs;
+        for _ in 0..n {
+            let ExprNode::Lam(_, _, _, b) = self.tc.st.node(e) else {
+                return None;
+            };
+            e = b;
+        }
+        let mut a = Vec::new();
+        self.tc.st.spine(e, &mut a);
+        a.len().checked_sub(nf)
     }
 
     /// As Lean does, before reducing a `K`-like recursor's major premise:
@@ -2498,6 +2687,7 @@ pub enum Head {
     /// `fun α β bα bβ => beq-field` (see `beq_prod`).
     BEqProdFn,
     Int(IntOp, ExprId),
+    Cases(Rc<CasesInfo>, ExprId),
 }
 
 impl Head {
@@ -2524,6 +2714,7 @@ impl Head {
             Head::BEqProdFn => 6,
             Head::Int(IntOp::Neg | IntOp::NegOfNat | IntOp::NatAbs | IntOp::ToNat, _) => 1,
             Head::Int(_, _) => 2,
+            Head::Cases(ci, _) => ci.arity,
         }
     }
 }
