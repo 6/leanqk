@@ -294,6 +294,7 @@ pub struct Ext {
     pub bool_true: Option<NameId>,
     pub bool_false: Option<NameId>,
     pub ops: IdMap<NameId, NatOp>,
+    pub nat_ops_complete: bool,
     pub array_ops: IdMap<NameId, ArrayOp>,
     pub list_ops: IdMap<NameId, ListOp>,
     pub dec_eq_ops: IdMap<NameId, DecEqOp>,
@@ -322,6 +323,10 @@ impl Ext {
     }
 
     pub fn new(env: &Env) -> Ext {
+        Self::with_decls(env, &env.decls)
+    }
+
+    pub(super) fn with_decls(env: &Env, decls: &[Decl]) -> Ext {
         let mut x = Ext {
             eager_reduce: env.names.find_dotted("eagerReduce"),
             eq: env.names.find_dotted("Eq"),
@@ -338,7 +343,7 @@ impl Ext {
                 ind,
             });
         }
-        let shapes = Shapes { env };
+        let shapes = Shapes { env, decls };
         let Some((nat, zero, succ)) = shapes.nat() else {
             x.notes.push(
                 "no `Nat` literals: `Nat` is absent or not the expected inductive type".into(),
@@ -353,7 +358,8 @@ impl Ext {
             x.bool_false = Some(f);
             x.bool_true = Some(t);
         }
-        let fp = fingerprint::Checker::new(env);
+        let fp = fingerprint::Checker::with_decls(env, decls);
+        let mut recognized_ops = 0;
         for (name, op) in NAT_OPS {
             let Some(n) = env.names.find_dotted(name) else {
                 continue;
@@ -368,10 +374,12 @@ impl Ext {
             match fp.matches(n) {
                 Ok(_) => {
                     x.ops.insert(n, op);
+                    recognized_ops += 1;
                 }
                 Err(why) => x.notes.push(format!("no built-in `{name}`: {why}")),
             }
         }
+        x.nat_ops_complete = recognized_ops == NAT_OPS.len();
         for (name, op) in ARRAY_OPS {
             let Some(n) = env.names.find_dotted(name) else {
                 continue;
@@ -469,12 +477,17 @@ impl Ext {
 /// Structural checks on declaration types, by name.
 struct Shapes<'a> {
     env: &'a Env,
+    decls: &'a [Decl],
 }
 
 impl Shapes<'_> {
+    fn find(&self, n: NameId) -> Option<&Decl> {
+        self.env.by_name.get(&n).map(|&i| &self.decls[i as usize])
+    }
+
     fn decl(&self, s: &str) -> Option<(NameId, &Decl)> {
         let n = self.env.names.find_dotted(s)?;
-        Some((n, self.env.find(n)?))
+        Some((n, self.find(n)?))
     }
 
     fn is_const(&self, e: ExprId, n: NameId, nlevels: usize) -> bool {
@@ -537,8 +550,8 @@ impl Shapes<'_> {
 
     fn nat(&self) -> Option<(NameId, NameId, NameId)> {
         let (nat, cs) = self.simple_inductive("Nat", &["Nat.zero", "Nat.succ"])?;
-        let zero = self.env.find(cs[0])?;
-        let succ = self.env.find(cs[1])?;
+        let zero = self.find(cs[0])?;
+        let succ = self.find(cs[1])?;
         if !self.is_const(zero.ty, nat, 0) {
             return None;
         }
@@ -552,7 +565,7 @@ impl Shapes<'_> {
     fn bool_type(&self) -> Option<(NameId, NameId)> {
         let (b, cs) = self.simple_inductive("Bool", &["Bool.false", "Bool.true"])?;
         for &c in &cs {
-            if !self.is_const(self.env.find(c)?.ty, b, 0) {
+            if !self.is_const(self.find(c)?.ty, b, 0) {
                 return None;
             }
         }

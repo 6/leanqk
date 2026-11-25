@@ -279,9 +279,8 @@ const RED_ZONE: usize = 256 << 10;
 const SEGMENT: usize = 64 << 20;
 const MAX_DEPTH: u32 = 4_000_000;
 
-/// There is no step limit: evaluation is as lazy as `whnf`, so it
-/// terminates whenever `whnf` does. The only limits are the stack and the
-/// kernel's own `Nat` limits.
+/// Evaluation is as lazy as `whnf`, so it terminates whenever `whnf` does,
+/// subject to stack and `Nat` resource limits.
 struct Machine<'a, 'e> {
     tc: &'a mut Tc<'e>,
     s: &'a mut State,
@@ -2753,6 +2752,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         let (Some(zero), Some(succ)) = (self.tc.ext.nat_zero, self.tc.ext.nat_succ) else {
             return Err(stuck(758));
         };
+        self.tc.st.charge_nat_unfold(n.bits());
         match n.pred() {
             None => {
                 let c = self.tc.st.cnst(zero, LevelList::EMPTY);

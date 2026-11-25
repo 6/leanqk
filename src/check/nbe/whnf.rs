@@ -436,6 +436,8 @@ impl Nbe<'_> {
             if n == 0 {
                 return Ok(self.cnst(zero, LevelList::EMPTY));
             }
+            self.st
+                .charge_nat_unfold(u64::from(u64::BITS - n.leading_zeros()));
             let p = self.nat_u64(n - 1);
             let s = self.cnst(succ, LevelList::EMPTY);
             return Ok(self.apply(s, p));
@@ -451,6 +453,7 @@ impl Nbe<'_> {
         if n == BigUint::ZERO {
             return Ok(self.cnst(zero, LevelList::EMPTY));
         }
+        self.st.charge_nat_unfold(n.bits());
         let p = self.nat(n - 1u32);
         let s = self.cnst(succ, LevelList::EMPTY);
         Ok(self.apply(s, p))

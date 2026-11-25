@@ -172,7 +172,7 @@ impl<'e> Tc<'e> {
         let env = self.st.env;
         let &i = env.by_name.get(&n)?;
         if i < self.limit || self.extra.contains(&n) {
-            Some(env.decls[i as usize])
+            Some(self.st.decls[i as usize])
         } else {
             None
         }
@@ -1143,6 +1143,8 @@ impl<'e> Tc<'e> {
             if v == 0 {
                 return Ok(self.st.cnst(zero, LevelList::EMPTY));
             }
+            self.st
+                .charge_nat_unfold(u64::from(u64::BITS - v.leading_zeros()));
             let p = self.st.nat_u64(v - 1);
             let s = self.st.cnst(succ, LevelList::EMPTY);
             return Ok(self.st.app(s, p));
@@ -1156,6 +1158,7 @@ impl<'e> Tc<'e> {
         if v == BigUint::ZERO {
             return Ok(self.st.cnst(zero, LevelList::EMPTY));
         }
+        self.st.charge_nat_unfold(v.bits());
         let p = self.st.nat(v - 1u32);
         let s = self.st.cnst(succ, LevelList::EMPTY);
         Ok(self.st.app(s, p))

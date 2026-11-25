@@ -9,7 +9,7 @@
 use crate::expr::ExprId;
 use crate::name::NameId;
 
-use super::super::store::{IdMap, Store};
+use super::super::store::IdMap;
 use super::super::tc::Tc;
 use super::Nbe;
 use super::val::{Elim, Env, Ls, Sp, V, Val};
@@ -31,7 +31,7 @@ impl<'e> Nbe<'e> {
         let e = self.term_of(v, 0, &mut memo, false)?;
         let mut ev = match self.ev.take() {
             Some(ev) => ev,
-            None => Box::new(Tc::new(Store::new(self.st.env), self.ext, self.limit)),
+            None => Box::new(Tc::new(self.st.fresh(), self.ext, self.limit)),
         };
         ev.limit = self.limit;
         // The evaluator works in the checker's store, so that the terms

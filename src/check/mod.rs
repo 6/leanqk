@@ -36,7 +36,7 @@ use crate::name::NameId;
 use ext::Ext;
 use inductive::{IndDecl, IndType, RecNaming, alpha_eq};
 use nbe::Nbe;
-use store::{LOCAL, Store};
+use store::{LOCAL, NatUnfoldLimit, Store};
 use tc::{KErr, Mode, R, Tc, err};
 
 pub use fingerprint::{Checker as Fingerprints, hex as hex_digest, key as fingerprint_key};
@@ -133,7 +133,31 @@ pub fn check_env_jobs(env: &Env, jobs: usize) -> Result<Report, Failure> {
             )));
         }
     }
-    let ext = Ext::new(env);
+    // Usually every exported record already has its derived metadata. If it
+    // differs, use the checked metadata before trusting any dependent block.
+    let mut canonical = None;
+    loop {
+        let decls = canonical.as_deref().unwrap_or(env.decls.as_slice());
+        match check_decls(env, decls, jobs) {
+            Ok(report) => return Ok(report),
+            Err(BlockProblem::Failure(f)) => return Err(f),
+            Err(BlockProblem::Metadata(corrections)) => {
+                let decls = canonical.get_or_insert_with(|| env.decls.clone());
+                for (i, kind) in corrections {
+                    decls[i].kind = kind;
+                }
+            }
+        }
+    }
+}
+
+enum BlockProblem {
+    Failure(Failure),
+    Metadata(Vec<(usize, DeclKind)>),
+}
+
+fn check_decls(env: &Env, decls: &[Decl], jobs: usize) -> Result<Report, BlockProblem> {
+    let ext = Ext::with_decls(env, decls);
     // `NITROLEAN_DECL_TIMES=FILE`: write each block's first name and check
     // time (seconds) to FILE, for benchmarks.
     let times = std::env::var_os("NITROLEAN_DECL_TIMES")
@@ -141,6 +165,7 @@ pub fn check_env_jobs(env: &Env, jobs: usize) -> Result<Report, Failure> {
         .map(|f| Mutex::new(std::io::LineWriter::new(f)));
     let shared = Shared {
         env,
+        decls,
         ext: &ext,
         next: AtomicUsize::new(0),
         first_fail: AtomicUsize::new(usize::MAX),
@@ -163,11 +188,14 @@ pub fn check_env_jobs(env: &Env, jobs: usize) -> Result<Report, Failure> {
             .collect();
         for w in workers {
             if w.join().is_err() {
-                shared
-                    .failures
-                    .lock()
-                    .unwrap()
-                    .push((usize::MAX, fail("checker thread failed")));
+                shared.failures.lock().unwrap().push((
+                    usize::MAX,
+                    BlockProblem::Failure(Failure {
+                        kind: FailKind::Resource,
+                        decl: String::new(),
+                        msg: "checker thread failed".into(),
+                    }),
+                ));
             }
         }
     });
@@ -184,12 +212,13 @@ pub fn check_env_jobs(env: &Env, jobs: usize) -> Result<Report, Failure> {
 /// What the checker threads share.
 struct Shared<'e> {
     env: &'e Env,
+    decls: &'e [Decl],
     ext: &'e Ext,
     /// The next block to check.
     next: AtomicUsize,
     /// The first block that failed, so far.
     first_fail: AtomicUsize,
-    failures: Mutex<Vec<(usize, Failure)>>,
+    failures: Mutex<Vec<(usize, BlockProblem)>>,
     times: Option<Mutex<std::io::LineWriter<std::fs::File>>>,
     /// Threads checking a block.
     busy: AtomicUsize,
@@ -225,8 +254,9 @@ impl Shared<'_> {
 
 fn worker(sh: &Shared<'_>, jobs: usize) {
     let env = sh.env;
-    let mut tc = Tc::new(Store::new(env), sh.ext, 0);
-    let mut nb = Nbe::new(Store::new(env), sh.ext);
+    let store = || Store::with_decls(env, sh.decls, !sh.ext.nat_ops_complete);
+    let mut tc = Tc::new(store(), sh.ext, 0);
+    let mut nb = Nbe::new(store(), sh.ext);
     let mut i = 0;
     let mut end = 0;
     let mut polls = 0;
@@ -243,10 +273,13 @@ fn worker(sh: &Shared<'_>, jobs: usize) {
         }
         let b = &env.blocks[i];
         sh.enter(jobs, &mut polls);
-        let decls = env.block_decls(b);
+        let decls = &sh.decls[b.start as usize..b.start as usize + b.len()];
         let first = decls.first().map(|d| d.name);
         let t0 = std::time::Instant::now();
-        let res = catch_unwind(AssertUnwindSafe(|| check_block(&mut tc, &mut nb, b)));
+        let mut corrections = Vec::new();
+        let res = catch_unwind(AssertUnwindSafe(|| {
+            check_block(&mut tc, &mut nb, b, decls, &mut corrections)
+        }));
         sh.busy.fetch_sub(1, SeqCst);
         if let (Some(w), Some(n)) = (sh.times.as_ref(), first) {
             use std::io::Write;
@@ -260,27 +293,33 @@ fn worker(sh: &Shared<'_>, jobs: usize) {
         let res = match res {
             Ok(r) => r.map_err(|e| (FailKind::Rejected, *e.0)),
             Err(p) => {
-                let msg = p
-                    .downcast_ref::<String>()
-                    .cloned()
-                    .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
-                    .unwrap_or_else(|| "internal error".into());
+                let msg = if p.is::<NatUnfoldLimit>() {
+                    NatUnfoldLimit::MESSAGE.into()
+                } else {
+                    p.downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "internal error".into())
+                };
                 // Rebuild: the checker's state may be inconsistent.
-                tc = Tc::new(Store::new(env), sh.ext, 0);
-                nb = Nbe::new(Store::new(env), sh.ext);
+                tc = Tc::new(store(), sh.ext, 0);
+                nb = Nbe::new(store(), sh.ext);
                 Err((FailKind::Resource, msg))
             }
         };
-        if let Err((kind, msg)) = res {
-            let decl = match first {
-                Some(n) => env.names.display(n).to_string(),
-                None => String::new(),
-            };
+        let problem = match res {
+            Err((kind, msg)) => {
+                let decl = first
+                    .map(|n| env.names.display(n).to_string())
+                    .unwrap_or_default();
+                Some(BlockProblem::Failure(Failure { kind, decl, msg }))
+            }
+            Ok(()) if !corrections.is_empty() => Some(BlockProblem::Metadata(corrections)),
+            Ok(()) => None,
+        };
+        if let Some(problem) = problem {
             sh.first_fail.fetch_min(i, SeqCst);
-            sh.failures
-                .lock()
-                .unwrap()
-                .push((i, Failure { kind, decl, msg }));
+            sh.failures.lock().unwrap().push((i, problem));
         }
         i += 1;
     }
@@ -297,18 +336,36 @@ fn skipped(d: &Decl) -> bool {
     }
 }
 
-fn check_block(tc: &mut Tc<'_>, nb: &mut Nbe<'_>, b: &Block) -> R<()> {
+fn check_block(
+    tc: &mut Tc<'_>,
+    nb: &mut Nbe<'_>,
+    b: &Block,
+    decls: &[Decl],
+    corrections: &mut Vec<(usize, DeclKind)>,
+) -> R<()> {
     tc.reset(b.start);
-    let env = tc.st.env;
-    let decls = env.block_decls(b);
     if decls.first().is_some_and(skipped) {
+        if let Some(d) = decls.iter().find(|d| !skipped(d)) {
+            return err(format!(
+                "'{}' is declared safe in an unsafe inductive block",
+                tc.show(d.name)
+            ));
+        }
         return Ok(());
+    }
+    let mdata_errors = &tc.st.env.mdata_errors;
+    if !mdata_errors.is_empty()
+        && let Some((d, msg)) = decls
+            .iter()
+            .find_map(|d| mdata_errors.get(&d.name).map(|msg| (d, msg)))
+    {
+        return err(format!("'{}': {msg}", tc.show(d.name)));
     }
     match b.kind {
         BlockKind::Single if use_nbe(&decls[0]) => check_nbe(tc, nb, b, &decls[0]),
         BlockKind::Single => check_single(tc, &decls[0]),
         BlockKind::Inductive { types, ctors, .. } => {
-            check_inductive_block(tc, decls, types as usize, ctors as usize)
+            check_inductive_block(tc, decls, types as usize, ctors as usize, corrections)
         }
     }
 }
@@ -326,7 +383,7 @@ fn check_nbe(tc: &mut Tc<'_>, nb: &mut Nbe<'_>, b: &Block, d: &Decl) -> R<()> {
             Ok(Ok(())) => return Ok(()),
             Ok(Err(_)) | Err(_) if !nb.is_fresh() => nb.reset(b.start),
             Ok(Err(e)) => return Err(e),
-            Err(p) if p.is::<nbe::OutOfRoom>() => {
+            Err(p) if p.is::<nbe::OutOfRoom>() || p.is::<NatUnfoldLimit>() => {
                 nb.reset(b.start);
                 return check_single(tc, d);
             }
@@ -481,7 +538,13 @@ fn check_single(tc: &mut Tc<'_>, d: &Decl) -> R<()> {
     }
 }
 
-fn check_inductive_block(tc: &mut Tc<'_>, decls: &[Decl], ntypes: usize, nctors: usize) -> R<()> {
+fn check_inductive_block(
+    tc: &mut Tc<'_>,
+    decls: &[Decl],
+    ntypes: usize,
+    nctors: usize,
+    corrections: &mut Vec<(usize, DeclKind)>,
+) -> R<()> {
     let env = tc.st.env;
     let (types, rest) = decls.split_at(ntypes);
     let (ctors, recs) = rest.split_at(nctors);
@@ -562,7 +625,10 @@ fn check_inductive_block(tc: &mut Tc<'_>, decls: &[Decl], ntypes: usize, nctors:
                 tc.show(g.name)
             ));
         };
-        compare_decl(tc, g, x)?;
+        let kind = compare_decl(tc, g, x)?;
+        if kind != x.kind {
+            corrections.push((env.by_name[&x.name] as usize, kind));
+        }
     }
     if generated.len() != decls.len() {
         let extra = decls
@@ -577,8 +643,8 @@ fn check_inductive_block(tc: &mut Tc<'_>, decls: &[Decl], ntypes: usize, nctors:
     Ok(())
 }
 
-fn compare_decl(tc: &Tc<'_>, g: &Decl, x: &Decl) -> R<()> {
-    let bad = |what: &str| -> R<()> {
+fn compare_decl(tc: &Tc<'_>, g: &Decl, x: &Decl) -> R<DeclKind> {
+    let bad = |what: &str| -> R<DeclKind> {
         Err(KErr::new(format!(
             "'{}' does not match the declaration derived from its inductive type ({what})",
             tc.show(x.name)
@@ -595,31 +661,37 @@ fn compare_decl(tc: &Tc<'_>, g: &Decl, x: &Decl) -> R<()> {
         (
             DeclKind::Inductive {
                 num_params: a1,
-                num_indices: b1,
                 all: c1,
                 ctors: d1,
-                num_nested: e1,
-                is_rec: f1,
-                is_reflexive: g1,
-                is_unsafe: h1,
+                num_indices,
+                num_nested,
+                is_rec,
+                is_reflexive,
+                is_unsafe,
             },
             DeclKind::Inductive {
                 num_params: a2,
-                num_indices: b2,
                 all: c2,
                 ctors: d2,
-                num_nested: e2,
-                is_rec: f2,
-                is_reflexive: g2,
-                is_unsafe: h2,
+                ..
             },
         ) => {
-            if (a1, b1, e1, f1, g1, h1) != (a2, b2, e2, f2, g2, h2) {
-                return bad("numParams, numIndices, numNested, isRec, isReflexive or isUnsafe");
+            if a1 != a2 {
+                return bad("numParams");
             }
             if names(c1) != names(c2) || names(d1) != names(d2) {
                 return bad("all or ctors");
             }
+            Ok(DeclKind::Inductive {
+                num_params: a2,
+                num_indices,
+                all: c2,
+                ctors: d2,
+                num_nested,
+                is_rec,
+                is_reflexive,
+                is_unsafe,
+            })
         }
         (
             DeclKind::Constructor {
@@ -634,12 +706,19 @@ fn compare_decl(tc: &Tc<'_>, g: &Decl, x: &Decl) -> R<()> {
                 cidx: b2,
                 num_params: c2,
                 num_fields: d2,
-                is_unsafe: e2,
+                ..
             },
         ) => {
-            if (a1, b1, c1, d1, e1) != (a2, b2, c2, d2, e2) {
-                return bad("induct, cidx, numParams, numFields or isUnsafe");
+            if (a1, b1, c1, d1) != (a2, b2, c2, d2) {
+                return bad("induct, cidx, numParams or numFields");
             }
+            Ok(DeclKind::Constructor {
+                induct: a2,
+                cidx: b2,
+                num_params: c2,
+                num_fields: d2,
+                is_unsafe: e1,
+            })
         }
         (
             DeclKind::Recursor {
@@ -660,14 +739,14 @@ fn compare_decl(tc: &Tc<'_>, g: &Decl, x: &Decl) -> R<()> {
                 num_minors: e2,
                 rules: f2,
                 k: g2,
-                is_unsafe: h2,
+                ..
             },
         ) => {
-            if (b1, c1, d1, e1, g1, h1) != (b2, c2, d2, e2, g2, h2) {
+            if (b1, c1, d1, e1, g1) != (b2, c2, d2, e2, g2) {
                 return bad(&format!(
-                    "numParams, numIndices, numMotives, numMinors, k, isUnsafe: derived {:?}, exported {:?}",
-                    (b1, c1, d1, e1, g1, h1),
-                    (b2, c2, d2, e2, g2, h2)
+                    "numParams, numIndices, numMotives, numMinors, k: derived {:?}, exported {:?}",
+                    (b1, c1, d1, e1, g1),
+                    (b2, c2, d2, e2, g2)
                 ));
             }
             if names(a1) != names(a2) {
@@ -685,8 +764,17 @@ fn compare_decl(tc: &Tc<'_>, g: &Decl, x: &Decl) -> R<()> {
                     return bad("rule right-hand side");
                 }
             }
+            Ok(DeclKind::Recursor {
+                all: a2,
+                num_params: b2,
+                num_indices: c2,
+                num_motives: d2,
+                num_minors: e2,
+                rules: f2,
+                k: g2,
+                is_unsafe: h1,
+            })
         }
-        _ => return bad("kind of declaration"),
+        _ => bad("kind of declaration"),
     }
-    Ok(())
 }

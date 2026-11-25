@@ -27,8 +27,10 @@ reject/reject 8,289 and 6,333; accept/accept 3,792 and 2,894; reject/accept
 
 No mutant gave a proof of `False` that nitrolean accepts. All 881
 disagreements (461 and 420) fall into the classes below. Each class has a minimised case in
-`tests/kernel` (`fuzz-*`). The ones nitrolean gets wrong are in
-`tests/kernel/open.tsv`.
+`tests/kernel` (`fuzz-*`). The verdicts below describe the campaigns.
+The nine open verdict cases now run with their corrected expectations in
+`tests/kernel/cases.tsv`. The Nat literal resource failure below now returns
+a diagnostic and a declined verdict.
 
 ## nitrolean accepts, Lean rejects
 

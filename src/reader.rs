@@ -28,6 +28,7 @@ use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 
+use hashbrown::HashMap;
 use num_bigint::BigUint;
 
 use crate::env::{
@@ -513,7 +514,9 @@ impl scan::Sink for ToBatch<'_> {
 impl scan::Sink for State {
     #[inline(never)]
     fn app(&mut self, id: u64, f: u64, a: u64) -> R<()> {
-        if let Some(b) = self.lazy.as_deref_mut() {
+        if self.mdata.is_empty()
+            && let Some(b) = self.lazy.as_deref_mut()
+        {
             if b.app(id, f, a) {
                 return Ok(());
             }
@@ -533,7 +536,9 @@ impl scan::Sink for State {
         ty: u64,
         body: u64,
     ) -> R<()> {
-        if let Some(b) = self.lazy.as_deref_mut() {
+        if self.mdata.is_empty()
+            && let Some(b) = self.lazy.as_deref_mut()
+        {
             if let Some(n) = self.name_ids.get(name)
                 && b.binder(id, pi, bi, NameId(n), ty, body)
             {
@@ -1266,11 +1271,22 @@ impl<'a> Obj<'a> {
     }
 }
 
+/// The positions at which an export expression contains metadata.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MData {
+    Root,
+    Spine,
+    Nested,
+}
+
 struct State {
     env: Env,
     name_ids: IdMap,
     level_ids: IdMap,
     expr_ids: IdMap,
+    // Expression ids whose source contains metadata. The interned terms
+    // remain transparent for ordinary type checking and reduction.
+    mdata: HashMap<u64, MData>,
     shared_exprs: u64,
     // Scratch buffers, reused across records.
     levels_buf: Vec<LevelId>,
@@ -1388,6 +1404,7 @@ impl State {
             name_ids: IdMap::new(1),
             level_ids: IdMap::new(1),
             expr_ids: IdMap::new(0),
+            mdata: HashMap::new(),
             shared_exprs: 0,
             levels_buf: Vec::new(),
             names_buf: Vec::new(),
@@ -1521,6 +1538,7 @@ impl State {
             // `{"app"`, `{"forallE"` or `{"ie"`.
             if l.seen_first
                 && matches!(data.get(pos + 2..pos + 4), Some(b"ap" | b"fo" | b"ie"))
+                && self.mdata.is_empty()
                 && let Some(b) = self.lazy.as_deref_mut()
             {
                 let (n, m) = b.exprs(&data[pos..], &self.name_ids);
@@ -1760,7 +1778,40 @@ impl State {
         Ok(())
     }
 
+    #[cold]
+    fn track_mdata(&mut self, id: u64, node: RawExpr) {
+        let get = |e| self.mdata.get(&e).copied();
+        let nested = |e| get(e).map(|_| MData::Nested);
+        let spine = |e| {
+            get(e).map(|m| match m {
+                MData::Root | MData::Spine => MData::Spine,
+                MData::Nested => MData::Nested,
+            })
+        };
+        let m = match node {
+            RawExpr::MData(_) => Some(MData::Root),
+            RawExpr::App(f, a) => spine(f).or_else(|| nested(a)),
+            RawExpr::Binder {
+                pi: true, ty, body, ..
+            } => spine(body).or_else(|| nested(ty)),
+            RawExpr::Binder { ty, body, .. } => nested(ty).or_else(|| nested(body)),
+            RawExpr::Let {
+                ty, value, body, ..
+            } => nested(ty)
+                .or_else(|| nested(value))
+                .or_else(|| nested(body)),
+            RawExpr::Proj(_, _, e) => nested(e),
+            _ => None,
+        };
+        if let Some(m) = m {
+            self.mdata.insert(id, m);
+        }
+    }
+
     fn apply_expr(&mut self, src: Src<'_>, id: u64, node: RawExpr) -> R<()> {
+        if !self.mdata.is_empty() || matches!(node, RawExpr::MData(_)) {
+            self.track_mdata(id, node);
+        }
         if self.lazy.is_some() && self.lazy_expr(id, node)? {
             return Ok(());
         }
@@ -2049,6 +2100,14 @@ impl State {
                 },
             },
         };
+        if matches!(kind, DeclKind::Quot { .. })
+            && !self.mdata.is_empty()
+            && self.mdata.contains_key(&o.nat("type")?)
+        {
+            self.env
+                .mdata_errors
+                .insert(name, "metadata in quotient type");
+        }
         let start = self.env.decls.len() as u32;
         self.push_decl(Decl {
             name,
@@ -2097,6 +2156,16 @@ impl State {
                 num_fields: o.u32("numFields")?,
                 is_unsafe: o.bool("isUnsafe")?,
             };
+            if !self.mdata.is_empty()
+                && matches!(
+                    self.mdata.get(&o.nat("type")?),
+                    Some(MData::Root | MData::Spine)
+                )
+            {
+                self.env
+                    .mdata_errors
+                    .insert(name, "metadata on constructor type spine");
+            }
             self.push_decl(Decl {
                 name,
                 level_params,
@@ -2108,15 +2177,20 @@ impl State {
             let o = Obj::new(doc, r, "inductive.recs")?;
             let (name, level_params, ty) = self.header(&o)?;
             let all = self.name_list(&o, "all")?;
+            let mut metadata =
+                !self.mdata.is_empty() && self.mdata.get(&o.nat("type")?) == Some(&MData::Root);
             let mut rules = std::mem::take(&mut self.rules_buf);
             rules.clear();
             let res = (|| {
                 for &rv in o.arr("rules")? {
                     let ro = Obj::new(doc, rv, "inductive.recs.rules")?;
+                    let rhs = ro.nat("rhs")?;
+                    metadata |=
+                        !self.mdata.is_empty() && self.mdata.get(&rhs) == Some(&MData::Root);
                     rules.push(RecRule {
                         ctor: self.name(ro.nat("ctor")?)?,
                         nfields: ro.u32("nfields")?,
-                        rhs: self.root(ro.nat("rhs")?)?,
+                        rhs: self.root(rhs)?,
                     });
                 }
                 match self.env.push_rules(&rules) {
@@ -2125,6 +2199,12 @@ impl State {
                 }
             })();
             self.rules_buf = rules;
+            let is_unsafe = o.bool("isUnsafe")?;
+            if metadata && !is_unsafe {
+                self.env
+                    .mdata_errors
+                    .insert(name, "metadata wrapping a recursor type or rule");
+            }
             let kind = DeclKind::Recursor {
                 all,
                 num_params: o.u32("numParams")?,
@@ -2133,7 +2213,7 @@ impl State {
                 num_minors: o.u32("numMinors")?,
                 rules: res?,
                 k: o.bool("k")?,
-                is_unsafe: o.bool("isUnsafe")?,
+                is_unsafe,
             };
             self.push_decl(Decl {
                 name,

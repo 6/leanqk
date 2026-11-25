@@ -44,7 +44,7 @@ impl Nat {
         }
     }
 
-    fn bits(&self) -> u64 {
+    pub(super) fn bits(&self) -> u64 {
         match self {
             Nat::Small(x) => 64 - x.leading_zeros() as u64,
             Nat::Big(b) => b.bits(),

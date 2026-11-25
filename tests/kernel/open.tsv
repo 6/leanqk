@@ -1,10 +1,1 @@
 id	class	note
-fuzz-mdata-ctor-type	wrongly accepts	nitrolean accepts mdata around a constructor type in an inductive declaration; Lean rejects it (invalid return type). No proof of False follows: mdata is transparent
-fuzz-mdata-rec-rule	wrongly accepts	nitrolean accepts mdata around a recursor rule's right-hand side; Lean rejects it (invalid recursor). No proof of False follows
-fuzz-ctor-unsafe-flag	wrongly rejects	nitrolean rejects a constructor record whose isUnsafe flag differs from its safe inductive type; Lean derives the constructor itself and accepts
-fuzz-type-unsafe-flag	wrongly accepts	nitrolean accepts an inductive block whose type record says unsafe while its constructors and recursor say safe; Lean rejects it. It takes the block as unsafe, so safe declarations that use it are still rejected: no proof of False found
-fuzz-type-unsafe-flag-neg	wrongly accepts	the same on a non-positive inductive: accepted without the positivity check, as an unsafe block
-fuzz-mdata-quot-type	wrongly accepts	nitrolean accepts mdata around the type of Quot.ind; Lean's quotient check rejects it. No proof of False follows
-fuzz-rec-unsafe-flag	wrongly rejects	nitrolean rejects a recursor record whose isUnsafe flag differs from its safe inductive type; Lean derives the recursor itself and accepts
-fuzz-type-isrec-flag	wrongly rejects	nitrolean rejects an inductive type record whose isRec flag is wrong; Lean computes the flag itself and accepts (the same holds for the other derived counts and flags of type records: isReflexive, numNested)
-fuzz-quot-type-alone	wrongly rejects	nitrolean rejects the quot declaration of Quot when the names Quot.mk, Quot.lift and Quot.ind are not bound in the export (unexpected quotient declaration); with those names bound but unused it accepts, and Lean accepts both
