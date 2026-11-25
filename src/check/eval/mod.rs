@@ -175,8 +175,9 @@ pub struct State {
     proof_heads: IdMap<ExprId, bool>,
     /// `of_decide_eq_true` and `of_decide_eq_false`, once looked up.
     decide_lemmas: [Option<Option<ExprId>>; 2],
-    /// Whether proofs keep their environment (see `thunk`). The
-    /// `DecidableEq` operations are off then: they erase proofs.
+    /// Whether proofs keep their environment (see `thunk`). Decisions of
+    /// the `DecidableEq` operations then carry a proof term (see
+    /// `decision`).
     keep_proofs: bool,
     /// Per `DecidableEq` operation (with its levels): the proposition
     /// `x = y` of its result type, over its arguments as `#(n-1) … #0`.
@@ -2183,21 +2184,15 @@ impl<'a, 'e> Machine<'a, 'e> {
         }))
     }
 
-    /// A `DecidableEq` instance applied to (at least) its arguments. Unless
-    /// proofs are kept, it compares the values as the definition does
-    /// (forcing the same things in the same order) and answers
-    /// `isTrue (x = y) h` or `isFalse (x = y) h`, with `h` an erased proof:
-    /// a run that needs it gives up and is done again keeping proofs, and
-    /// then the instance is its definition.
+    /// A `DecidableEq` instance applied to (at least) its arguments. It
+    /// compares the values as the definition does (forcing the same things
+    /// in the same order) and answers `isTrue (x = y) h` or `isFalse (x =
+    /// y) h` (see `decision`).
     #[inline(never)]
     fn dec_eq_op(&mut self, c: ExprId, op: DecEqOp, def: ExprId, mut args: Vec<Th>) -> ER<V> {
         let n = Head::DecEq(op, def).arity();
         let rest = args.split_off(n);
-        let r = if self.s.keep_proofs {
-            None
-        } else {
-            self.dec_eq_fast(op, &args)?
-        };
+        let r = self.dec_eq_fast(op, &args)?;
         let r = match r {
             Some(b) => match self.decision(c, b, &args) {
                 Some(v) => {
@@ -2291,8 +2286,10 @@ impl<'a, 'e> Machine<'a, 'e> {
     }
 
     /// `isTrue p h` (or `isFalse p h`) for the `DecidableEq` operation `c`
-    /// applied to `args`, where `p` is the proposition of its type and `h`
-    /// an erased proof.
+    /// applied to `args`, where `p` is the proposition of its type. `h` is
+    /// an erased proof: a run that needs it gives up and is done again
+    /// keeping proofs, and then `h` is `of_decide_eq_true p (c args)
+    /// (Eq.refl true)` (or `… false`).
     fn decision(&mut self, c: ExprId, b: bool, args: &[Th]) -> Option<V> {
         let p = match self.s.dec_props.get(&c) {
             Some(&p) => p,
@@ -2306,13 +2303,48 @@ impl<'a, 'e> Machine<'a, 'e> {
         let k = if b { f.is_true? } else { f.is_false? };
         let k = self.tc.st.cnst(k, LevelList::EMPTY);
         let info = self.ctor_info(k).ok()?;
-        let p = Thunk::delayed(p, Env::EMPTY.push_all(args.to_vec()));
-        let h = Thunk::erased(c, &Env::EMPTY);
+        let env = Env::EMPTY.push_all(args.to_vec());
+        let h = if self.s.keep_proofs {
+            // A run that keeps proofs gets one: `of_decide_eq_true p
+            // (c x₁ … xₙ) (Eq.refl true)` (or `… false`), a proof of the
+            // same proposition, so the same up to proof irrelevance.
+            let h = self.decision_proof(c, b, p, args.len())?;
+            Thunk::delayed(h, env.clone())
+        } else {
+            Thunk::erased(c, &Env::EMPTY)
+        };
+        let p = Thunk::delayed(p, env);
         Some(Rc::new(Val::Ctor {
             c: k,
             info,
             args: vec![p, h],
         }))
+    }
+
+    /// `of_decide_eq_true p (c #(n-1) … #0) (Eq.refl true)` (or the same
+    /// with `false`), for the proposition `p` over `#(n-1) … #0`.
+    #[inline(never)]
+    fn decision_proof(&mut self, c: ExprId, b: bool, p: ExprId, n: usize) -> Option<ExprId> {
+        let lemma = self.decide_lemma(b)?;
+        let names = &self.tc.st.env.names;
+        let (eq, bool_, bv) = (
+            names.find_dotted("Eq.refl")?,
+            names.find_dotted("Bool")?,
+            names.find_dotted(if b { "Bool.true" } else { "Bool.false" })?,
+        );
+        let st = &mut self.tc.st;
+        let one = st.succ(LevelId::ZERO);
+        let one = st.mk_list(&[one]);
+        let refl = st.cnst(eq, one);
+        let bool_ = st.cnst(bool_, LevelList::EMPTY);
+        let bv = st.cnst(bv, LevelList::EMPTY);
+        let refl = st.apps(refl, &[bool_, bv]);
+        let mut inst = c;
+        for i in (0..n as u32).rev() {
+            let x = st.bvar(i);
+            inst = st.app(inst, x);
+        }
+        Some(st.apps(lemma, &[p, inst, refl]))
     }
 
     /// The proposition `p` of the type `Decidable p` of `c x₁ … xₙ`, with

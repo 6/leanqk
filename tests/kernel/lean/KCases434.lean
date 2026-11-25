@@ -60,4 +60,13 @@ theorem ev_lists_wrong : (List.range 50).foldl (· + ·) 0 = 1224 := sorry
 theorem ev_filter_lazy : ((List.range 10).filter (fun i => i == 0 || 10 / i > 2)).head? = some 0 := sorry
 theorem ev_filter_lazy_wrong : ((List.range 10).filter (fun i => i == 0 || 10 / i > 2)).head? = some 1 := sorry
 
+-- A decision whose proof is needed after all: a cast along `h : n = 5`
+-- from `Nat.decEq` (a `K`-like `Eq.rec` whose major premise is read
+-- back), so the run is done again keeping proofs, still with the fast
+-- `DecidableEq`.
+def ev_cast_dec (n : Nat) : Nat :=
+  if h : n = 5 then @Eq.rec Nat n (fun _ _ => Nat) (n + 1) 5 h else 0
+theorem ev_dec_cast : (List.range 10).foldl (fun s n => s + ev_cast_dec n) 0 = 6 := sorry
+theorem ev_dec_cast_wrong : (List.range 10).foldl (fun s n => s + ev_cast_dec n) 0 = 7 := sorry
+
 end K34

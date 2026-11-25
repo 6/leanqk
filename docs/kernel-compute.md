@@ -275,9 +275,16 @@ same steps as with `h'`, for the reasons given under *Proofs*: the machine
 only looks at a thunk to force it or read it back, and `h` has no known
 term, so no memo key is built from it. A run that needs `h` (a cast over
 the equality, say: a `K`-like major premise) gives up with
-`Bail::Erased`. Then `whnf` evaluates again keeping proofs, and with proofs
-kept these four instances are their definitions. A decision that is the
-answer itself is read back by *Decisions* above, without `h`.
+`Bail::Erased`. Then `whnf` evaluates again keeping proofs. In that run,
+`h` is the term `of_decide_eq_true p (c x₁ … xₙ) (Eq.refl true)` (or the
+same with `of_decide_eq_false` and `false`) over the arguments' thunks. It
+is a proof of `p` because the instance reduces to `isTrue` (which is what
+the fast path computed), so it is definitionally equal to `h'` by proof
+irrelevance. Before, the instances were their definitions in that run. On
+Mathlib's Cartan matrix determinants, whose evaluation needs a proof once,
+the run that keeps proofs is most of the work: `cartan_A7` takes 13 %
+fewer steps (107.6 to 93.8 million). A decision that is the answer itself
+is read back by *Decisions* above, without `h`.
 
 These four instances are only for Lean v4.34.0 and v4.30.0. From v4.36.0,
 `Decidable` is a structure with a `Bool` field, and the derived instances
@@ -352,9 +359,9 @@ out of memory.
 
 ## Tests
 
-`xtask/src/kernel_cases/cases.rs` has 71 `eval*` cases. Each is a claim proved by
+`xtask/src/kernel_cases/cases.rs` has 73 `eval*` cases. Each is a claim proved by
 `Eq.refl`, so only reduction decides it, and nearly every one has a false
-twin. The 23 `eval434-*` cases are exported from Lean v4.34.0, where the
+twin. The 25 `eval434-*` cases are exported from Lean v4.34.0, where the
 `DecidableEq` fast paths apply. They cover:
 
 - K-like recursors whose indices do or do not match;
@@ -377,8 +384,10 @@ twin. The 23 `eval434-*` cases are exported from Lean v4.34.0, where the
   values past 2^64;
 - `DecidableEq` and `==` on lists of (subtype, `Bool`) pairs, equal and not,
   `Nodup`, `eraseDups` and `elem` on them; a cast over a `DecidableEq` proof
-  (the erased proof is a `K`-like major premise); a value that holds a
-  decision; and a pair that is an axiom, which stays stuck, as in Lean.
+  (the erased proof is a `K`-like major premise), and the same over
+  `Nat.decEq` in a fold, which is evaluated again keeping proofs; a value
+  that holds a decision; and a pair that is an axiom, which stays stuck, as
+  in Lean.
 
 Lean's verdict on each is recorded in `cases.tsv`. The arena's `perf` tests in
 `corpus/` exercise the evaluator on larger computations. Every corpus and

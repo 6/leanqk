@@ -2786,6 +2786,20 @@ fn eval_cases(v: &mut Cases) {
         "reject",
         "the same, the wrong head",
     );
+    eval_old(
+        v,
+        "eval434-dec-cast",
+        "K34.ev_dec_cast",
+        "accept",
+        "a cast along a proof from Nat.decEq: evaluated again keeping proofs",
+    );
+    eval_old(
+        v,
+        "eval434-dec-cast-wrong",
+        "K34.ev_dec_cast_wrong",
+        "reject",
+        "the same sum, off by one",
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -243,6 +243,9 @@ eval434-list	eval	accept	accept	List.any, all, filter, getLast?, foldl and rever
 eval434-list-wrong	eval	reject	reject	the same fold, off by one
 eval434-filter-lazy	eval	accept	accept	the head of a filter, whose later tests would divide by zero
 eval434-filter-lazy-wrong	eval	reject	reject	the same, the wrong head
+eval434-dec-cast	eval	accept	accept	a cast along a proof from Nat.decEq: evaluated again keeping proofs
+eval434-dec-cast-wrong	eval	reject	reject	the same sum, off by one
+
 fuzz-quot-lift-direct	quot	accept	reject	a theorem stated with Quot.lift and Quot.mk, with the names the fuzzer's seed had: valid, but leanchecker --from-export says unknown constant Quot.lift; with other names (K.fz_quot_direct as exported) it accepts
 fuzz-str-deceq	eval.string	accept	reject	decide ("abc" = "abc") = true by decide: valid (Lean compiles it, and leanchecker accepts the .olean), but leanchecker --from-export fails to reduce it
 fuzz-mdata-ctor-type	inductive.mdata	reject	reject	Bool.true's type is mdata around Bool: Lean rejects (invalid return type)
