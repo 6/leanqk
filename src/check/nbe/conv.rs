@@ -1022,23 +1022,24 @@ impl Nbe<'_> {
         // In a heavy declaration, also remember results by the terms the
         // values stand for: different values (a thunk and its value, say,
         // inside them) often stand for one term, and then compare alike.
-        let named = if self.decl_steps > HEAVY_STEPS && known & EQ == 0 {
-            match (self.name(t), self.name(s)) {
-                (Some(a), Some(b)) => {
-                    if a == b {
-                        return Ok(true);
+        let named =
+            if self.decl_steps > HEAVY_STEPS && self.a.len() > NAMES_AFTER && known & EQ == 0 {
+                match (self.name(t), self.name(s)) {
+                    (Some(a), Some(b)) => {
+                        if a == b {
+                            return Ok(true);
+                        }
+                        let k = if a.0 <= b.0 { (a, b) } else { (b, a) };
+                        if let Some(&r) = self.name_eq.get(&k) {
+                            return Ok(r);
+                        }
+                        Some(k)
                     }
-                    let k = if a.0 <= b.0 { (a, b) } else { (b, a) };
-                    if let Some(&r) = self.name_eq.get(&k) {
-                        return Ok(r);
-                    }
-                    Some(k)
+                    _ => None,
                 }
-                _ => None,
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         let r = self.is_def_eq_core(t, s)?;
         if let Some(k) = named {
             self.name_eq.insert(k, r);
@@ -1051,6 +1052,11 @@ impl Nbe<'_> {
 /// Whether arguments a definition's body does not read are left out when
 /// two applications of it are compared (`unused_positions`).
 const UNUSED_ARGS: bool = true;
+
+/// Values in the arena past which heavy declarations also compare by
+/// names (`is_def_eq_memo`): naming costs more than it saves until the
+/// arena grows.
+const NAMES_AFTER: usize = 1 << 20;
 
 /// Whether proof irrelevance first asks `surely_not_proof`.
 const NOT_PROOF: bool = true;
