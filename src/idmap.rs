@@ -40,7 +40,7 @@ impl IdMap {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn get(&self, id: u64) -> Option<u32> {
         if !self.dense_mode {
             return (id < self.identity).then_some(id as u32);
@@ -51,8 +51,26 @@ impl IdMap {
         self.sparse.get(&id).copied()
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn bind(&mut self, id: u64, target: u32) -> Result<(), BindError> {
+        // The common cases: the next id of an identity map, or of a dense
+        // one.
+        if !self.dense_mode {
+            if id == self.identity && target as u64 == id {
+                self.identity += 1;
+                self.count += 1;
+                return Ok(());
+            }
+        } else if id == self.dense.len() as u64 && self.sparse.is_empty() && id < NONE as u64 {
+            self.dense.push(target);
+            self.count += 1;
+            return Ok(());
+        }
+        self.bind_slow(id, target)
+    }
+
+    #[inline(never)]
+    fn bind_slow(&mut self, id: u64, target: u32) -> Result<(), BindError> {
         if !self.dense_mode {
             if id < self.identity {
                 return Err(BindError::Duplicate);
@@ -99,8 +117,21 @@ impl IdMap {
         self.dense.reserve(n.saturating_sub(self.dense.len()));
     }
 
+    /// Whether the map is still in its zero-cost identity mode.
     /// Change the target of a bound id.
+    #[inline(always)]
     pub fn rebind(&mut self, id: u64, target: u32) {
+        if self.dense_mode
+            && let Some(slot) = self.dense.get_mut(id as usize)
+        {
+            *slot = target;
+            return;
+        }
+        self.rebind_slow(id, target);
+    }
+
+    #[inline(never)]
+    fn rebind_slow(&mut self, id: u64, target: u32) {
         if !self.dense_mode {
             if id < self.identity && target as u64 == id {
                 return;
@@ -117,7 +148,6 @@ impl IdMap {
         }
     }
 
-    /// Whether the map is still in its zero-cost identity mode.
     #[cfg(test)]
     pub fn is_identity(&self) -> bool {
         !self.dense_mode

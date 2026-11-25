@@ -22,6 +22,7 @@ use hashbrown::HashMap;
 use super::{Fail, R, bad};
 use crate::env::{Env, LazyValues, TermSink};
 use crate::expr::{BinderInfo, ExprId, ExprNode, LetBinder};
+use crate::idmap::IdMap;
 use crate::name::NameId;
 use crate::strings::Overflow;
 
@@ -128,6 +129,7 @@ fn bits_bi(b: u32) -> BinderInfo {
     }
 }
 
+#[inline(always)]
 fn push_node(words: &mut Vec<u32>, n: Node) {
     match n {
         Node::App(f, a) => words.extend([T_APP, f, a]),
@@ -209,6 +211,7 @@ impl Builder {
     }
 
     /// Add a pending record; its reference.
+    #[inline(always)]
     pub(super) fn pend(&mut self, id: u64, n: Node) -> R<u32> {
         let i = self.pending.len() as u32;
         if i >= PEND {
@@ -349,8 +352,8 @@ impl Builder {
     }
 
     /// At the end of a declaration: store what is still pending, and
-    /// call `rebind` with the new reference of each pending export id.
-    pub(super) fn flush(&mut self, mut rebind: impl FnMut(u64, u32) -> R<()>) -> R<()> {
+    /// rebind each pending export id in `ids` to its new reference.
+    pub(super) fn flush(&mut self, ids: &mut IdMap) -> R<()> {
         let mut new_refs = std::mem::take(&mut self.new_refs);
         new_refs.clear();
         let res = (|| {
@@ -361,25 +364,31 @@ impl Builder {
                     r
                 }
             };
-            for i in 0..self.pending.len() {
-                let (id, n) = self.pending[i];
-                let r = match self.pend_ids[i] {
-                    NONE => {
-                        let off = self.words.len();
-                        if off >= PEND as usize {
-                            return Err(Fail::from(Overflow("too many stored expressions")));
-                        }
-                        let n = n.map(|c| tr(&new_refs, c));
-                        push_node(&mut self.words, n);
-                        STORED | off as u32
+            for (&(id, n), &done) in self.pending.iter().zip(&self.pend_ids) {
+                let r = if done == NONE {
+                    let off = self.words.len();
+                    if off >= PEND as usize {
+                        return Err(Fail::from(Overflow("too many stored expressions")));
                     }
-                    v => v,
+                    match n {
+                        Node::App(f, a) => {
+                            let w = [T_APP, tr(&new_refs, f), tr(&new_refs, a)];
+                            self.words.extend(w);
+                        }
+                        n => {
+                            let n = n.map(|c| tr(&new_refs, c));
+                            push_node(&mut self.words, n);
+                        }
+                    }
+                    STORED | off as u32
+                } else {
+                    done
                 };
                 new_refs.push(r);
-                rebind(id, r)?;
+                ids.rebind(id, r);
             }
             for &(id, r) in &self.aliases {
-                rebind(id, tr(&new_refs, r))?;
+                ids.rebind(id, tr(&new_refs, r));
             }
             for k in self.roots_from..self.roots.len() {
                 let r = self.roots[k];
@@ -406,7 +415,11 @@ impl Builder {
         let words = &mut self.words;
         let tr = |words: &[u32], r: u32| -> u32 {
             let off = (r & !KIND) as usize;
-            if r & KIND == STORED && marks.get(off / 64).is_some_and(|m| m >> (off % 64) & 1 != 0) {
+            if r & KIND == STORED
+                && marks
+                    .get(off / 64)
+                    .is_some_and(|m| m >> (off % 64) & 1 != 0)
+            {
                 words[off + 1]
             } else {
                 r

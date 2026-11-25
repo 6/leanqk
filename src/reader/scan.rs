@@ -12,8 +12,22 @@
 //! (checked by differential tests) is that when this returns an item, the
 //! general path yields the same one.
 
-use super::{Comp, Item, RawExpr, RawLevel};
+use super::{Comp, Item, R, RawExpr, RawLevel};
 use crate::expr::BinderInfo;
+
+/// What a scanned record goes to. The commonest kinds have their own
+/// methods, so that the reader can apply them without building an
+/// [`Item`] first.
+pub(super) trait Sink {
+    fn app(&mut self, id: u64, f: u64, a: u64) -> R<()>;
+
+    fn binder(&mut self, id: u64, pi: bool, bi: BinderInfo, name: u64, ty: u64, body: u64)
+    -> R<()>;
+
+    /// Any other record; its text ranges are into `line`, and the levels
+    /// of a `const` into `us`.
+    fn item(&mut self, item: Item, line: &[u8], us: &[u64]) -> R<()>;
+}
 
 /// A cursor over the rest of the input, starting at a line.
 struct C<'a> {
@@ -24,9 +38,34 @@ struct C<'a> {
 impl C<'_> {
     /// Expect the bytes `w`.
     #[inline(always)]
-    fn lit(&mut self, w: &[u8]) -> Option<()> {
-        if self.s.get(self.p..self.p + w.len())? == w {
-            self.p += w.len();
+    fn lit<const N: usize>(&mut self, w: &[u8; N]) -> Option<()> {
+        let ok = if N <= 16 && self.p + 16 <= self.s.len() {
+            // Compare words: the literal, padded with zeros, against the
+            // input with the bytes past the literal masked off.
+            let mut pad = [0u8; 16];
+            pad[..N].copy_from_slice(w);
+            let lo = u64::from_le_bytes(pad[..8].try_into().expect("8"));
+            let hi = u64::from_le_bytes(pad[8..].try_into().expect("8"));
+            let at = &self.s[self.p..self.p + 16];
+            let x = u64::from_le_bytes(at[..8].try_into().expect("8"));
+            let mask = |n: usize| {
+                if n >= 8 {
+                    u64::MAX
+                } else {
+                    (1u64 << (8 * n)) - 1
+                }
+            };
+            if N <= 8 {
+                x & mask(N) == lo
+            } else {
+                let y = u64::from_le_bytes(at[8..].try_into().expect("8"));
+                x == lo && y & mask(N - 8) == hi
+            }
+        } else {
+            self.s.get(self.p..self.p + N)? == w
+        };
+        if ok {
+            self.p += N;
             Some(())
         } else {
             None
@@ -35,7 +74,7 @@ impl C<'_> {
 
     /// Whether the bytes `w` come next (and if so, skip them).
     #[inline(always)]
-    fn opt(&mut self, w: &[u8]) -> bool {
+    fn opt<const N: usize>(&mut self, w: &[u8; N]) -> bool {
         self.lit(w).is_some()
     }
 
@@ -44,50 +83,47 @@ impl C<'_> {
     #[inline(always)]
     fn nat(&mut self) -> Option<u64> {
         let start = self.p;
-        let mut v;
-        if let Some(b) = self.s.get(start..start + 8) {
-            let w = u64::from_le_bytes(b.try_into().expect("8 bytes"));
-            let x = w.wrapping_sub(0x3030_3030_3030_3030);
-            // The high bit of each byte that is not a digit. A byte below
-            // a non-digit is a digit, so no borrow or carry reaches the
-            // first non-digit from below.
-            let t = (x | x.wrapping_add(0x7676_7676_7676_7676)) & 0x8080_8080_8080_8080;
-            let n = (t.trailing_zeros() / 8) as usize;
-            if n == 0 {
-                return None;
-            }
-            // The digits, most significant first, as eight digits with
-            // leading zeros.
-            let mut d = if n == 8 { x } else { x << (64 - 8 * n) };
-            d = (d & 0x0F0F_0F0F_0F0F_0F0F).wrapping_mul(2561) >> 8;
-            d = (d & 0x00FF_00FF_00FF_00FF).wrapping_mul(6_553_601) >> 16;
-            d = (d & 0x0000_FFFF_0000_FFFF).wrapping_mul(42_949_672_960_001) >> 32;
-            v = d;
-            self.p += n;
-            if n < 8 {
-                return (n == 1 || b[0] != b'0').then_some(v);
-            }
-            if b[0] == b'0' {
-                return None;
-            }
-        } else {
-            v = 0;
-        }
-        while let Some(&c) = self.s.get(self.p) {
-            if !c.is_ascii_digit() {
-                break;
-            }
-            if self.p - start == 19 {
-                return None;
-            }
-            v = v * 10 + (c - b'0') as u64;
-            self.p += 1;
-        }
-        let len = self.p - start;
-        if len == 0 || (len > 1 && self.s[start] == b'0') {
+        let Some(b) = self.s.get(start..start + 8) else {
+            let (v, p) = nat_slow(self.s, start)?;
+            self.p = p;
+            return Some(v);
+        };
+        let w = u64::from_le_bytes(b.try_into().expect("8 bytes"));
+        let x = w.wrapping_sub(0x3030_3030_3030_3030);
+        // The high bit of each byte that is not a digit. A byte below a
+        // non-digit is a digit, so no borrow or carry reaches the first
+        // non-digit from below.
+        let t = (x | x.wrapping_add(0x7676_7676_7676_7676)) & 0x8080_8080_8080_8080;
+        // Eight times the number of leading digits (`t` has bits only at
+        // 7, 15, ..., so this is 8n for n < 8, and 64 when t is 0).
+        let n8 = t.trailing_zeros() & !7;
+        // No digits, or a leading zero.
+        if n8 == 0 || (n8 > 8 && w as u8 == b'0') {
             return None;
         }
-        Some(v)
+        // The digits, most significant first, as eight digits with
+        // leading zeros.
+        let mut d = x << (64 - n8);
+        d = (d & 0x0F0F_0F0F_0F0F_0F0F).wrapping_mul(2561) >> 8;
+        d = (d & 0x00FF_00FF_00FF_00FF).wrapping_mul(6_553_601) >> 16;
+        d = (d & 0x0000_FFFF_0000_FFFF).wrapping_mul(42_949_672_960_001) >> 32;
+        self.p += (n8 / 8) as usize;
+        if n8 == 64 {
+            // A ninth digit (ids of a big export), or more.
+            match self.s.get(self.p) {
+                Some(&c) if c.is_ascii_digit() => {
+                    if self.s.get(self.p + 1).is_some_and(u8::is_ascii_digit) {
+                        let (v, p) = nat_slow(self.s, start)?;
+                        self.p = p;
+                        return Some(v);
+                    }
+                    self.p += 1;
+                    return Some(d * 10 + (c - b'0') as u64);
+                }
+                _ => {}
+            }
+        }
+        Some(d)
     }
 
     /// The contents of a string without escapes or control characters
@@ -112,6 +148,7 @@ impl C<'_> {
         Some((u32::try_from(start).ok()?, u32::try_from(end).ok()?))
     }
 
+    #[inline(always)]
     fn binder_info(&mut self) -> Option<BinderInfo> {
         Some(match self.s.get(self.p)? {
             b'd' if self.opt(b"default\"") => BinderInfo::Default,
@@ -123,8 +160,9 @@ impl C<'_> {
     }
 
     /// `"binderInfo":"…","body":B,"name":N,"type":T}`, after the
-    /// binder's opening brace.
-    fn binder(&mut self, pi: bool) -> Option<RawExpr> {
+    /// binder's opening brace: binder info, name, type and body.
+    #[inline(always)]
+    fn binder(&mut self) -> Option<(BinderInfo, u64, u64, u64)> {
         self.lit(b"\"binderInfo\":\"")?;
         let bi = self.binder_info()?;
         self.lit(b",\"body\":")?;
@@ -134,13 +172,7 @@ impl C<'_> {
         self.lit(b",\"type\":")?;
         let ty = self.nat()?;
         self.lit(b"}")?;
-        Some(RawExpr::Binder {
-            pi,
-            bi,
-            name,
-            ty,
-            body,
-        })
+        Some((bi, name, ty, body))
     }
 
     /// The end of a line: a newline, or the end of the input.
@@ -157,12 +189,35 @@ impl C<'_> {
     }
 }
 
+/// [`C::nat`] a digit at a time, from `p`: the value and the position
+/// after it.
+#[cold]
+#[inline(never)]
+fn nat_slow(s: &[u8], start: usize) -> Option<(u64, usize)> {
+    let mut p = start;
+    let mut v: u64 = 0;
+    while let Some(&c) = s.get(p) {
+        if !c.is_ascii_digit() {
+            break;
+        }
+        if p - start == 19 {
+            return None;
+        }
+        v = v * 10 + (c - b'0') as u64;
+        p += 1;
+    }
+    let len = p - start;
+    if len == 0 || (len > 1 && s[start] == b'0') {
+        return None;
+    }
+    Some((v, p))
+}
+
 /// Read the record at the start of `s` (a line, and maybe more input
-/// after it). On success, the item and the length of the line, newline
-/// included. Text ranges in the item are relative to `s`, and the levels
-/// of a `const` are pushed on `us` (its range is into `us`).
-#[inline]
-pub(super) fn line(s: &[u8], us: &mut Vec<u64>) -> Option<(Item, usize)> {
+/// after it), and give it to `sink`. On success, the length of the line,
+/// newline included, and what the sink returned. `us` is scratch space.
+#[inline(always)]
+pub(super) fn line<S: Sink>(s: &[u8], us: &mut Vec<u64>, sink: &mut S) -> Option<(usize, R<()>)> {
     let mut c = C { s, p: 0 };
     c.lit(b"{\"")?;
     let item = match *s.get(2)? {
@@ -174,24 +229,24 @@ pub(super) fn line(s: &[u8], us: &mut Vec<u64>) -> Option<(Item, usize)> {
             c.lit(b"},\"ie\":")?;
             let id = c.nat()?;
             c.lit(b"}")?;
-            Item::Expr {
-                id,
-                node: RawExpr::App(f, a),
-            }
+            c.eol()?;
+            return Some((c.p, sink.app(id, f, a)));
         }
         b'f' => {
             c.lit(b"forallE\":{")?;
-            let node = c.binder(true)?;
+            let (bi, name, ty, body) = c.binder()?;
             c.lit(b",\"ie\":")?;
             let id = c.nat()?;
             c.lit(b"}")?;
-            Item::Expr { id, node }
+            c.eol()?;
+            return Some((c.p, sink.binder(id, true, bi, name, ty, body)));
         }
         b'c' => {
             c.lit(b"const\":{\"name\":")?;
             let name = c.nat()?;
             c.lit(b",\"us\":[")?;
-            let start = us.len();
+            us.clear();
+            let start = 0;
             if !c.opt(b"]") {
                 loop {
                     us.push(c.nat()?);
@@ -228,9 +283,10 @@ pub(super) fn line(s: &[u8], us: &mut Vec<u64>) -> Option<(Item, usize)> {
                 c.lit(b",\"")?;
                 let node = match *c.s.get(c.p)? {
                     b'l' if c.opt(b"lam\":{") => {
-                        let n = c.binder(false)?;
+                        let (bi, name, ty, body) = c.binder()?;
                         c.lit(b"}")?;
-                        n
+                        c.eol()?;
+                        return Some((c.p, sink.binder(id, false, bi, name, ty, body)));
                     }
                     b'l' => {
                         c.lit(b"letE\":{\"body\":")?;
@@ -323,7 +379,11 @@ pub(super) fn line(s: &[u8], us: &mut Vec<u64>) -> Option<(Item, usize)> {
                         RawLevel::Param(c.nat()?)
                     }
                     k @ (b'm' | b'i') => {
-                        c.lit(if k == b'm' { b"max\":[" } else { b"imax\":[" })?;
+                        if k == b'm' {
+                            c.lit(b"max\":[")?;
+                        } else {
+                            c.lit(b"imax\":[")?;
+                        }
                         let a = c.nat()?;
                         c.lit(b",")?;
                         let b = c.nat()?;
@@ -344,5 +404,5 @@ pub(super) fn line(s: &[u8], us: &mut Vec<u64>) -> Option<(Item, usize)> {
         _ => return None,
     };
     c.eol()?;
-    Some((item, c.p))
+    Some((c.p, sink.item(item, s, us)))
 }
