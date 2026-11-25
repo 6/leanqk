@@ -202,7 +202,23 @@ impl Nbe<'_> {
                 }
                 let ty = match self.st.node(f) {
                     ExprNode::Const(n, _) => match self.find(n) {
-                        Some(c) => c.ty,
+                        Some(c) => {
+                            // `autoParam T stx`, `optParam T v`: as `T`.
+                            if let Some(j) = self.returns_param(&c, k) {
+                                let mut a = d;
+                                for _ in 0..k - 1 - j {
+                                    let ExprNode::App(g, _) = self.st.node(a) else {
+                                        return false;
+                                    };
+                                    a = g;
+                                }
+                                let ExprNode::App(_, x) = self.st.node(a) else {
+                                    return false;
+                                };
+                                return self.surely_prop(x, ctx);
+                            }
+                            c.ty
+                        }
                         None => return false,
                     },
                     ExprNode::BVar(j) => match (ctx.len() as u32).checked_sub(j + 1) {
@@ -220,6 +236,27 @@ impl Nbe<'_> {
                 }
                 matches!(self.st.node(t), ExprNode::Sort(l) if l == crate::level::LevelId::ZERO)
             }
+        }
+    }
+
+    /// If `c` is a definition `fun x_0 ... x_(k-1) => x_j` (as `autoParam`
+    /// and `optParam` are), `j`.
+    fn returns_param(&self, c: &crate::env::Decl, k: u32) -> Option<u32> {
+        let DeclKind::Definition { value, .. } = c.kind else {
+            return None;
+        };
+        if crate::env::is_lazy(value) {
+            return None;
+        }
+        let mut e = value;
+        let mut n = 0;
+        while let ExprNode::Lam(_, _, _, b) = self.st.node(e) {
+            e = b;
+            n += 1;
+        }
+        match self.st.node(e) {
+            ExprNode::BVar(i) if n == k && i < n => Some(n - 1 - i),
+            _ => None,
         }
     }
 
@@ -349,7 +386,13 @@ impl Nbe<'_> {
         if !self.is_def_eq(tt, ts)? {
             return Ok(false);
         }
+        // A proof field need not be compared: with the types and the fields
+        // before it equal, both sides are proofs of one proposition.
+        let props = self.prop_positions(fname);
         for (i, &a) in s_args.iter().enumerate().skip(num_params as usize) {
+            if i < 64 && props & 1 << i != 0 {
+                continue;
+            }
             let p = self.proj(t, induct, (i - num_params as usize) as u32);
             if !self.is_def_eq(p, a)? {
                 return Ok(false);
