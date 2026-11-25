@@ -105,12 +105,26 @@ the default for `check`; `src/reader/lazy.rs`):
   rest (a theorem's proof, mostly) moves to a compact store of words with
   references either to arena ids or to other stored records. A later
   declaration that needs a stored term adds it then.
-- A regular file is parsed on several threads (`--threads`): each parses
-  chunks of whole lines, and their batches are applied in file order on
-  one thread.
+- Lines are read by a byte scanner for the fixed shapes lean4export
+  writes (`src/reader/scan.rs`), with no allocation per line. It looks at
+  a window of 288 bytes from the line's start; each token checks its
+  offset once, so a line longer than the window, or any shape it does not
+  know, goes to the general JSON parser. Keys and fixed text are compared
+  8 or 16 bytes at a time against a table of words (`Keys`), and numbers
+  are read 8 digits at a time.
+- On one thread (`--threads 1`) the scanner hands each line straight to
+  the reader's state, declarations included. On several, each thread
+  parses chunks of whole lines, and their batches are applied in file
+  order on one thread.
+- A pending record is translated in two passes: one marks the records it
+  needs, the next adds them in order, so no record is visited from a
+  stack.
 - An export lists each term once, so expressions are added without
-  hash-consing and indexed at the end, on all threads. If two are equal
-  after all (an export that repeats a term), the file is read again with
-  hash-consing.
+  hash-consing, and their cached data (`ExprData`) is filled in one pass
+  over the arena before the index. The index is built at the end, on all
+  threads: entries are bucketed by hash into a scratch buffer (the id
+  map's, no longer needed by then), each bucket is sorted, and the table
+  is filled in order. If two terms are equal after all (an export that
+  repeats one), the file is read again with hash-consing.
 
 `NITROLEAN_READ_PROFILE=1` prints the time of the read and of the index.
