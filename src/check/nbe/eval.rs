@@ -35,6 +35,7 @@ impl Nbe<'_> {
                 self.a.mk(Val::Const(n, lv, Sp::NIL))
             }
             ExprNode::App(..) => {
+                self.ticks += 1;
                 let base = self.terms.len();
                 let mut f = e;
                 while let ExprNode::App(g, a) = self.st.node(f) {

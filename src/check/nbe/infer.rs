@@ -344,6 +344,35 @@ impl Nbe<'_> {
         if c != super::val::NONE && (infer_only || self.a.checked(key)) {
             return Ok(V(c));
         }
+        // A closed term of the environment checked in an earlier
+        // declaration (under the same universe parameters, if it has any)
+        // only needs its type.
+        let closed = !infer_only
+            && !d.has_loose_bvars()
+            && !d.has_fvar()
+            && ls == Ls::ID
+            && !super::super::store::is_local(e.0);
+        let ck = if closed {
+            let k = (
+                e,
+                if d.has_level_param() {
+                    self.lparams_key()
+                } else {
+                    0
+                },
+            );
+            if self.checked_closed.contains_key(&k) {
+                let r = self.infer_term(e, env, ls, true)?;
+                self.a.set_checked(key);
+                if d.has_level_param() {
+                    self.level_checked.push(key);
+                }
+                return Ok(r);
+            }
+            Some(k)
+        } else {
+            None
+        };
         let r = match node {
             ExprNode::App(..) => self.infer_app(e, env, ls, infer_only)?,
             ExprNode::Lam(..) => self.check_lambda(e, env, ls)?,
@@ -364,6 +393,9 @@ impl Nbe<'_> {
             if d.has_level_param() {
                 self.level_checked.push(key);
             }
+        }
+        if let Some(k) = ck {
+            self.checked_closed.insert(k, ());
         }
         Ok(if c == super::val::NONE { r } else { V(c) })
     }

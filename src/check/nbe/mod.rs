@@ -61,6 +61,10 @@ const NAMES_KEEP: usize = 1 << 18;
 /// Values an arena may hold before it is dropped between declarations.
 const KEEP_VALUES: usize = 1 << 16;
 
+/// Closed terms remembered as checked (`checked_closed`) before they are
+/// forgotten.
+const CHECKED_KEEP: usize = 1 << 20;
+
 /// Terms read from `.olean` files the store may hold between declarations.
 const READ_KEEP: usize = 1 << 20;
 
@@ -120,6 +124,23 @@ pub struct Nbe<'e> {
     /// Terms added to `st` for names: they do not count towards its size
     /// for keeping it between declarations.
     name_exprs: usize,
+    /// Closed terms of the environment checked in an earlier declaration,
+    /// with (the id of) the universe parameters they were checked under:
+    /// they stay well-typed as the environment grows.
+    checked_closed: IdMap<(ExprId, u64), ()>,
+    /// `checked_closed`'s key for `lparams`, or `None` until computed.
+    lparams_key: Option<u64>,
+    /// Ids of lists of universe parameters, from 1.
+    lparams_ids: std::collections::HashMap<Vec<NameId>, u64>,
+    /// Work done, in steps of evaluation and reduction (`tick`).
+    ticks: u64,
+    /// The step past which the current attempt stops (`attempt`), or
+    /// `u64::MAX` outside attempts.
+    stop: u64,
+    /// Set when an attempt ran out of steps, until it ends.
+    stopped: bool,
+    /// The shape of the value of a definition (`abbrev_shape`).
+    shapes: IdMap<NameId, u8>,
     /// Terms the store holds for values read from `.olean` files.
     read_exprs: usize,
     /// The loose bound variables each term uses (`used_bvars`).
@@ -223,6 +244,13 @@ impl<'e> Nbe<'e> {
             names: IdMap::default(),
             name_eq: IdMap::default(),
             name_exprs: 0,
+            checked_closed: IdMap::default(),
+            lparams_key: None,
+            lparams_ids: Default::default(),
+            ticks: 0,
+            stop: u64::MAX,
+            stopped: false,
+            shapes: IdMap::default(),
             read_exprs: 0,
             bvar_use: IdMap::default(),
             key_envs: IdMap::default(),
@@ -248,6 +276,7 @@ impl<'e> Nbe<'e> {
         }
         self.limit = limit;
         self.lparams.clear();
+        self.lparams_key = None;
         self.eager = false;
         if self.ev_used {
             // What the evaluator keeps is per declaration, as in `Tc`.
@@ -265,9 +294,57 @@ impl<'e> Nbe<'e> {
         self.fresh = self.a.is_empty();
     }
 
+    /// The id of the declaration's list of universe parameters.
+    pub(super) fn lparams_key(&mut self) -> u64 {
+        if let Some(k) = self.lparams_key {
+            return k;
+        }
+        let n = self.lparams_ids.len() as u64 + 1;
+        let k = *self.lparams_ids.entry(self.lparams.clone()).or_insert(n);
+        self.lparams_key = Some(k);
+        k
+    }
+
+    /// Count a step of work; inside an attempt that has used its steps,
+    /// stop it (an error that `attempt` catches).
+    #[inline]
+    pub fn tick(&mut self) -> R<()> {
+        self.ticks += 1;
+        if self.ticks > self.stop {
+            self.stopped = true;
+            return Err(KErr(String::new()));
+        }
+        Ok(())
+    }
+
+    /// `f`, given at most `budget` steps: `None` if it needed more. Inside
+    /// another attempt, `f` shares what that one has left. Only finished
+    /// results are cached, so a stopped attempt leaves only facts behind.
+    pub fn attempt<T>(&mut self, budget: u64, f: impl FnOnce(&mut Self) -> R<T>) -> R<Option<T>> {
+        if self.stop != u64::MAX {
+            return f(self).map(Some);
+        }
+        self.stop = self.ticks.saturating_add(budget);
+        let r = f(self);
+        self.stop = u64::MAX;
+        match r {
+            Ok(v) => Ok(Some(v)),
+            Err(_) if self.stopped => {
+                self.stopped = false;
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Forget everything.
     pub fn reset(&mut self, limit: u32) {
         self.limit = limit;
+        self.lparams_key = None;
+        if self.checked_closed.len() > CHECKED_KEEP {
+            self.checked_closed = IdMap::default();
+            self.lparams_ids = Default::default();
+        }
         self.decl_steps = 0;
         // Names hold free variables by index, and those go now.
         if !self.names.is_empty() {
@@ -574,7 +651,8 @@ impl<'e> Nbe<'e> {
     pub fn key_env(&mut self, env: val::Env, e: ExprId) -> val::Env {
         let n = self.st.data(e).loose_bvar_range();
         let env = self.trim(env, n);
-        if n <= 1 {
+        // Only worth its cost where terms are inferred again and again.
+        if n <= 1 || self.decl_steps <= conv::HEAVY_STEPS {
             return env;
         }
         let m = self.used_bvars(e);

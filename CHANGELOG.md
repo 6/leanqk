@@ -4,9 +4,10 @@
 
 - Declarations are checked on several threads (`check --jobs N`, or
   `NITROLEAN_JOBS`; default: all cores). The verdict, and the failure
-  reported, do not depend on it. While the process holds more than
-  `NITROLEAN_MEM_BUDGET_MIB` (1 GiB by default), a thread starts a new
-  block only if no other is busy. Known limitation: the budget is checked
+  reported, do not depend on it. While the process holds more than three
+  quarters of the memory it may use (the machine's, or its control
+  group's limit), or `NITROLEAN_MEM_BUDGET_MIB` more than when checking
+  started, a thread starts a new block only if no other is busy. Known limitation: the budget is checked
   only when a block starts, so blocks that start together before memory
   grows all run. On the corpus, three neighbouring declarations of about
   2.6 GB each reach 5.3 GB on two threads (2.7 GB on one).

@@ -53,6 +53,7 @@ impl Nbe<'_> {
     }
 
     fn whnf_core_app(&mut self, v: V, cheap_rec: bool, cheap_proj: bool) -> R<V> {
+        self.tick()?;
         let Val::Const(c, l, sp) = self.a.get(v) else {
             unreachable!()
         };
@@ -663,6 +664,7 @@ impl Nbe<'_> {
         let mut t = v;
         let mut first = true;
         loop {
+            self.tick()?;
             let t_l = self.whnf_core(t, false, false)?;
             if let Some(n) = self.reduce_nat(t_l)? {
                 self.a.rm(v).whnf = n.0;
