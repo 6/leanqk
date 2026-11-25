@@ -106,6 +106,9 @@ const T_LAM: u32 = 1;
 const T_PI: u32 = 2;
 const T_LET: u32 = 3;
 const T_PROJ: u32 = 4;
+/// Set in the head word of a stored record once it is interned; its
+/// arena id then replaces the record's second word.
+const DONE: u32 = 1 << 31;
 
 fn bi_bits(bi: BinderInfo) -> u32 {
     match bi {
@@ -183,8 +186,9 @@ pub(super) struct Builder {
     pend_ids: Vec<u32>,
     /// `mdata` records among them: export id, the reference it stands for.
     aliases: Vec<(u64, u32)>,
-    /// Stored records interned since (by word offset).
-    promoted: HashMap<u32, u32>,
+    /// A bit per word: set at the head of each stored record interned
+    /// since (see [`DONE`]).
+    marks: Vec<u64>,
     /// Per lazy value, its root reference (pending until the flush).
     roots: Vec<u32>,
     /// Roots added since the last flush start here.
@@ -227,7 +231,10 @@ impl Builder {
                 let v = self.pend_ids[(r & !KIND) as usize];
                 (v != NONE).then_some(v)
             }
-            _ => self.promoted.get(&(r & !KIND)).copied(),
+            _ => {
+                let off = (r & !KIND) as usize;
+                (self.words[off] & DONE != 0).then(|| self.words[off + 1])
+            }
         }
     }
 
@@ -309,7 +316,14 @@ impl Builder {
                 if top & KIND == PEND {
                     self.pend_ids[(top & !KIND) as usize] = id.0;
                 } else {
-                    self.promoted.insert(top & !KIND, id.0);
+                    let off = (top & !KIND) as usize;
+                    self.words[off] |= DONE;
+                    self.words[off + 1] = id.0;
+                    let n = self.words.len().div_ceil(64);
+                    if self.marks.len() < n {
+                        self.marks.resize(n, 0);
+                    }
+                    self.marks[off / 64] |= 1 << (off % 64);
                 }
                 stack.pop();
             }
@@ -387,35 +401,36 @@ impl Builder {
             return None;
         }
         // Refer to the stored records interned since by their arena ids
-        // (a bit per word marks them, to spare most lookups).
-        let p = &self.promoted;
-        let mut marks = vec![0u64; self.words.len().div_ceil(64)];
-        for &off in p.keys() {
-            marks[off as usize / 64] |= 1 << (off % 64);
-        }
-        let tr = |r: &mut u32| {
-            let off = *r & !KIND;
-            if *r & KIND == STORED
-                && marks[off as usize / 64] >> (off % 64) & 1 != 0
-                && let Some(&id) = p.get(&off)
-            {
-                *r = id;
+        // (a bit per word marks them, to spare most reads of their heads).
+        let marks = std::mem::take(&mut self.marks);
+        let words = &mut self.words;
+        let tr = |words: &[u32], r: u32| -> u32 {
+            let off = (r & !KIND) as usize;
+            if r & KIND == STORED && marks.get(off / 64).is_some_and(|m| m >> (off % 64) & 1 != 0) {
+                words[off + 1]
+            } else {
+                r
             }
         };
         let mut off = 0;
-        while off < self.words.len() {
-            let (size, refs): (usize, &[usize]) = match self.words[off] & 7 {
+        while off < words.len() {
+            let head = words[off];
+            let (size, refs): (usize, &[usize]) = match head & 7 {
                 T_APP => (3, &[1, 2]),
                 T_LAM | T_PI => (4, &[2, 3]),
                 T_LET => (5, &[2, 3, 4]),
                 _ => (4, &[3]),
             };
-            for &i in refs {
-                tr(&mut self.words[off + i]);
+            if head & DONE == 0 {
+                for &i in refs {
+                    words[off + i] = tr(words, words[off + i]);
+                }
             }
             off += size;
         }
-        self.roots.iter_mut().for_each(tr);
+        for r in &mut self.roots {
+            *r = tr(words, *r);
+        }
         self.words.shrink_to_fit();
         self.roots.shrink_to_fit();
         Some(Box::new(Stored {
