@@ -9,25 +9,29 @@ for each declaration. This is run by hand, not in CI.
 | File | What it does |
 | --- | --- |
 | `projects.tsv` | the pinned projects, one per line, with their tier |
-| `build.sh` | fetches, builds and exports the projects of a tier; checks the exports' SHA-256 against `exports.sha256` |
-| `run.py` | runs both checkers and the variants, compares the verdicts, writes `RESULTS.md` |
-| `reduce.py` | shrinks a declaration the checkers disagree on to a small export for `tests/kernel` |
-| `oracle.sh` | `cargo build --release`, then `build.sh`, then `run.py` |
-| `tools/export.py` | streaming NDJSON helpers: drop records and their dependents, closures |
-| `exports.sha256` | SHA-256 of every export `build.sh` made |
+| `exports.sha256` | SHA-256 of every export `cargo xtask oracle build` made |
 | `RESULTS.md` | the last results (tier 1: about 3 minutes once built) |
 
-Needs `git elan python3 cargo` and GNU `time`. A typical run:
+The tooling is `cargo xtask oracle` (in `xtask/src/oracle/`):
+
+| command | what it does |
+| --- | --- |
+| `build` | fetches, builds and exports the projects of a tier; checks the exports' SHA-256 against `exports.sha256` |
+| `run` | runs both checkers and the variants, compares the verdicts, writes `RESULTS.md` |
+| `reduce` | shrinks a declaration the checkers disagree on to a small export for `tests/kernel` |
+| `all` | `cargo build --release`, then `build`, then `run` |
+
+Needs `git elan cargo` and GNU `time`. A typical run:
 
 ```sh
-bench/oracle/oracle.sh                 # tier 1: a few minutes once the projects are built
-bench/oracle/oracle.sh --tier 2        # opt-in: larger projects
-bench/oracle/oracle.sh --only aesop    # one project
+cargo xtask oracle all                 # tier 1: a few minutes once the projects are built
+cargo xtask oracle all --tier 2        # opt-in: larger projects
+cargo xtask oracle all --only aesop    # one project
 ```
 
 Sources and build trees go under `cache/`, and exports and logs under `out/`. Both are
 git-ignored; `ORACLE_CACHE` and `ORACLE_OUT` override them. A project that is already built
-is not built again, so a second run only reruns the checkers. Every script has `--help`.
+is not built again, so a second run only reruns the checkers. Every command has `--help`.
 
 ## Tiers
 
@@ -43,7 +47,7 @@ modules (`../kernel-compute/lean/ListOwn.lean`). That is, the project's own decl
 and everything they use from their dependencies. The export is written by the exporter of
 the project's toolchain: the `leanexport` that ships with Lean from v4.35.0 on, and before
 that `github.com/leanprover/lean4export` at the commit that bumps it to that toolchain
-(pinned in `common.sh`). Supported toolchains are the stable releases from v4.28.0 to
+(pinned in `xtask/src/oracle/mod.rs`). Supported toolchains are the stable releases from v4.28.0 to
 v4.36.0, whose exporters write format 3.1.
 
 ## Lean's verdict
@@ -54,7 +58,7 @@ because `--from-export` came with v4.35.0.
 
 ## Per-declaration verdicts
 
-Both checkers stop at the first declaration they reject. `run.py` therefore repeats a run
+Both checkers stop at the first declaration they reject. `oracle run` therefore repeats a run
 that rejects a declaration D on the export without D:
 
 - if D is a theorem, it is replaced by an axiom of the same type, so the declarations that
@@ -64,7 +68,7 @@ that rejects a declaration D on the export without D:
 
 This repeats until the checker accepts what is left, or after `--max-rounds` runs. Each
 constant then has a verdict for each checker: `accept`, `reject:<kind>` or `skipped`. The
-error kind is taken from the message (`KINDS` in `run.py`). Lean names the declaration in
+error kind is taken from the message (`KINDS` in `xtask/src/oracle/mod.rs`). Lean names the declaration in
 `while replaying declaration 'D'`, and nitrolean in `declaration 'D'`. The constants are
 compared one by one:
 
@@ -72,7 +76,7 @@ compared one by one:
   or both skip.
 - **nitrolean-only reject**: Lean accepts and nitrolean rejects.
 - **nitrolean-only accept**: nitrolean accepts and Lean rejects. This would be a
-  soundness bug in nitrolean, and `run.py` prints it as `SOUNDNESS`.
+  soundness bug in nitrolean, and `oracle run` prints it as `SOUNDNESS`.
 
 A constant that one checker skips and the other does not cannot be compared. It is counted
 in the notes. When both checkers reject an export but blame different declarations, both
@@ -103,7 +107,7 @@ other toolchains have no `.olean` runs (`n/a`).
 ## Reducing a mismatch
 
 ```sh
-python3 -I bench/oracle/reduce.py bench/oracle/out/<id>/export.ndjson <declaration>
+cargo xtask oracle reduce bench/oracle/out/<id>/export.ndjson <declaration>
 ```
 
 This starts from the declaration's closure in the export. It turns as many of the closure's
