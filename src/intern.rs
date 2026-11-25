@@ -546,23 +546,46 @@ impl<T: Node> Big<T> {
         let n = self.nodes.len();
         let mut table = IdTable::with_capacity(n);
         let nodes = &self.nodes;
-        // Hash a group of nodes and touch their lines first, so that the
-        // cache misses overlap.
-        const GROUP: usize = 32;
-        let mut hs = [0u64; GROUP];
-        let mut acc = 0u64;
-        for g in (0..n).step_by(GROUP) {
-            let k = GROUP.min(n - g);
-            for (i, h) in hs[..k].iter_mut().enumerate() {
-                *h = nodes.get((g + i) as u32).hash();
-                acc = acc.wrapping_add(table.touch(*h));
+        // A table line is picked by the low half of the hash, scaled, so
+        // its top bits pick a range of lines. Hash the nodes into buckets
+        // by those bits, and then insert a bucket at a time: the lines a
+        // bucket fills are few enough to stay in the cache. A round does a
+        // part of the nodes, to bound the space the buckets take.
+        const BITS: u32 = 10;
+        const BUCKETS: usize = 1 << BITS;
+        const ROUNDS: usize = 4;
+        let round = n.div_ceil(ROUNDS).max(1);
+        let cap = round / BUCKETS + round / BUCKETS / 4 + 64;
+        let mut fill = vec![0usize; BUCKETS];
+        let mut hs = vec![0u64; BUCKETS * cap];
+        let mut ids = vec![0u32; BUCKETS * cap];
+        // Entries of a bucket that is full, inserted last.
+        let mut spill = Vec::new();
+        for start in (0..n).step_by(round) {
+            fill.fill(0);
+            spill.clear();
+            for id in start as u32..(start + round).min(n) as u32 {
+                let h = nodes.get(id).hash();
+                let b = (h as u32 >> (32 - BITS)) as usize;
+                let k = fill[b];
+                if k < cap {
+                    let at = b * cap + k;
+                    hs[at] = h;
+                    ids[at] = id;
+                    fill[b] = k + 1;
+                } else {
+                    spill.push((h, id));
+                }
             }
-            std::hint::black_box(acc);
-            for (i, &h) in hs[..k].iter().enumerate() {
-                let id = (g + i) as u32;
-                let node = nodes.get(id);
-                if let Some(old) = table.insert_unique(h, |o| nodes.get(o).same(node), id) {
-                    return Err((id, old));
+            let bucketed = (0..BUCKETS).flat_map(|b| {
+                let at = b * cap;
+                let k = fill[b];
+                hs[at..at + k].iter().copied().zip(ids[at..at + k].iter().copied())
+            });
+            for (h, id) in bucketed.chain(spill.iter().copied()) {
+                let same = |o| nodes.get(o).same(nodes.get(id));
+                if let Some(old) = table.insert_unique(h, same, id) {
+                    return Err((id.max(old), id.min(old)));
                 }
             }
         }
