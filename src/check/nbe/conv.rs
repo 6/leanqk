@@ -489,8 +489,13 @@ impl Nbe<'_> {
         if !NOT_PROOF {
             return false;
         }
-        let Val::Const(c, _, sp) = self.a.get(t) else {
-            return false;
+        let (c, sp) = match self.a.get(t) {
+            Val::Const(c, _, sp) => (c, sp),
+            // Types and literals.
+            Val::Sort(_) | Val::Pi(..) | Val::Nat(..) | Val::NatBig(_) | Val::Str(_) => {
+                return true;
+            }
+            _ => return false,
         };
         if self.a.sp_has_proj(sp) {
             return false;
@@ -509,12 +514,12 @@ impl Nbe<'_> {
             return false;
         };
         let mut e = d.ty;
-        let mut binders = 0;
-        while let ExprNode::Pi(_, _, _, b) = self.st.node(e) {
+        let mut doms = Vec::new();
+        while let ExprNode::Pi(_, _, dom, b) = self.st.node(e) {
+            doms.push(dom);
             e = b;
-            binders += 1;
         }
-        if binders < k {
+        if doms.len() < k as usize {
             return false;
         }
         while let ExprNode::App(f, _) = self.st.node(e) {
@@ -523,6 +528,14 @@ impl Nbe<'_> {
         let head = match self.st.node(e) {
             ExprNode::Sort(_) => return true,
             ExprNode::Const(h, _) => h,
+            // A variable of the telescope whose type is a sort, never `Prop`.
+            ExprNode::BVar(j) if (j as usize) < doms.len() => {
+                let mut t = doms[doms.len() - 1 - j as usize];
+                while let ExprNode::Pi(_, _, _, b) = self.st.node(t) {
+                    t = b;
+                }
+                return matches!(self.st.node(t), ExprNode::Sort(l) if univ::is_not_zero(&self.st, l));
+            }
             _ => return false,
         };
         let Some(hd) = self.find(head) else {
