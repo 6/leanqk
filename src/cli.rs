@@ -232,10 +232,13 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: us
             }
         }
     } else {
+        let opts = reader::Options {
+            lazy_proofs: lazy_proofs(true),
+        };
         let res = if file.as_os_str() == "-" {
-            reader::read_stdin()
+            reader::read_stdin_with(&opts)
         } else {
-            reader::read_file(file)
+            reader::read_file_with(file, &opts)
         };
         match res {
             Ok((env, rs)) => (env, Some(rs), None),

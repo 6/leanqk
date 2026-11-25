@@ -41,6 +41,7 @@ use crate::name::{NameId, NameNode};
 use crate::strings::Overflow;
 
 mod fast;
+mod lazy;
 
 /// The format major version this reader understands.
 pub const FORMAT_MAJOR: &str = "3";
@@ -130,30 +131,53 @@ impl From<ExprError> for Fail {
 
 /// Read an export from a file.
 pub fn read_file(path: &Path) -> Result<(Env, ReadStats), ReadError> {
+    read_file_with(path, &Options::default())
+}
+
+/// How to read an export.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Options {
+    /// Leave theorem values unbuilt, to be built when checked (see
+    /// [`crate::env::Env::value_into`]).
+    pub lazy_proofs: bool,
+}
+
+/// Read an export from a file, with options.
+pub fn read_file_with(path: &Path, opts: &Options) -> Result<(Env, ReadStats), ReadError> {
     let f = File::open(path).map_err(|e| io_error(path, e))?;
-    read_open_file(f)
+    read_open_file(f, opts)
 }
 
 /// Read an export from standard input. When it is redirected from a
 /// regular file, its size is used to pre-size the tables.
 pub fn read_stdin() -> Result<(Env, ReadStats), ReadError> {
+    read_stdin_with(&Options::default())
+}
+
+/// Read an export from standard input, with options.
+pub fn read_stdin_with(opts: &Options) -> Result<(Env, ReadStats), ReadError> {
     use std::os::fd::AsFd;
     match io::stdin().as_fd().try_clone_to_owned() {
-        Ok(fd) => read_open_file(File::from(fd)),
+        Ok(fd) => read_open_file(File::from(fd), opts),
         Err(_) => read(io::stdin()),
     }
 }
 
-fn read_open_file(f: File) -> Result<(Env, ReadStats), ReadError> {
+fn read_open_file(f: File, opts: &Options) -> Result<(Env, ReadStats), ReadError> {
     // Only a regular file's length says anything about its contents.
     let size = match f.metadata() {
         Ok(m) if m.is_file() => m.len(),
         _ => 0,
     };
     let mut st = State::new();
+    if opts.lazy_proofs {
+        st.lazy = Some(Box::default());
+    }
     // About 94% of the lines of a real export are expressions, and a line
     // averages 55 bytes; reserving up front avoids rehashing the big table.
-    st.env.exprs.reserve((size / 64).min(1 << 31) as usize);
+    // With lazy proofs, about a third of them are interned.
+    let per = if opts.lazy_proofs { 192 } else { 64 };
+    st.env.exprs.reserve((size / per).min(1 << 31) as usize);
     run(st, BufReader::with_capacity(1 << 20, f))
 }
 
@@ -293,6 +317,15 @@ impl Batch {
 }
 
 fn run<B: BufRead + Send>(mut st: State, r: B) -> Result<(Env, ReadStats), ReadError> {
+    let res = run_inner(&mut st, r);
+    if let Some(b) = st.lazy.take() {
+        st.env.lazy = b.finish();
+    }
+    let stats = res?;
+    Ok((st.env, stats))
+}
+
+fn run_inner<B: BufRead + Send>(st: &mut State, r: B) -> Result<ReadStats, ReadError> {
     let (full_tx, full_rx) = mpsc::sync_channel::<Batch>(4);
     let (empty_tx, empty_rx) = mpsc::sync_channel::<Batch>(8);
     let res = std::thread::scope(|s| {
@@ -303,7 +336,7 @@ fn run<B: BufRead + Send>(mut st: State, r: B) -> Result<(Env, ReadStats), ReadE
     stats.shared_exprs = st.shared_exprs;
     stats.id_map_bytes =
         st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
-    Ok((st.env, stats))
+    Ok(stats)
 }
 
 /// The parsing stage. Stops at the end of input, at the first error (which
@@ -653,6 +686,8 @@ struct State {
     levels_buf: Vec<LevelId>,
     names_buf: Vec<NameId>,
     rules_buf: Vec<RecRule>,
+    /// With lazy proofs: the pending and stored records (see `lazy`).
+    lazy: Option<Box<lazy::Builder>>,
 }
 
 /// The single-constant declaration records.
@@ -727,6 +762,7 @@ impl State {
             levels_buf: Vec::new(),
             names_buf: Vec::new(),
             rules_buf: Vec::new(),
+            lazy: None,
         }
     }
 
@@ -767,6 +803,24 @@ impl State {
 
     fn expr(&self, id: u64) -> R<ExprId> {
         Ok(ExprId(self.lookup(Table::Expr, id)?))
+    }
+
+    /// A declaration's term, interned.
+    fn root(&mut self, id: u64) -> R<ExprId> {
+        let r = self.lookup(Table::Expr, id)?;
+        match &mut self.lazy {
+            None => Ok(ExprId(r)),
+            Some(b) => b.promote(&mut self.env, r),
+        }
+    }
+
+    /// A theorem's value: interned, or with lazy proofs, left for later.
+    fn thm_value(&mut self, id: u64) -> R<ExprId> {
+        let r = self.lookup(Table::Expr, id)?;
+        match &mut self.lazy {
+            None => Ok(ExprId(r)),
+            Some(b) => b.value(r),
+        }
     }
 
     fn meta(&mut self, doc: Doc<'_>, members: &[Member]) -> R<()> {
@@ -890,6 +944,69 @@ impl State {
     }
 
     fn apply_expr(&mut self, batch: &Batch, id: u64, node: RawExpr) -> R<()> {
+        if self.lazy.is_some() {
+            // Compound records wait for their declaration (see `lazy`).
+            let r = |m: &IdMap, x: u64| match m.get(x) {
+                Some(v) => Ok(v),
+                None => bad(format!(
+                    "reference to undefined expression id {x} (ids must be defined on an earlier line)"
+                )),
+            };
+            let m = &self.expr_ids;
+            let n = match node {
+                RawExpr::App(f, a) => Some(lazy::Node::App(r(m, f)?, r(m, a)?)),
+                RawExpr::Binder {
+                    pi,
+                    bi,
+                    name,
+                    ty,
+                    body,
+                } => {
+                    let name = NameId(self.lookup(Table::Name, name)?);
+                    Some(lazy::Node::Bind {
+                        pi,
+                        bi,
+                        name,
+                        ty: r(m, ty)?,
+                        body: r(m, body)?,
+                    })
+                }
+                RawExpr::Let {
+                    name,
+                    ty,
+                    value,
+                    body,
+                    nondep,
+                } => {
+                    let name = NameId(self.lookup(Table::Name, name)?);
+                    Some(lazy::Node::Let {
+                        name,
+                        ty: r(m, ty)?,
+                        value: r(m, value)?,
+                        body: r(m, body)?,
+                        nondep,
+                    })
+                }
+                RawExpr::Proj(s, i, e) => {
+                    let s = NameId(self.lookup(Table::Name, s)?);
+                    Some(lazy::Node::Proj(s, i, r(m, e)?))
+                }
+                RawExpr::MData(inner) => {
+                    let inner = r(m, inner)?;
+                    self.shared_exprs += 1;
+                    self.bind(Table::Expr, id, inner)?;
+                    if inner & (lazy::PEND | lazy::STORED) != 0 {
+                        self.lazy.as_mut().expect("lazy").alias(id, inner);
+                    }
+                    return Ok(());
+                }
+                _ => None,
+            };
+            if let Some(n) = n {
+                let p = self.lazy.as_mut().expect("lazy").pend(id, n)?;
+                return self.bind(Table::Expr, id, p);
+            }
+        }
         let node = match node {
             RawExpr::BVar(i) => match u32::try_from(i) {
                 Ok(i) => ExprNode::BVar(i),
@@ -965,6 +1082,9 @@ impl State {
         if !fresh {
             self.shared_exprs += 1;
         }
+        if self.lazy.is_some() && e.0 >= lazy::PEND {
+            return Err(Overflow("too many expressions").into());
+        }
         self.bind(Table::Expr, id, e.0)
     }
 
@@ -976,7 +1096,7 @@ impl State {
         }
         let m = &members[0];
         let kind = doc.key(m);
-        match kind {
+        let res = match kind {
             "axiom" => self.single(doc, m.val, Single::Axiom),
             "def" => self.single(doc, m.val, Single::Def),
             "thm" => self.single(doc, m.val, Single::Thm),
@@ -985,7 +1105,18 @@ impl State {
             "inductive" => self.inductive(doc, m.val),
             "meta" => bad("meta record after the first line"),
             _ => bad(format!("unknown record kind '{kind}'")),
+        };
+        res?;
+        if let Some(mut b) = self.lazy.take() {
+            let m = &mut self.expr_ids;
+            let res = b.flush(|id, r| {
+                m.rebind(id, r);
+                Ok(())
+            });
+            self.lazy = Some(b);
+            res?;
         }
+        Ok(())
     }
 
     fn name_list(&mut self, o: &Obj<'_>, k: &str) -> R<NameList> {
@@ -1019,7 +1150,7 @@ impl State {
     fn header(&mut self, o: &Obj<'_>) -> R<(NameId, NameList, ExprId)> {
         let name = self.name(o.nat("name")?)?;
         let lps = self.name_list(o, "levelParams")?;
-        let ty = self.expr(o.nat("type")?)?;
+        let ty = self.root(o.nat("type")?)?;
         Ok((name, lps, ty))
     }
 
@@ -1049,7 +1180,7 @@ impl State {
                 is_unsafe: o.bool("isUnsafe")?,
             },
             Single::Def => {
-                let value = self.expr(o.nat("value")?)?;
+                let value = self.root(o.nat("value")?)?;
                 let hints = match o.field("hints")? {
                     h if doc.str(h) == Some("opaque") => Hints::Opaque,
                     h if doc.str(h) == Some("abbrev") => Hints::Abbrev,
@@ -1080,11 +1211,11 @@ impl State {
                 }
             }
             Single::Thm => DeclKind::Theorem {
-                value: self.expr(o.nat("value")?)?,
+                value: self.thm_value(o.nat("value")?)?,
                 all: self.name_list(&o, "all")?,
             },
             Single::Opaque => DeclKind::Opaque {
-                value: self.expr(o.nat("value")?)?,
+                value: self.root(o.nat("value")?)?,
                 all: self.name_list(&o, "all")?,
                 // Lean's reader defaults this when absent; so do we.
                 is_unsafe: match o.opt("isUnsafe") {
@@ -1169,7 +1300,7 @@ impl State {
                     rules.push(RecRule {
                         ctor: self.name(ro.nat("ctor")?)?,
                         nfields: ro.u32("nfields")?,
-                        rhs: self.expr(ro.nat("rhs")?)?,
+                        rhs: self.root(ro.nat("rhs")?)?,
                     });
                 }
                 match self.env.push_rules(&rules) {
