@@ -190,6 +190,12 @@ eval-rec-lit	eval	accept	accept	Nat.rec on the literal 1000 (literals become Nat
 eval-rec-lit-wrong	eval	reject	reject	the same, off by one
 eval-big	eval	accept	accept	literal arithmetic past 2^64 inside decide
 eval-big-wrong	eval	reject	reject	the same, false
+eval-cast-thm	eval	accept	accept	cast over a theorem applied to a variable: the erased proof is a K-like major premise
+eval-cast-thm-wrong	eval	reject	reject	the same, off by one
+eval-and-rec	eval	accept	accept	And.rec on a constructed proof: the erased proof is a major premise
+eval-and-rec-wrong	eval	reject	reject	the same, off by one
+eval-sub	eval	accept	accept	a weak head normal form holding a proof (a Subtype value)
+eval-sub-wrong	eval	reject	reject	its value, claimed 3
 eval-let	eval	accept	accept	a let-bound value used twice
 eval-let-wrong	eval	reject	reject	the same, off by one
 eval-fn	eval	accept	accept	a fold that builds a function (closures of closures), then applied

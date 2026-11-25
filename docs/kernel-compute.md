@@ -136,6 +136,39 @@ the major premise by eta before reducing it (a deliberate divergence, see
 as Lean v4.36.0's kernel does. If the major premise is stuck, the evaluator
 gives up and `whnf` applies eta itself.
 
+## Proofs
+
+The machine never needs the value of a proof. It needs a proof's term only
+to read back an answer that contains it, or to type the major premise of a
+`K`-like recursor. Yet a lazy proof can hold a lot of memory. A decision
+procedure's result `isTrue h` holds the proof `h`, a thunk that refers to the
+proofs of every step of the decision. Stored in a data structure, such a
+result keeps every step alive. LRAT-Catcher's checker stores each clause
+with the proof of its `Nodup` decision, so all its `DecidableEq` traces stay
+alive: this was most of its memory.
+
+So a thunk for a proof (a theorem, or a constructor of an inductive
+proposition, applied to arguments) is **erased**, unless the terms of its
+variables are all known: then it is made the closed term it stands for. An
+erased thunk holds its term and only a weak reference to its environment, so
+it keeps nothing alive. While
+something else keeps the environment, the thunk behaves exactly like a
+delayed one. Once it is gone, forcing the thunk or reading it back gives up
+(`Bail::Erased`). `whnf` then evaluates the term again from scratch, with
+proofs kept and the cached values dropped. If a run does not give up,
+erasure changes nothing in it: the machine only looks at a thunk to force it
+or to read it back, so the run takes the same steps as without erasure.
+
+**Decisions.** An answer `Decidable.isTrue p h` is read back as
+`isTrue p (of_decide_eq_true p e (Eq.refl true))`, where `e` is the input and
+`p` the proposition of its type `Decidable p`. `isFalse` uses
+`of_decide_eq_false`. This never reads back `h`, which may be erased or a
+huge term (the proof of a `Nodup` over a few hundred elements has millions
+of nodes). The answer is definitionally equal to the real one by proof
+irrelevance: `h` and the new proof have the same type `p`, and definitional
+equality compares proofs by their types only. The lemmas are used only if
+they are theorems whose types are exactly the core library's.
+
 ## Arrays
 
 Lean's `Array α` is a structure around `List α`, and its operations are
@@ -180,7 +213,7 @@ out of memory.
 
 ## Tests
 
-`tests/kernel/cases.py` has 32 `eval-*` cases, each a claim proved by
+`tests/kernel/cases.py` has 38 `eval-*` cases, each a claim proved by
 `Eq.refl` (so only reduction decides it) together with a false twin. They
 cover:
 
@@ -193,7 +226,10 @@ cover:
 - `Nat.rec` on a literal, and big literals;
 - shared lets and closures;
 - arrays: `get!` and `getD` in and out of range, `set!`, `push`, array
-  equality, and arrays of functions.
+  equality, and arrays of functions;
+- erased proofs that are needed after all: a cast over a theorem applied to
+  a variable, `And.rec` on a constructed proof, an answer that holds a
+  proof.
 
 Lean's verdict on each is recorded in `cases.tsv`. The arena's `perf` tests in
 `corpus/` exercise the evaluator on larger computations. Every corpus and
