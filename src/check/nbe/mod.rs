@@ -27,7 +27,7 @@ use hashbrown::HashTable;
 use num_bigint::BigUint;
 
 use crate::env::{Decl, DeclKind};
-use crate::expr::{BinderInfo, ExprId};
+use crate::expr::{BinderInfo, ExprId, ExprNode};
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
@@ -50,6 +50,9 @@ pub struct FVarInfo {
 /// The free variable of an ill-typed application or projection that
 /// evaluation met: it never reduces and has no type.
 pub const BOTTOM: u32 = u32::MAX - 1;
+
+/// In `used_bvars`: some loose bound variable is `#63` or above.
+const MANY_BVARS: u64 = 1 << 63;
 
 /// Terms of names the store may hold before it is dropped between
 /// declarations.
@@ -112,6 +115,10 @@ pub struct Nbe<'e> {
     /// Terms added to `st` for names: they do not count towards its size
     /// for keeping it between declarations.
     name_exprs: usize,
+    /// The loose bound variables each term uses (`used_bvars`).
+    bvar_use: IdMap<ExprId, u64>,
+    /// `key_env` of an environment, by the variables used.
+    key_envs: IdMap<(val::Env, u64), val::Env>,
     /// Lazy delta steps in this declaration.
     pub(crate) decl_steps: u32,
 }
@@ -208,6 +215,8 @@ impl<'e> Nbe<'e> {
             names: IdMap::default(),
             name_eq: IdMap::default(),
             name_exprs: 0,
+            bvar_use: IdMap::default(),
+            key_envs: IdMap::default(),
             decl_steps: 0,
         }
     }
@@ -264,12 +273,15 @@ impl<'e> Nbe<'e> {
         self.eager_depth = 0;
         shrink(&mut self.open_count);
         shrink(&mut self.trim_cache);
+        shrink(&mut self.key_envs);
         shrink(&mut self.canon_fvar);
         shrink(&mut self.level_checked);
         self.a.clear();
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;
+            // Local terms go: forget what was found about them.
+            self.bvar_use.retain(|e, _| !super::store::is_local(e.0));
         }
         shrink(&mut self.bigs);
         shrink(&mut self.big_table);
@@ -468,6 +480,80 @@ impl<'e> Nbe<'e> {
             r = self.a.cons(r, v);
         }
         self.trim_cache.insert((env, n), r);
+        r
+    }
+
+    /// Bit `i` is set if `#i` occurs loose in `e` (`MANY_BVARS`: some
+    /// variable from `#63` on does).
+    pub fn used_bvars(&mut self, e: ExprId) -> u64 {
+        let d = self.st.data(e);
+        if !d.has_loose_bvars() {
+            return 0;
+        }
+        if let Some(&m) = self.bvar_use.get(&e) {
+            return m;
+        }
+        let m = match self.st.node(e) {
+            ExprNode::BVar(i) => {
+                if i < 63 {
+                    1 << i
+                } else {
+                    MANY_BVARS
+                }
+            }
+            ExprNode::App(..) => {
+                let mut m = 0;
+                let mut f = e;
+                while let ExprNode::App(g, a) = self.st.node(f) {
+                    m |= self.used_bvars(a);
+                    f = g;
+                }
+                m | self.used_bvars(f)
+            }
+            ExprNode::Lam(_, _, t, b) | ExprNode::Pi(_, _, t, b) => {
+                let mb = self.used_bvars(b);
+                self.used_bvars(t) | (mb & !MANY_BVARS) >> 1 | (mb & MANY_BVARS)
+            }
+            ExprNode::Let(h, b) => {
+                let lb = self.st.let_binder(h);
+                let mb = self.used_bvars(b);
+                self.used_bvars(lb.ty)
+                    | self.used_bvars(lb.value)
+                    | (mb & !MANY_BVARS) >> 1
+                    | (mb & MANY_BVARS)
+            }
+            ExprNode::Proj(_, _, x) => self.used_bvars(x),
+            _ => 0,
+        };
+        self.bvar_use.insert(e, m);
+        m
+    }
+
+    /// `env` as the key of a memo about `e`: trimmed, and with `HOLE` for
+    /// the entries `e` does not use, so that the same term under different
+    /// unused bindings has one key.
+    pub fn key_env(&mut self, env: val::Env, e: ExprId) -> val::Env {
+        let n = self.st.data(e).loose_bvar_range();
+        let env = self.trim(env, n);
+        if n <= 1 {
+            return env;
+        }
+        let m = self.used_bvars(e);
+        if m & MANY_BVARS != 0 || m == (1u64 << n) - 1 {
+            return env;
+        }
+        if let Some(&k) = self.key_envs.get(&(env, m)) {
+            return k;
+        }
+        let mut vs = Vec::new();
+        self.a.env_values(env, &mut vs);
+        // Any value will do where the term does not look.
+        let hole = self.a.mk(val::Val::Sort(LevelId::ZERO));
+        let mut r = val::Env::NIL;
+        for i in (0..vs.len()).rev() {
+            r = self.a.cons(r, if m >> i & 1 != 0 { vs[i] } else { hole });
+        }
+        self.key_envs.insert((env, m), r);
         r
     }
 

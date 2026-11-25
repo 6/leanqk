@@ -334,9 +334,10 @@ impl Nbe<'_> {
             }
             _ => {}
         }
-        // A memo keyed by the term in its environment.
+        // A memo keyed by the term in its environment, without the entries
+        // it does not use.
         let d = self.st.data(e);
-        let kenv = self.trim(env, d.loose_bvar_range());
+        let kenv = self.key_env(env, e);
         let kls = if d.has_level_param() { ls } else { Ls::ID };
         let key = self.a.mk(Val::Thunk(e, kenv, kls));
         let c = self.a.r(key).ty;
