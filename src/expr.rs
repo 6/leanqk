@@ -15,7 +15,7 @@
 use num_bigint::BigUint;
 
 use crate::hash::{hash_bytes, hash2};
-use crate::intern::{Big, Chunked, IdTable, Interner, Node};
+use crate::intern::{Big, CHUNK, Chunked, IdTable, Interner, Node};
 use crate::level::{LevelId, LevelList, Levels};
 use crate::name::NameId;
 use crate::strings::{Overflow, StrId};
@@ -126,6 +126,26 @@ impl Node for ExprNode {
     }
 }
 
+/// The data of a compound node (else `None`), from its children's.
+#[inline]
+fn compound_data(
+    data: &Chunked<ExprData>,
+    lets: &Interner<LetBinder>,
+    node: ExprNode,
+) -> Option<ExprData> {
+    let d = |e: ExprId| *data.get(e.0);
+    Some(match node {
+        ExprNode::App(f, a) => d(f).union(d(a)),
+        ExprNode::Lam(_, _, t, b) | ExprNode::Pi(_, _, t, b) => d(t).union(d(b).under_binder()),
+        ExprNode::Let(h, b) => {
+            let h = lets.get(h.0);
+            d(h.ty).union(d(h.value)).union(d(b).under_binder())
+        }
+        ExprNode::Proj(_, _, e) => d(e),
+        _ => return None,
+    })
+}
+
 /// Cached per-node data, packed in a `u32`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ExprData(u32);
@@ -204,6 +224,10 @@ impl From<Overflow> for ExprError {
 pub struct Exprs {
     arena: Big<ExprNode>,
     data: Chunked<ExprData>,
+    /// Compound nodes appended without hash-consing ([`Exprs::append`])
+    /// get their data at [`Exprs::index`]: from this id on, theirs is not
+    /// set yet (`u32::MAX`: all is).
+    data_from: u32,
     lets: Interner<LetBinder>,
     bigs: Vec<BigUint>,
     big_table: hashbrown::HashTable<u32>,
@@ -224,6 +248,7 @@ impl Exprs {
         Exprs {
             arena: Big::new("too many expressions"),
             data: Chunked::default(),
+            data_from: u32::MAX,
             lets: Interner::new("too many let binders"),
             bigs: Vec::new(),
             big_table: hashbrown::HashTable::new(),
@@ -248,6 +273,7 @@ impl Exprs {
         Exprs {
             arena: Big::from_parts(nodes, table, "too many expressions"),
             data,
+            data_from: u32::MAX,
             lets,
             bigs,
             big_table,
@@ -283,6 +309,7 @@ impl Exprs {
 
     #[inline]
     pub fn data(&self, e: ExprId) -> ExprData {
+        debug_assert!(e.0 < self.data_from, "data not set yet");
         *self.data.get(e.0)
     }
 
@@ -311,23 +338,52 @@ impl Exprs {
     /// (the nodes that need no levels).
     #[inline]
     pub(crate) fn append_compound(&mut self, node: ExprNode) -> Result<ExprId, ExprError> {
-        let d = match node {
-            ExprNode::App(f, a) => self.data(f).union(self.data(a)),
-            ExprNode::Lam(_, _, t, b) | ExprNode::Pi(_, _, t, b) => {
-                self.data(t).union(self.data(b).under_binder())
-            }
-            ExprNode::Let(h, b) => {
-                let h = self.let_binder(h);
-                self.data(h.ty)
-                    .union(self.data(h.value))
-                    .union(self.data(b).under_binder())
-            }
-            ExprNode::Proj(_, _, e) => self.data(e),
-            _ => unreachable!("not a compound node"),
-        };
+        debug_assert!(matches!(
+            node,
+            ExprNode::App(..)
+                | ExprNode::Lam(..)
+                | ExprNode::Pi(..)
+                | ExprNode::Let(..)
+                | ExprNode::Proj(..)
+        ));
         let id = self.arena.push_unindexed(node)?;
-        self.data.push(d);
+        // Set at `index`, from the children's.
+        self.data.push(ExprData(0));
+        self.data_from = self.data_from.min(id);
         Ok(ExprId(id))
+    }
+
+    fn compound(&self, node: ExprNode) -> bool {
+        matches!(
+            node,
+            ExprNode::App(..)
+                | ExprNode::Lam(..)
+                | ExprNode::Pi(..)
+                | ExprNode::Let(..)
+                | ExprNode::Proj(..)
+        )
+    }
+
+    /// Set the data [`Exprs::append`] left for later. Children come
+    /// before their parents, so one pass in order does it (and, with
+    /// little else in the loop, the processor can wait on several
+    /// children's data at once).
+    fn finish_data(&mut self) {
+        let from = self.data_from as usize;
+        if from == u32::MAX as usize {
+            return;
+        }
+        let (lets, data) = (&self.lets, &mut self.data);
+        for (c, chunk) in self.arena.nodes().chunks().iter().enumerate() {
+            let start = c * CHUNK;
+            let skip = from.saturating_sub(start).min(chunk.len());
+            for (j, &node) in chunk.iter().enumerate().skip(skip) {
+                if let Some(d) = compound_data(data, lets, node) {
+                    data.chunks_mut()[c][j] = d;
+                }
+            }
+        }
+        self.data_from = u32::MAX;
     }
 
     /// Index every node, on `threads` threads; if two are equal, a pair
@@ -338,6 +394,7 @@ impl Exprs {
         threads: usize,
         scratch: &mut Vec<u32>,
     ) -> Result<(), (ExprId, ExprId)> {
+        self.finish_data();
         self.arena
             .index(threads, scratch)
             .map_err(|(a, b)| (ExprId(a), ExprId(b)))
@@ -359,7 +416,11 @@ impl Exprs {
         } else {
             self.arena.intern(node)?
         };
-        if fresh {
+        if fresh && unindexed && self.compound(node) {
+            // Set at `index` (see `append_compound`).
+            self.data.push(ExprData(0));
+            self.data_from = self.data_from.min(id);
+        } else if fresh {
             let d = match node {
                 ExprNode::BVar(i) => ExprData::new(i + 1, false),
                 ExprNode::Sort(l) => ExprData::new(0, levels.has_param(l)),
