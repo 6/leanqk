@@ -15,7 +15,7 @@ use super::{BOTTOM, Nbe};
 
 /// Steps of reduction before a closed computation goes to the closed-term
 /// evaluator (`whnf_closed`; 0: at once).
-const EVAL_AFTER: u64 = 1024;
+const EVAL_AFTER: u64 = 8192;
 
 /// Whether the closed-term evaluator is asked within an attempt (see
 /// `whnf_closed`).
