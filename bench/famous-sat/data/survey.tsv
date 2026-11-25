@@ -1,0 +1,557 @@
+problem	picks	limit_s	index	verdict	solve_s	core_clauses	lrat_bytes
+keller7	random	20	2068	unsat	0.60	7363	691174
+keller7	random	20	4403	unsat	0.03	75	1547
+keller7	random	20	18652	unsat	0.23	551	30933
+keller7	random	20	782	unsat	15.85	90463	47583895
+keller7	random	20	900	unknown	20.02		
+keller7	random	20	1171	unsat	0.11	76	1677
+keller7	random	20	1178	unsat	0.86	4978	369031
+keller7	random	20	1854	unsat	0.92	10197	1902420
+keller7	random	20	2782	unsat	0.19	739	48058
+keller7	random	20	3002	unsat	0.17	1070	67207
+keller7	random	20	4480	unsat	0.16	190	6430
+keller7	random	20	5190	unsat	0.19	821	51609
+keller7	random	20	5390	unsat	0.34	3080	224571
+keller7	random	20	5541	unsat	2.68	46839	9146307
+keller7	random	20	5689	unsat	8.25	67960	28263154
+keller7	random	20	5791	unsat	0.18	658	37248
+keller7	random	20	5815	unsat	0.25	702	44595
+keller7	random	20	6954	unsat	0.17	1289	91134
+keller7	random	20	7557	unsat	0.17	842	51341
+keller7	random	20	7738	unsat	0.20	822	50627
+keller7	random	20	8244	unsat	0.19	506	23286
+keller7	random	20	8790	unsat	0.18	193	6828
+keller7	random	20	10098	unsat	0.36	1775	123110
+keller7	random	20	10436	unsat	0.35	2240	146790
+keller7	random	20	10655	unsat	0.20	674	36041
+keller7	random	20	11832	unsat	0.89	18644	2021824
+keller7	random	20	11929	unsat	0.24	80	2210
+keller7	random	20	12192	unsat	0.16	501	33146
+keller7	random	20	12453	unsat	0.61	6245	851493
+keller7	random	20	12896	unsat	0.48	2420	170954
+keller7	random	20	13881	unsat	0.35	670	39139
+keller7	random	20	14113	unsat	0.20	711	42747
+keller7	random	20	14577	unsat	0.19	1064	67714
+keller7	random	20	15234	unsat	0.16	79	2169
+keller7	random	20	16452	unsat	0.03	73	1500
+keller7	random	20	16682	unsat	0.20	530	25285
+keller7	random	20	17228	unsat	0.18	2339	169449
+keller7	random	20	17832	unsat	0.54	7659	646537
+keller7	random	20	18367	unsat	7.29	67955	21809408
+keller7	random	20	19045	unsat	1.26	16416	2062479
+keller7	random	20	19856	unsat	0.29	780	48169
+keller7	random	20	19884	unsat	0.64	2994	196633
+keller7	random	20	20922	unsat	0.21	906	55990
+keller7	random	5	238	unsat	3.52	56103	14531691
+keller7	random	5	376	unsat	2.62	50740	12073946
+keller7	random	5	432	unsat	0.26	1079	56121
+keller7	random	5	497	unsat	0.18	511	23987
+keller7	random	5	658	unsat	0.32	4735	474207
+keller7	random	5	660	unsat	0.17	206	9094
+keller7	random	5	697	unsat	0.56	9366	1158754
+keller7	random	5	727	unsat	1.36	23663	4435537
+keller7	random	5	883	unsat	1.06	16613	2537502
+keller7	random	5	940	unknown	5.02		
+keller7	random	5	1017	unsat	3.06	52979	15345250
+keller7	random	5	1029	unsat	1.23	34889	5513044
+keller7	random	5	1176	unsat	0.71	16291	2479172
+keller7	random	5	1181	unsat	0.29	3146	354619
+keller7	random	5	1391	unsat	0.62	12878	1242964
+keller7	random	5	1403	unsat	2.33	48496	10943422
+keller7	random	5	1449	unknown	5.00		
+keller7	random	5	1473	unsat	0.32	1431	94148
+keller7	random	5	1969	unsat	2.24	21548	5865351
+keller7	random	5	1985	unsat	0.27	4231	315079
+keller7	random	5	2080	unknown	5.01		
+keller7	random	5	2099	unsat	0.53	10691	1097742
+keller7	random	5	2148	unsat	0.31	6075	493873
+keller7	random	5	2183	unsat	0.31	7156	1007691
+keller7	random	5	2523	unsat	0.30	6668	798711
+keller7	random	5	2901	unsat	0.86	15380	1717052
+keller7	random	5	3194	unknown	5.00		
+keller7	random	5	3362	unknown	5.01		
+keller7	random	5	3411	unsat	0.60	5238	441622
+keller7	random	5	3437	unsat	0.35	219	10780
+keller7	random	5	3543	unsat	2.93	39276	6858379
+keller7	random	5	3897	unsat	0.32	683	39837
+keller7	random	5	4078	unsat	0.17	244	13568
+keller7	random	5	4274	unsat	0.33	6902	923716
+keller7	random	5	4307	unsat	0.21	696	41922
+keller7	random	5	4367	unsat	1.95	43117	9023263
+keller7	random	5	4396	unsat	0.17	193	6717
+keller7	random	5	4456	unsat	0.17	224	10883
+keller7	random	5	4533	unsat	0.17	200	9393
+keller7	random	5	4936	unsat	0.17	599	30334
+keller7	random	5	4941	unsat	0.17	234	13261
+keller7	random	5	4969	unsat	3.70	58077	15229994
+keller7	random	5	5119	unsat	3.88	66565	20612085
+keller7	random	5	5224	unknown	5.01		
+keller7	random	5	5345	unsat	0.37	3607	270743
+keller7	random	5	5814	unsat	0.18	215	9951
+keller7	random	5	6071	unsat	0.17	222	10366
+keller7	random	5	6141	unsat	0.28	1200	77210
+keller7	random	5	6284	unsat	0.61	12580	1481260
+keller7	random	5	6468	unsat	0.18	1346	83876
+keller7	random	5	6919	unsat	0.21	870	53072
+keller7	random	5	7111	unsat	0.19	813	52154
+keller7	random	5	7293	unsat	0.18	1356	86914
+keller7	random	5	7600	unsat	0.21	1658	109133
+keller7	random	5	7615	unsat	2.30	43477	7271071
+keller7	random	5	7679	unsat	0.70	8596	864796
+keller7	random	5	7732	unsat	0.26	1170	75531
+keller7	random	5	7787	unsat	0.32	4682	398582
+keller7	random	5	7798	unsat	0.03	75	1547
+keller7	random	5	7822	unsat	0.91	19086	2646130
+keller7	random	5	8229	unsat	0.71	13342	2112650
+keller7	random	5	8454	unsat	0.20	891	52369
+keller7	random	5	8462	unsat	0.23	885	61143
+keller7	random	5	8499	unsat	0.16	81	2234
+keller7	random	5	8631	unsat	0.20	1650	110406
+keller7	random	5	8656	unsat	0.18	676	40496
+keller7	random	5	8752	unsat	1.15	30664	4704895
+keller7	random	5	8827	unsat	0.19	582	31786
+keller7	random	5	8829	unsat	0.16	192	6597
+keller7	random	5	8890	unsat	0.56	11183	1398192
+keller7	random	5	9140	unsat	1.91	39526	6196279
+keller7	random	5	9145	unsat	0.19	2708	178033
+keller7	random	5	9165	unsat	0.17	243	13691
+keller7	random	5	9338	unsat	0.32	5448	467216
+keller7	random	5	9556	unsat	0.32	6873	705785
+keller7	random	5	9631	unknown	5.01		
+keller7	random	5	9786	unsat	0.31	1381	92806
+keller7	random	5	9844	unsat	0.05	75	1676
+keller7	random	5	9865	unsat	1.05	27406	3665851
+keller7	random	5	9867	unsat	0.66	6108	493341
+keller7	random	5	9872	unsat	0.66	8437	838285
+keller7	random	5	9929	unsat	0.49	6846	527788
+keller7	random	5	10148	unsat	0.20	738	46400
+keller7	random	5	10159	unsat	0.31	4705	381751
+keller7	random	5	10246	unsat	0.24	2242	165973
+keller7	random	5	10284	unsat	0.48	5874	563992
+keller7	random	5	10318	unsat	0.32	5648	469676
+keller7	random	5	10487	unsat	0.18	2044	125875
+keller7	random	5	10696	unsat	1.72	37184	5796900
+keller7	random	5	10741	unsat	0.34	9996	918791
+keller7	random	5	10845	unsat	0.17	554	27534
+keller7	random	5	10894	unsat	0.32	6680	718803
+keller7	random	5	11036	unsat	0.17	214	10056
+keller7	random	5	11106	unsat	0.18	902	56094
+keller7	random	5	11136	unsat	0.47	8933	1205583
+keller7	random	5	11275	unsat	0.71	13545	2313555
+keller7	random	5	11499	unsat	0.18	505	24923
+keller7	random	5	11554	unsat	0.69	13665	1635817
+keller7	random	5	11565	unsat	3.50	61008	18545845
+keller7	random	5	11803	unsat	0.16	81	2263
+keller7	random	5	11927	unsat	0.16	80	2173
+keller7	random	5	11978	unsat	0.23	1015	63270
+keller7	random	5	12097	unsat	0.03	74	1523
+keller7	random	5	12123	unsat	2.01	45692	9760226
+keller7	random	5	12338	unsat	0.18	721	45420
+keller7	random	5	12346	unsat	0.20	913	51227
+keller7	random	5	12359	unsat	0.19	589	30007
+keller7	random	5	12380	unsat	0.20	585	28705
+keller7	random	5	12645	unsat	1.97	33749	7690344
+keller7	random	5	12655	unsat	4.37	59533	19774495
+keller7	random	5	12702	unsat	0.17	211	9573
+keller7	random	5	12778	unsat	0.16	80	2210
+keller7	random	5	12943	unsat	0.31	993	60662
+keller7	random	5	13014	unsat	0.17	97	2476
+keller7	random	5	13356	unsat	0.26	2912	269059
+keller7	random	5	13368	unsat	0.59	10052	1373418
+keller7	random	5	13451	unsat	0.23	1120	66412
+keller7	random	5	13606	unsat	0.18	94	2804
+keller7	random	5	13801	unsat	0.22	2705	179410
+keller7	random	5	13990	unsat	0.05	75	1624
+keller7	random	5	13997	unsat	0.05	75	1624
+keller7	random	5	14130	unsat	0.20	1798	157568
+keller7	random	5	14262	unsat	0.20	499	23235
+keller7	random	5	14293	unsat	0.19	1423	103433
+keller7	random	5	14335	unsat	0.19	1614	102573
+keller7	random	5	14570	unsat	0.24	1012	71461
+keller7	random	5	14953	unsat	0.65	13542	1562317
+keller7	random	5	15087	unsat	0.05	74	1603
+keller7	random	5	15279	unsat	0.19	213	9561
+keller7	random	5	15376	unsat	0.18	80	2210
+keller7	random	5	15410	unsat	0.75	14347	1918786
+keller7	random	5	15492	unsat	0.19	766	44251
+keller7	random	5	15534	unsat	0.03	74	1523
+keller7	random	5	15610	unsat	0.47	9336	1018585
+keller7	random	5	15795	unsat	0.18	1183	66946
+keller7	random	5	15844	unsat	0.25	1979	149724
+keller7	random	5	16041	unsat	0.18	79	2189
+keller7	random	5	16217	unsat	0.21	3089	217502
+keller7	random	5	16385	unsat	0.19	1439	101999
+keller7	random	5	16562	unsat	0.05	75	1624
+keller7	random	5	16615	unsat	0.70	7945	717313
+keller7	random	5	16622	unsat	0.32	5551	416587
+keller7	random	5	17042	unsat	0.17	79	2171
+keller7	random	5	17077	unsat	0.21	1420	86070
+keller7	random	5	17144	unsat	0.43	5639	450445
+keller7	random	5	17502	unsat	1.87	26590	5234319
+keller7	random	5	17550	unsat	0.18	574	30819
+keller7	random	5	17727	unsat	0.18	2007	143234
+keller7	random	5	17753	unsat	0.17	210	8702
+keller7	random	5	17834	unsat	0.33	6223	515692
+keller7	random	5	17971	unsat	0.17	80	2264
+keller7	random	5	18011	unsat	0.32	7484	622971
+keller7	random	5	18049	unsat	0.26	3572	242705
+keller7	random	5	18051	unsat	0.27	3229	242609
+keller7	random	5	18326	unsat	0.70	8276	760544
+keller7	random	5	18649	unsat	0.30	3488	328690
+keller7	random	5	18654	unknown	5.00		
+keller7	random	5	18742	unsat	0.53	7735	733159
+keller7	random	5	18794	unsat	0.17	863	54069
+keller7	random	5	18810	unsat	0.17	80	2243
+keller7	random	5	18905	unsat	0.22	2633	176872
+keller7	random	5	19005	unsat	0.17	720	43633
+keller7	random	5	19034	unsat	0.32	1391	84920
+keller7	random	5	19145	unsat	0.05	75	1639
+keller7	random	5	19172	unsat	0.18	221	10040
+keller7	random	5	19215	unsat	1.90	42108	9038249
+keller7	random	5	19308	unsat	2.63	50353	11426606
+keller7	random	5	19313	unsat	0.18	1269	80335
+keller7	random	5	19370	unsat	0.33	3563	232899
+keller7	random	5	19420	unsat	0.34	7740	646565
+keller7	random	5	19421	unsat	0.21	2362	156507
+keller7	random	5	19489	unsat	0.53	10658	1680692
+keller7	random	5	19518	unsat	0.86	18955	2571485
+keller7	random	5	19519	unsat	0.20	624	36842
+keller7	random	5	19654	unsat	0.20	3669	301318
+keller7	random	5	19709	unsat	0.17	80	2262
+keller7	random	5	19790	unsat	0.31	5201	459894
+keller7	random	5	19825	unsat	0.19	751	48369
+keller7	random	5	19845	unsat	0.06	74	1550
+keller7	random	5	19852	unsat	1.26	30383	5054762
+keller7	random	5	19952	unsat	0.63	15127	2477942
+keller7	random	5	20004	unsat	0.05	75	1639
+keller7	random	5	20138	unsat	0.19	516	26008
+keller7	random	5	20179	unsat	0.34	7563	823419
+keller7	random	5	20321	unsat	0.17	210	9300
+keller7	random	5	20504	unsat	0.20	2185	156831
+keller7	random	5	20535	unsat	0.17	80	2262
+keller7	random	5	20557	unsat	0.17	80	2262
+keller7	random	5	20578	unsat	0.17	884	49447
+keller7	random	5	20716	unsat	0.21	3688	281828
+keller7	random	5	20742	unsat	0.49	9910	909874
+keller7	random	5	20760	unsat	0.32	6152	562560
+keller7	random	5	20785	unsat	0.25	4031	515340
+keller7	random	5	20804	unsat	0.19	535	33205
+keller7	random	5	20931	unsat	0.21	809	47873
+keller7	random	5	20941	unsat	0.21	2282	145235
+keller7	random	5	21099	unsat	0.17	640	37400
+keller7	random	5	21285	unsat	0.19	1624	100039
+keller7	random	5	21422	unsat	0.32	6881	596371
+keller7	random	5	21480	unsat	0.20	622	36788
+ptn	random	20	140892	unknown	20.00		
+ptn	random	20	596854	unknown	20.00		
+ptn	random	20	888599	unsat	9.78	8908	88672029
+ptn	by-published-size	60	511615	unsat	0.05	1648	148649
+ptn	by-published-size	60	824009	unsat	0.02	1507	101922
+ptn	by-published-size	60	650038	unsat	0.05	2449	290585
+ptn	by-published-size	60	17387	unsat	0.06	3317	436163
+ptn	by-published-size	60	754743	unsat	0.07	3882	670215
+ptn	by-published-size	60	740347	unsat	0.13	4202	1254137
+ptn	by-published-size	60	736643	unsat	0.16	4738	1653259
+ptn	by-published-size	60	642915	unsat	0.61	6227	5783872
+ptn	by-published-size	60	211974	unsat	0.98	6611	9020096
+ptn	by-published-size	60	594603	unsat	2.34	7528	16393746
+ptn	by-published-size	60	245337	unsat	3.82	8127	29835891
+ptn	by-published-size	60	563657	unsat	7.62	8199	57842717
+ptn	by-published-size	60	425821	unsat	14.97	9386	107899534
+ptn	by-published-size	10	126397	unsat	0.02	22	452
+ptn	by-published-size	10	439431	unsat	0.02	32	596
+ptn	by-published-size	10	143430	unsat	0.02	26	489
+ptn	by-published-size	10	439473	unsat	0.01	32	596
+ptn	by-published-size	10	511615	unsat	0.02	1648	148649
+ptn	by-published-size	10	644079	unsat	0.05	1937	124075
+ptn	by-published-size	10	117888	unsat	0.02	709	20454
+ptn	by-published-size	10	659550	unsat	0.04	1307	47550
+ptn	by-published-size	10	596811	unsat	0.01	216	6409
+ptn	by-published-size	10	143908	unsat	0.02	1447	99277
+ptn	by-published-size	10	824009	unsat	0.04	1507	101922
+schur5	random	20	4136	unknown	20.01		
+schur5	random	20	8806	unknown	20.02		
+schur5	random	20	37304	unknown	20.01		
+schur5	random	4	552	unknown	4.00		
+schur5	random	4	1564	unknown	4.00		
+schur5	random	4	1799	unknown	4.00		
+schur5	random	4	2342	unknown	4.00		
+schur5	random	4	2355	unknown	4.01		
+schur5	random	4	3707	unknown	4.01		
+schur5	random	4	3851	unknown	4.00		
+schur5	random	4	4940	unknown	4.01		
+schur5	random	4	5563	unknown	4.00		
+schur5	random	4	6003	unknown	4.01		
+schur5	random	4	6958	unknown	4.00		
+schur5	random	4	8959	unknown	4.01		
+schur5	random	4	10380	unknown	4.00		
+schur5	random	4	10564	unknown	4.01		
+schur5	random	4	10780	unknown	4.01		
+schur5	random	4	10884	unknown	4.01		
+schur5	random	4	11082	unknown	4.01		
+schur5	random	4	11377	unknown	4.01		
+schur5	random	4	11582	unknown	4.01		
+schur5	random	4	11629	unknown	4.01		
+schur5	random	4	11918	unknown	4.01		
+schur5	random	4	12544	unknown	4.01		
+schur5	random	4	13620	unknown	4.01		
+schur5	random	4	13908	unsat	2.66	6843	21640528
+schur5	random	4	14537	unknown	4.00		
+schur5	random	4	15113	unknown	4.00		
+schur5	random	4	15475	unknown	4.00		
+schur5	random	4	16378	unknown	4.01		
+schur5	random	4	16488	unknown	4.00		
+schur5	random	4	17573	unknown	4.01		
+schur5	random	4	17580	unknown	4.01		
+schur5	random	4	18292	unknown	4.01		
+schur5	random	4	19877	unknown	4.01		
+schur5	random	4	20195	unknown	4.01		
+schur5	random	4	20288	unknown	4.00		
+schur5	random	4	20438	unknown	4.00		
+schur5	random	4	20871	unknown	4.01		
+schur5	random	4	21278	unknown	4.00		
+schur5	random	4	21309	unknown	4.00		
+schur5	random	4	22378	unknown	4.00		
+schur5	random	4	22989	unknown	4.00		
+schur5	random	4	23186	unknown	4.00		
+schur5	random	4	23195	unknown	4.00		
+schur5	random	4	23573	unknown	4.00		
+schur5	random	4	23663	unknown	4.00		
+schur5	random	4	23717	unknown	4.00		
+schur5	random	4	23857	unsat	2.45	6967	31326169
+schur5	random	4	23872	unknown	4.00		
+schur5	random	4	24026	unknown	4.00		
+schur5	random	4	24384	unknown	4.00		
+schur5	random	4	24905	unknown	4.00		
+schur5	random	4	25791	unknown	4.00		
+schur5	random	4	26206	unknown	4.00		
+schur5	random	4	26652	unknown	4.00		
+schur5	random	4	27176	unknown	4.00		
+schur5	random	4	27762	unsat	1.59	6983	21624042
+schur5	random	4	28225	unknown	4.00		
+schur5	random	4	29154	unknown	4.00		
+schur5	random	4	29206	unknown	4.00		
+schur5	random	4	29214	unknown	4.00		
+schur5	random	4	29799	unknown	4.00		
+schur5	random	4	29921	unknown	4.00		
+schur5	random	4	30213	unknown	4.00		
+schur5	random	4	30239	unknown	4.00		
+schur5	random	4	30468	unknown	4.00		
+schur5	random	4	31442	unknown	4.00		
+schur5	random	4	31891	unknown	4.00		
+schur5	random	4	32041	unknown	4.00		
+schur5	random	4	32114	unknown	4.00		
+schur5	random	4	32642	unknown	4.00		
+schur5	random	4	32824	unknown	4.00		
+schur5	random	4	32904	unknown	4.00		
+schur5	random	4	33047	unknown	4.00		
+schur5	random	4	33251	unknown	4.00		
+schur5	random	4	33363	unknown	4.00		
+schur5	random	4	33435	unknown	4.00		
+schur5	random	4	33439	unknown	4.00		
+schur5	random	4	33548	unknown	4.00		
+schur5	random	4	33669	unknown	4.00		
+schur5	random	4	33777	unknown	4.00		
+schur5	random	4	33932	unknown	4.00		
+schur5	random	4	34431	unknown	4.00		
+schur5	random	4	34456	unknown	4.00		
+schur5	random	4	34758	unknown	4.00		
+schur5	random	4	35664	unsat	2.41	8218	29477272
+schur5	random	4	36542	unknown	4.00		
+schur5	random	4	36693	unknown	4.00		
+schur5	random	4	36734	unknown	4.00		
+schur5	random	4	36844	unknown	4.00		
+schur5	random	4	37206	unsat	0.74	5500	9696041
+schur5	random	4	38090	unknown	4.00		
+schur5	random	4	38532	unknown	4.00		
+schur5	random	4	38895	unknown	4.00		
+schur5	random	4	39712	unknown	4.00		
+schur5	random	4	39768	unknown	4.00		
+schur5	random	4	40358	unknown	4.00		
+schur5	random	4	40393	unknown	4.00		
+schur5	random	4	40847	unknown	4.00		
+schur5	random	4	41843	unknown	4.00		
+schur5	random	4	42692	unknown	4.00		
+schur5	random	4	42921	unknown	4.00		
+schur5	random	4	43181	unknown	4.00		
+schur5	random	4	43365	unknown	4.00		
+schur5	random	4	43892	unknown	4.00		
+schur5	random	4	44203	unsat	1.73	7805	22209956
+schur5	random	4	44647	unknown	4.00		
+schur5	random	4	44842	unknown	4.00		
+schur5	random	4	45848	unknown	4.00		
+schur5	random	4	46282	unknown	4.00		
+schur5	random	4	46869	unknown	4.00		
+schur5	random	4	47384	unknown	4.00		
+schur5	random	4	47434	unknown	4.03		
+schur5	random	4	47572	unknown	4.10		
+schur5	random	4	47576	unknown	4.00		
+schur5	random	4	47903	unknown	4.00		
+schur5	random	4	48130	unknown	4.02		
+schur5	random	4	48233	unknown	4.00		
+schur5	random	4	48405	unknown	4.00		
+schur5	random	4	48811	unknown	4.01		
+schur5	random	4	49415	unknown	4.01		
+schur5	long-cubes	4	1635	unsat	1.18	6411	11348199
+schur5	long-cubes	4	4089	unsat	2.02	9317	19377840
+schur5	long-cubes	4	4463	unsat	0.29	4945	4253670
+schur5	long-cubes	4	4500	unsat	0.03	2059	361158
+schur5	long-cubes	4	6889	unsat	0.08	3543	1331052
+schur5	long-cubes	4	7582	unsat	2.84	9273	34693572
+schur5	long-cubes	4	8621	unknown	4.00		
+schur5	long-cubes	4	10324	unsat	2.60	6830	28693410
+schur5	long-cubes	4	10449	unsat	0.02	1206	146124
+schur5	long-cubes	4	11163	unsat	0.24	5437	3254332
+schur5	long-cubes	4	11263	unsat	0.31	6071	3752113
+schur5	long-cubes	4	12134	unknown	4.00		
+schur5	long-cubes	4	15037	unsat	2.49	9148	27800422
+schur5	long-cubes	4	16974	unsat	2.24	7405	25772293
+schur5	long-cubes	4	17469	unsat	0.30	5139	4069513
+schur5	long-cubes	4	18849	unknown	4.00		
+schur5	long-cubes	4	19048	unsat	2.41	7319	29977913
+schur5	long-cubes	4	21962	unknown	4.00		
+schur5	long-cubes	4	22921	unknown	4.00		
+schur5	long-cubes	4	24496	unknown	4.00		
+schur5	long-cubes	4	25669	unsat	1.60	8754	19310016
+schur5	long-cubes	4	26438	unknown	4.00		
+schur5	long-cubes	4	26587	unknown	4.00		
+schur5	long-cubes	4	28409	unsat	1.36	6061	18529146
+schur5	long-cubes	4	32036	unknown	4.00		
+schur5	long-cubes	4	33162	unsat	0.10	4464	1449860
+schur5	long-cubes	4	33313	unsat	0.95	6138	13191882
+schur5	long-cubes	4	33713	unsat	0.07	3118	1007107
+schur5	long-cubes	4	38546	unsat	1.55	8134	17614753
+schur5	long-cubes	4	39010	unknown	4.00		
+schur5	long-cubes	4	39567	unsat	2.76	8012	32781378
+schur5	long-cubes	4	40597	unsat	2.11	9093	28140714
+schur5	long-cubes	4	43240	unsat	3.37	9543	38506809
+schur5	long-cubes	4	43334	unsat	3.15	7669	36192218
+schur5	long-cubes	4	44260	unsat	0.68	7093	9242223
+schur5	long-cubes	4	44684	unsat	1.93	7649	24376268
+schur5	long-cubes	4	45490	unsat	1.07	6909	13184812
+schur5	long-cubes	4	45653	unknown	4.00		
+schur5	long-cubes	4	46690	unsat	0.31	6174	4381700
+schur5	long-cubes	4	47309	unsat	0.87	6883	9658708
+hexagon30	random	20	33087	unknown	20.01		
+hexagon30	random	20	70446	unknown	20.02		
+hexagon30	random	20	298427	unknown	20.03		
+hexagon30	random	4	4416	unsat	0.14	62	1328
+hexagon30	random	4	11087	unknown	4.06		
+hexagon30	random	4	12291	unknown	4.00		
+hexagon30	random	4	12509	unknown	4.00		
+hexagon30	random	4	13288	unknown	4.01		
+hexagon30	random	4	14390	unsat	1.31	20834	1493253
+hexagon30	random	4	16711	unsat	0.07	27	418
+hexagon30	random	4	18736	unknown	4.01		
+hexagon30	random	4	18835	unknown	4.04		
+hexagon30	random	4	21431	unsat	3.08	47113	11161680
+hexagon30	random	4	25643	unsat	2.63	40664	8505190
+hexagon30	random	4	29650	unknown	4.04		
+hexagon30	random	4	29778	unknown	4.00		
+hexagon30	random	4	30807	unknown	4.01		
+hexagon30	random	4	31660	unknown	4.03		
+hexagon30	random	4	35372	unsat	1.62	30524	4079899
+hexagon30	random	4	39519	unknown	4.01		
+hexagon30	random	4	43466	unknown	4.01		
+hexagon30	random	4	44498	unknown	4.02		
+hexagon30	random	4	48017	unknown	4.01		
+hexagon30	random	4	55657	unknown	4.01		
+hexagon30	random	4	55714	unknown	4.02		
+hexagon30	random	4	60411	unknown	4.02		
+hexagon30	random	4	71566	unknown	4.02		
+hexagon30	random	4	71669	unknown	4.00		
+hexagon30	random	4	83039	unknown	4.01		
+hexagon30	random	4	84508	unknown	4.01		
+hexagon30	random	4	86240	unknown	4.01		
+hexagon30	random	4	87069	unknown	4.03		
+hexagon30	random	4	88649	unknown	4.01		
+hexagon30	random	4	90116	unknown	4.02		
+hexagon30	random	4	91011	unknown	4.03		
+hexagon30	random	4	92653	unknown	4.01		
+hexagon30	random	4	93028	unknown	4.03		
+hexagon30	random	4	95339	unknown	4.03		
+hexagon30	random	4	100351	unknown	4.01		
+hexagon30	random	4	108957	unknown	4.01		
+hexagon30	random	4	110352	unknown	4.03		
+hexagon30	random	4	111264	unknown	4.03		
+hexagon30	random	4	116293	unknown	4.02		
+hexagon30	random	4	118813	unsat	0.13	30	589
+hexagon30	random	4	120903	unknown	4.01		
+hexagon30	random	4	123797	unknown	4.01		
+hexagon30	random	4	128363	unsat	0.07	29	476
+hexagon30	random	4	130811	unknown	4.01		
+hexagon30	random	4	131021	unknown	4.03		
+hexagon30	random	4	131903	unknown	4.01		
+hexagon30	random	4	139378	unknown	4.01		
+hexagon30	random	4	140582	unknown	4.01		
+hexagon30	random	4	140636	unknown	4.02		
+hexagon30	random	4	143183	unknown	4.02		
+hexagon30	random	4	146330	unknown	4.01		
+hexagon30	random	4	159015	unknown	4.02		
+hexagon30	random	4	161553	unsat	1.88	30628	3094851
+hexagon30	random	4	162301	unknown	4.01		
+hexagon30	random	4	163497	unknown	4.02		
+hexagon30	random	4	166968	unknown	4.04		
+hexagon30	random	4	170220	unknown	4.01		
+hexagon30	random	4	170469	unknown	4.01		
+hexagon30	random	4	179023	unknown	4.02		
+hexagon30	random	4	183908	unknown	4.01		
+hexagon30	random	4	185487	unknown	4.06		
+hexagon30	random	4	185559	unknown	4.08		
+hexagon30	random	4	188582	unknown	4.01		
+hexagon30	random	4	188859	unknown	4.02		
+hexagon30	random	4	189299	unknown	4.02		
+hexagon30	random	4	189733	unknown	4.02		
+hexagon30	random	4	189980	unknown	4.02		
+hexagon30	random	4	190849	unknown	4.01		
+hexagon30	random	4	190975	unknown	4.01		
+hexagon30	random	4	192204	unknown	4.02		
+hexagon30	random	4	195067	unsat	0.07	29	476
+hexagon30	random	4	195611	unsat	0.07	27	416
+hexagon30	random	4	199238	unknown	4.02		
+hexagon30	random	4	206325	unknown	4.01		
+hexagon30	random	4	209644	unknown	4.01		
+hexagon30	random	4	213213	unknown	4.01		
+hexagon30	random	4	217408	unknown	4.01		
+hexagon30	random	4	221731	unknown	4.01		
+hexagon30	random	4	222095	unsat	0.07	27	416
+hexagon30	random	4	225795	unknown	4.02		
+hexagon30	random	4	233232	unknown	4.02		
+hexagon30	random	4	233643	unsat	0.07	27	431
+hexagon30	random	4	233712	unknown	4.01		
+hexagon30	random	4	238388	unknown	4.01		
+hexagon30	random	4	239365	unknown	4.01		
+hexagon30	random	4	241704	unknown	4.02		
+hexagon30	random	4	241910	unsat	0.14	64	1510
+hexagon30	random	4	243739	unknown	4.01		
+hexagon30	random	4	251536	unknown	4.02		
+hexagon30	random	4	255124	unknown	4.02		
+hexagon30	random	4	256328	unknown	4.02		
+hexagon30	random	4	256909	unknown	4.02		
+hexagon30	random	4	261130	unknown	4.02		
+hexagon30	random	4	262585	unknown	4.01		
+hexagon30	random	4	263228	unknown	4.01		
+hexagon30	random	4	264372	unknown	4.01		
+hexagon30	random	4	266002	unknown	4.01		
+hexagon30	random	4	266898	unknown	4.02		
+hexagon30	random	4	267475	unknown	4.02		
+hexagon30	random	4	267505	unknown	4.02		
+hexagon30	random	4	268379	unknown	4.02		
+hexagon30	random	4	269347	unsat	3.90	57161	13077080
+hexagon30	random	4	270214	unknown	4.01		
+hexagon30	random	4	271449	unknown	4.02		
+hexagon30	random	4	273869	unknown	4.02		
+hexagon30	random	4	275443	unknown	4.04		
+hexagon30	random	4	275646	unknown	4.00		
+hexagon30	random	4	278060	unknown	4.01		
+hexagon30	random	4	285306	unknown	4.01		
+hexagon30	random	4	292334	unknown	4.01		
+hexagon30	random	4	293544	unsat	2.68	42631	7805898
+hexagon30	random	4	293869	unknown	4.01		
+hexagon30	random	4	294749	unknown	4.00		
+hexagon30	random	4	297641	unknown	4.01		
+hexagon30	random	4	301159	unknown	4.01		
+hexagon30	random	4	304719	unknown	4.01		
+hexagon30	random	4	308253	unknown	4.01		
+hexagon30	random	4	310222	unknown	4.01		
+hexagon30	random	4	311158	unknown	4.04		

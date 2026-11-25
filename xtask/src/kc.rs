@@ -1591,7 +1591,7 @@ fn summarize(measurements: &Path, manifest_path: Option<&Path>) -> Result<()> {
 // ---------------------------------------------------------------------------
 // lrat-trim, select-decide
 
-fn lrat_trim(input: &Path, output: &Path) -> Result<()> {
+pub(crate) fn lrat_trim(input: &Path, output: &Path) -> Result<()> {
     let text =
         fs::read_to_string(input).with_context(|| format!("{}: cannot read", input.display()))?;
     let int =
