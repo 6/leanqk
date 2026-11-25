@@ -661,11 +661,20 @@ impl Nbe<'_> {
             return Ok(V(c));
         }
         let mut t = v;
+        let mut first = true;
         loop {
             let t_l = self.whnf_core(t, false, false)?;
             if let Some(n) = self.reduce_nat(t_l)? {
                 self.a.rm(v).whnf = n.0;
                 return Ok(n);
+            }
+            if first && self.is_delta(t_l).is_some() {
+                first = false;
+                if let Some(n) = self.closed_whnf(t_l) {
+                    self.a.rm(v).whnf = n.0;
+                    self.a.rm(n).whnf = n.0;
+                    return Ok(n);
+                }
             }
             match self.unfold_definition(t_l) {
                 Some(n) => t = n,

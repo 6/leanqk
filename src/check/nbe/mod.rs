@@ -13,6 +13,7 @@
 //! * `infer.rs`: type inference and checking;
 //! * `readback.rs`: values back to terms, for error messages.
 
+mod closed;
 mod conv;
 mod eval;
 mod infer;
@@ -32,7 +33,7 @@ use crate::name::NameId;
 
 use super::ext::Ext;
 use super::store::{IdMap, IdSet, Store};
-use super::tc::{KErr, R};
+use super::tc::{KErr, R, Tc};
 use val::{Arena, Ls, V};
 
 /// A free variable opened while checking.
@@ -94,6 +95,12 @@ pub struct Nbe<'e> {
     vargs: Vec<V>,
     /// Nesting of eager argument evaluation (see `thunk`).
     eager_depth: u32,
+    /// Whether closed values go to the closed-term evaluator (`closed.rs`).
+    closed_eval: bool,
+    /// The evaluator's checker, over `st` while it runs.
+    ev: Option<Box<Tc<'e>>>,
+    /// Whether `ev` was used since `begin`.
+    ev_used: bool,
 }
 
 /// Empty `c`, dropping its storage if it is large: clearing a table costs
@@ -182,6 +189,9 @@ impl<'e> Nbe<'e> {
             terms: Vec::new(),
             vargs: Vec::new(),
             eager_depth: 0,
+            closed_eval: super::eval::enabled(),
+            ev: None,
+            ev_used: false,
         }
     }
 
@@ -200,6 +210,11 @@ impl<'e> Nbe<'e> {
         self.limit = limit;
         self.lparams.clear();
         self.eager = false;
+        if self.ev_used {
+            // What the evaluator keeps is per declaration, as in `Tc`.
+            self.ev = None;
+            self.ev_used = false;
+        }
         self.terms.clear();
         self.vargs.clear();
         self.eager_depth = 0;
@@ -213,6 +228,8 @@ impl<'e> Nbe<'e> {
     /// Forget everything.
     pub fn reset(&mut self, limit: u32) {
         self.limit = limit;
+        self.ev = None;
+        self.ev_used = false;
         self.lparams.clear();
         self.eager = false;
         shrink(&mut self.fvars);
