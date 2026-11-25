@@ -140,6 +140,9 @@ pub struct Options {
     /// Leave theorem values unbuilt, to be built when checked (see
     /// [`crate::env::Env::value_into`]).
     pub lazy_proofs: bool,
+    /// Threads for parsing a regular file (0: all cores; 1: one thread
+    /// parses while another interns, as for a stream).
+    pub threads: usize,
 }
 
 /// Read an export from a file, with options.
@@ -169,15 +172,79 @@ fn read_open_file(f: File, opts: &Options) -> Result<(Env, ReadStats), ReadError
         Ok(m) if m.is_file() => m.len(),
         _ => 0,
     };
+    let threads = match opts.threads {
+        0 => std::thread::available_parallelism().map_or(1, |n| n.get()),
+        n => n,
+    };
+    if size == 0 {
+        return run(
+            state(opts, size, false),
+            BufReader::with_capacity(1 << 20, f),
+        );
+    }
+    // A regular file is read optimistically: expressions are added
+    // without hash-consing (an export lists each term once) and indexed
+    // at the end, on all threads. If two turn out equal after all, the
+    // file is read again with hash-consing.
+    let t0 = std::time::Instant::now();
+    let (mut env, stats) = read_regular(&f, size, threads, state(opts, size, true))?;
+    let t1 = std::time::Instant::now();
+    let ix = env.exprs.index(threads);
+    if std::env::var_os("NITROLEAN_READ_PROFILE").is_some() {
+        eprintln!(
+            "read {:.3} s, index {:.3} s, duplicate {:?}",
+            (t1 - t0).as_secs_f64(),
+            t1.elapsed().as_secs_f64(),
+            ix.err()
+        );
+    }
+    match ix {
+        Ok(()) => Ok((env, stats)),
+        Err(_) => {
+            drop(env);
+            read_regular(&f, size, threads, state(opts, size, false))
+        }
+    }
+}
+
+fn state(opts: &Options, size: u64, append: bool) -> State {
     let mut st = State::new();
+    st.append = append;
     if opts.lazy_proofs {
         st.lazy = Some(Box::default());
     }
-    // About 94% of the lines of a real export are expressions, and a line
-    // averages 55 bytes; reserving up front avoids rehashing the big table.
-    // With lazy proofs, about a third of them are interned.
-    let per = if opts.lazy_proofs { 192 } else { 64 };
-    st.env.exprs.reserve((size / per).min(1 << 31) as usize);
+    if !append {
+        // About 94% of the lines of a real export are expressions, and a
+        // line averages 55 bytes; reserving up front avoids rehashing the
+        // big table. With lazy proofs, about a third of them are interned.
+        let per = if opts.lazy_proofs { 192 } else { 64 };
+        st.env.exprs.reserve((size / per).min(1 << 31) as usize);
+    }
+    st
+}
+
+fn read_regular(
+    f: &File,
+    size: u64,
+    threads: usize,
+    st: State,
+) -> Result<(Env, ReadStats), ReadError> {
+    if threads > 1 {
+        // The interning stage runs on this thread.
+        let parsers = threads - 1;
+        return run_with(st, |full, _empty| produce_parallel(f, size, parsers, full));
+    }
+    use std::io::{Seek, SeekFrom};
+    let mut f = f.try_clone().map_err(|e| ReadError {
+        line: 0,
+        class: ErrorClass::Io,
+        msg: format!("read error: {e}"),
+    })?;
+    f.seek(SeekFrom::Start(0)).map_err(|e| ReadError {
+        line: 0,
+        class: ErrorClass::Io,
+        msg: format!("read error: {e}"),
+    })?;
     run(st, BufReader::with_capacity(1 << 20, f))
 }
 
@@ -316,8 +383,15 @@ impl Batch {
     }
 }
 
-fn run<B: BufRead + Send>(mut st: State, r: B) -> Result<(Env, ReadStats), ReadError> {
-    let res = run_inner(&mut st, r);
+fn run<B: BufRead + Send>(st: State, r: B) -> Result<(Env, ReadStats), ReadError> {
+    run_with(st, |full, empty| produce(r, full, empty))
+}
+
+fn run_with(
+    mut st: State,
+    produce: impl FnOnce(SyncSender<Batch>, Receiver<Batch>) + Send,
+) -> Result<(Env, ReadStats), ReadError> {
+    let res = run_inner(&mut st, produce);
     if let Some(b) = st.lazy.take() {
         st.env.lazy = b.finish();
     }
@@ -325,11 +399,14 @@ fn run<B: BufRead + Send>(mut st: State, r: B) -> Result<(Env, ReadStats), ReadE
     Ok((st.env, stats))
 }
 
-fn run_inner<B: BufRead + Send>(st: &mut State, r: B) -> Result<ReadStats, ReadError> {
+fn run_inner(
+    st: &mut State,
+    produce: impl FnOnce(SyncSender<Batch>, Receiver<Batch>) + Send,
+) -> Result<ReadStats, ReadError> {
     let (full_tx, full_rx) = mpsc::sync_channel::<Batch>(4);
     let (empty_tx, empty_rx) = mpsc::sync_channel::<Batch>(8);
     let res = std::thread::scope(|s| {
-        s.spawn(move || produce(r, full_tx, empty_rx));
+        s.spawn(move || produce(full_tx, empty_rx));
         st.consume(full_rx, empty_tx)
     });
     let mut stats = res?;
@@ -337,6 +414,141 @@ fn run_inner<B: BufRead + Send>(st: &mut State, r: B) -> Result<ReadStats, ReadE
     stats.id_map_bytes =
         st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
     Ok(stats)
+}
+
+/// Bytes of a file each parsing thread reads at a time.
+const CHUNK: u64 = 4 << 20;
+
+/// The parsing stage for a regular file, on `threads` threads: thread `t`
+/// parses chunks `t`, `t + threads`, ... (each the whole lines that start
+/// in it), and this thread forwards their batches in file order, with
+/// line numbers made absolute.
+fn produce_parallel(f: &File, size: u64, threads: usize, full: SyncSender<Batch>) {
+    let chunks = size.div_ceil(CHUNK).max(1) as usize;
+    let threads = threads.clamp(1, chunks);
+    std::thread::scope(|s| {
+        let mut rxs = Vec::new();
+        for t in 0..threads {
+            let (tx, rx) = mpsc::sync_channel::<Batch>(2);
+            rxs.push(rx);
+            s.spawn(move || {
+                let mut tape = Tape::new();
+                let mut buf = Vec::new();
+                for c in (t..chunks).step_by(threads) {
+                    let b = parse_chunk(f, size, c as u64, &mut tape, &mut buf);
+                    let stop = b.end.as_ref().is_some_and(|e| e.is_err());
+                    if tx.send(b).is_err() || stop {
+                        return;
+                    }
+                }
+            });
+        }
+        let (mut lines, mut bytes) = (0u64, 0u64);
+        for c in 0..chunks {
+            let Ok(mut b) = rxs[c % threads].recv() else {
+                return;
+            };
+            for l in &mut b.lines {
+                *l += lines;
+            }
+            let err = match b.end.take() {
+                Some(Err(mut e)) => {
+                    e.line += lines;
+                    Some(e)
+                }
+                _ => None,
+            };
+            lines += b.lines_read;
+            bytes += b.bytes_read;
+            let last = err.is_some() || c + 1 == chunks;
+            if last {
+                b.end = Some(err.map_or(Ok(()), Err));
+                b.lines_read = lines;
+                b.bytes_read = bytes;
+            }
+            if full.send(b).is_err() || last {
+                // Unblock the parsers before the scope joins them.
+                drop(rxs);
+                return;
+            }
+        }
+    });
+}
+
+/// Parse chunk `c` of a file: the lines that start in bytes
+/// `[c * CHUNK, (c + 1) * CHUNK)`. Line numbers are relative to the
+/// chunk; `lines_read` and `bytes_read` are the chunk's.
+fn parse_chunk(f: &File, size: u64, c: u64, tape: &mut Tape, buf: &mut Vec<u8>) -> Batch {
+    use std::os::unix::fs::FileExt;
+    let mut batch = Batch::default();
+    let (lo, hi) = (c * CHUNK, ((c + 1) * CHUNK).min(size));
+    // Read the chunk, one byte before it (to see whether a line starts at
+    // `lo`), and on until the end of its last line.
+    let from = lo.saturating_sub(1);
+    buf.clear();
+    let mut end = hi;
+    let res: io::Result<()> = (|| {
+        buf.resize((hi - from) as usize, 0);
+        f.read_exact_at(buf, from)?;
+        while end < size && buf.last() != Some(&b'\n') {
+            let n = (64 << 10).min(size - end) as usize;
+            let k = buf.len();
+            buf.resize(k + n, 0);
+            f.read_exact_at(&mut buf[k..], end)?;
+            end += n as u64;
+            // Keep only up to the first newline of what was added.
+            if let Some(p) = buf[k..].iter().position(|&b| b == b'\n') {
+                end -= (n - p - 1) as u64;
+                buf.truncate(k + p + 1);
+            }
+        }
+        Ok(())
+    })();
+    if let Err(e) = res {
+        batch.end = Some(Err(ReadError {
+            line: 1,
+            class: ErrorClass::Io,
+            msg: format!("read error: {e}"),
+        }));
+        return batch;
+    }
+    // Skip the line that started before `lo`.
+    let mut pos = if c == 0 {
+        0
+    } else {
+        match buf.iter().position(|&b| b == b'\n') {
+            Some(p) => p + 1,
+            None => buf.len(),
+        }
+    };
+    let mut seen_first = c != 0;
+    let mut lines = 0u64;
+    let mut bytes = 0u64;
+    while pos < buf.len() {
+        let next = match buf[pos..].iter().position(|&b| b == b'\n') {
+            Some(p) => pos + p + 1,
+            None => buf.len(),
+        };
+        let line = &buf[pos..next];
+        lines += 1;
+        bytes += line.len() as u64;
+        let before = batch.items.len();
+        if let Err(f) = parse_line(tape, line, &mut batch, &mut seen_first) {
+            batch.end = Some(Err(ReadError {
+                line: lines,
+                class: f.class,
+                msg: f.msg,
+            }));
+            break;
+        }
+        if batch.items.len() > before {
+            batch.lines.push(lines);
+        }
+        pos = next;
+    }
+    batch.lines_read = lines;
+    batch.bytes_read = bytes;
+    batch
 }
 
 /// The parsing stage. Stops at the end of input, at the first error (which
@@ -688,6 +900,8 @@ struct State {
     rules_buf: Vec<RecRule>,
     /// With lazy proofs: the pending and stored records (see `lazy`).
     lazy: Option<Box<lazy::Builder>>,
+    /// Add expressions without hash-consing them (see `read_open_file`).
+    append: bool,
 }
 
 /// The single-constant declaration records.
@@ -763,6 +977,7 @@ impl State {
             names_buf: Vec::new(),
             rules_buf: Vec::new(),
             lazy: None,
+            append: false,
         }
     }
 
@@ -810,7 +1025,7 @@ impl State {
         let r = self.lookup(Table::Expr, id)?;
         match &mut self.lazy {
             None => Ok(ExprId(r)),
-            Some(b) => b.promote(&mut self.env, r),
+            Some(b) => b.promote(&mut self.env, self.append, r),
         }
     }
 
@@ -1078,7 +1293,11 @@ impl State {
                 return self.bind(Table::Expr, id, inner.0);
             }
         };
-        let (e, fresh) = self.env.exprs.intern(node, &self.env.levels)?;
+        let (e, fresh) = if self.append {
+            (self.env.exprs.append(node, &self.env.levels)?, true)
+        } else {
+            self.env.exprs.intern(node, &self.env.levels)?
+        };
         if !fresh {
             self.shared_exprs += 1;
         }

@@ -230,7 +230,7 @@ impl Builder {
     }
 
     /// Intern the term `r` refers to (and what it needs) in `env`.
-    pub(super) fn promote(&mut self, env: &mut Env, r: u32) -> R<ExprId> {
+    pub(super) fn promote(&mut self, env: &mut Env, append: bool, r: u32) -> R<ExprId> {
         if let Some(id) = self.known(r) {
             return Ok(ExprId(id));
         }
@@ -288,7 +288,11 @@ impl Builder {
                     }
                     Node::Proj(s, i, x) => ExprNode::Proj(s, i, e(x)),
                 };
-                let (id, _) = env.exprs.intern(node, &env.levels)?;
+                let id = if append {
+                    env.exprs.append(node, &env.levels)?
+                } else {
+                    env.exprs.intern(node, &env.levels)?.0
+                };
                 if id.0 >= PEND {
                     return Err(Fail::from(Overflow("too many expressions")));
                 }
@@ -523,7 +527,10 @@ mod tests {
         };
         let path = std::path::Path::new(&path);
         let (eager, _) = read_file_with(path, &Options::default()).expect("reads");
-        let lazy_opts = Options { lazy_proofs: true };
+        let lazy_opts = Options {
+            lazy_proofs: true,
+            ..Options::default()
+        };
         let (lazy, _) = read_file_with(path, &lazy_opts).expect("reads");
         assert!(lazy.lazy_values() > 0);
         let d = crate::compare::compare(&eager, &lazy);
