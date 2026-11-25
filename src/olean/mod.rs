@@ -571,18 +571,18 @@ fn work(par: &Par, loc: &mut par::Local, m: &Module, lazy: bool) -> Done {
     let d = t.elapsed();
     let files = parts.len();
     let has_lazy = !tape.lazy.is_empty();
+    if has_lazy {
+        for p in &parts {
+            p.release();
+        }
+    }
     TAPE_EXPRS.fetch_add(tape.exprs.len() as u64, Ordering::Relaxed);
     TAPE_NAMES.fetch_add(tape.names.len() as u64, Ordering::Relaxed);
     TAPE_FRONTIER.fetch_add(tape.frontier.len() as u64, Ordering::Relaxed);
     let mut out = build::intern_module(par, loc, &tape).map_err(|e| e.at(&m.path))?;
-    let keep = has_lazy.then(|| {
-        for p in &parts {
-            p.release();
-        }
-        lazy::LazyModule {
-            parts,
-            pre: std::mem::take(&mut out.frontier).into_iter().collect(),
-        }
+    let keep = has_lazy.then(|| lazy::LazyModule {
+        parts,
+        pre: std::mem::take(&mut out.frontier).into_iter().collect(),
     });
     DECODE_NS.fetch_add(d.as_nanos() as u64, Ordering::Relaxed);
     INTERN_NS.fetch_add((t.elapsed() - d).as_nanos() as u64, Ordering::Relaxed);

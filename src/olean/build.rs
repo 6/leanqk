@@ -45,9 +45,9 @@ pub struct ModOut {
     order: Vec<usize>,
     /// Where each lazily read value is: (declaration, address, holder).
     lazy: HashMap<usize, (u64, u64)>,
-    /// The objects lazy values point to that were decoded: (address,
+    /// The objects lazy values point to that were decoded: (memo slot,
     /// shared id), as in [`super::decode::Tape::frontier`].
-    pub frontier: Vec<(u64, u32)>,
+    pub frontier: Vec<(u32, u32)>,
 }
 
 /// Intern a module's tape into `par`.

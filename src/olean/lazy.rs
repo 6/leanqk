@@ -74,7 +74,7 @@ impl LazyValues for OleanValues {
             .modules
             .iter()
             .flatten()
-            .map(|m| m.pre.capacity() * 17)
+            .map(|m| m.pre.capacity() * 9)
             .sum();
         self.handles.capacity() * 24 + self.modules.capacity() * 24 + pre
     }
