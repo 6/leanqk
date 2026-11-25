@@ -477,8 +477,8 @@ application is built on the way. A major premise that is not a constructor
 in the spine, leaves the application to the usual unfolding, so the result
 is the weak head normal form `whnf` gave before. Definitional equality
 still unfolds such definitions one step at a time. On the corpus
-(`cargo xtask corpus`, 289 exports) the checking time goes from 37.2 to
-22.0 s.
+(`cargo xtask corpus`, 289 exports) the checking time goes from 34.1 to
+21.9 s.
 
 ## Built-in operations of several Lean versions
 

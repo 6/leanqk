@@ -87,4 +87,4 @@ Each constant switched off in turn, against all but `PARAM_CLASSES` on:
 `casesOn`s and small `Nat` literals save nothing measurable on Mathlib,
 where `whnf` seldom meets a matcher on a constructor or arithmetic on
 literals. Direct `casesOn`s take the corpus (`cargo xtask corpus`) from
-37.2 to 22.0 s.
+34.1 to 21.9 s.
