@@ -187,8 +187,8 @@ const LINE: usize = 8;
 /// nothing is ever removed, so a probe may stop at the first empty slot.
 pub struct IdTable {
     slots: Box<[AtomicU64]>,
-    /// Number of lines minus one (the line count is a power of two).
-    mask: usize,
+    /// Number of lines.
+    lines: usize,
     len: AtomicUsize,
 }
 
@@ -206,10 +206,12 @@ fn tag_of(h: u64) -> u64 {
 impl IdTable {
     /// A table with room for about `n` ids before it must grow.
     pub fn with_capacity(n: usize) -> Self {
-        let lines = (n.div_ceil(LINE) * 8 / 7).next_power_of_two().max(1);
+        // Any number of lines works (a probe maps the hash onto them by a
+        // multiplication), so the table is no bigger than it must be.
+        let lines = (n.div_ceil(LINE) * 4 / 3 + 1).min(u32::MAX as usize);
         IdTable {
             slots: (0..lines * LINE).map(|_| AtomicU64::new(0)).collect(),
-            mask: lines - 1,
+            lines,
             len: AtomicUsize::new(0),
         }
     }
@@ -233,7 +235,7 @@ impl IdTable {
 
     #[inline]
     fn line(&self, h: u64) -> usize {
-        (h as usize) & self.mask
+        ((h as u32 as u64 * self.lines as u64) >> 32) as usize
     }
 
     /// Touch the first line `h` probes, so that a batch of probes can
@@ -258,7 +260,7 @@ impl IdTable {
                     return Some(v as u32);
                 }
             }
-            line = (line + 1) & self.mask;
+            line = if line + 1 == self.lines { 0 } else { line + 1 };
         }
     }
 
@@ -276,7 +278,7 @@ impl IdTable {
                     return;
                 }
             }
-            line = (line + 1) & self.mask;
+            line = if line + 1 == self.lines { 0 } else { line + 1 };
         }
     }
 
@@ -320,7 +322,7 @@ impl IdTable {
                 }
                 i += 1;
             }
-            line = (line + 1) & self.mask;
+            line = if line + 1 == self.lines { 0 } else { line + 1 };
         }
     }
 
@@ -457,7 +459,7 @@ impl<T: Node> Big<T> {
                         let hi = (lo + STEP).min(n);
                         // Hash a group of nodes and touch their lines
                         // first, so that the cache misses overlap.
-                        const GROUP: usize = 16;
+                        const GROUP: usize = 32;
                         let mut hs = [0u64; GROUP];
                         let mut acc = 0u64;
                         for g in (lo..hi).step_by(GROUP) {

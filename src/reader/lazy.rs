@@ -188,9 +188,6 @@ pub(super) struct Builder {
     pend_ids: Vec<u32>,
     /// `mdata` records among them: export id, the reference it stands for.
     aliases: Vec<(u64, u32)>,
-    /// A bit per word: set at the head of each stored record interned
-    /// since (see [`DONE`]).
-    marks: Vec<u64>,
     /// Per lazy value, its root reference (pending until the flush).
     roots: Vec<u32>,
     /// Roots added since the last flush start here.
@@ -322,11 +319,6 @@ impl Builder {
                     let off = (top & !KIND) as usize;
                     self.words[off] |= DONE;
                     self.words[off + 1] = id.0;
-                    let n = self.words.len().div_ceil(64);
-                    if self.marks.len() < n {
-                        self.marks.resize(n, 0);
-                    }
-                    self.marks[off / 64] |= 1 << (off % 64);
                 }
                 stack.pop();
             }
@@ -409,41 +401,8 @@ impl Builder {
         if self.roots.is_empty() {
             return None;
         }
-        // Refer to the stored records interned since by their arena ids
-        // (a bit per word marks them, to spare most reads of their heads).
-        let marks = std::mem::take(&mut self.marks);
-        let words = &mut self.words;
-        let tr = |words: &[u32], r: u32| -> u32 {
-            let off = (r & !KIND) as usize;
-            if r & KIND == STORED
-                && marks
-                    .get(off / 64)
-                    .is_some_and(|m| m >> (off % 64) & 1 != 0)
-            {
-                words[off + 1]
-            } else {
-                r
-            }
-        };
-        let mut off = 0;
-        while off < words.len() {
-            let head = words[off];
-            let (size, refs): (usize, &[usize]) = match head & 7 {
-                T_APP => (3, &[1, 2]),
-                T_LAM | T_PI => (4, &[2, 3]),
-                T_LET => (5, &[2, 3, 4]),
-                _ => (4, &[3]),
-            };
-            if head & DONE == 0 {
-                for &i in refs {
-                    words[off + i] = tr(words, words[off + i]);
-                }
-            }
-            off += size;
-        }
-        for r in &mut self.roots {
-            *r = tr(words, *r);
-        }
+        // Stored records interned since stay where they are, marked
+        // `DONE`; building a value takes their arena ids from there.
         self.words.shrink_to_fit();
         self.roots.shrink_to_fit();
         Some(Box::new(Stored {
@@ -454,7 +413,8 @@ impl Builder {
 }
 
 /// Theorem values of an export, kept as stored records (which refer to
-/// interned terms by their arena ids).
+/// interned terms by their arena ids, or are themselves interned and
+/// marked [`DONE`]).
 struct Stored {
     words: Vec<u32>,
     roots: Vec<u32>,
@@ -497,11 +457,16 @@ impl Stored {
         stack: &mut Vec<u32>,
     ) -> Result<ExprId, String> {
         // The sink's id for `r`, if known.
+        let words = &self.words;
         let done = |memo: &HashMap<u32, ExprId>, sink: &mut dyn TermSink, r: u32| {
             if r & KIND == 0 {
                 return Some(sink.shared_expr(ExprId(r)));
             }
-            memo.get(&(r & !KIND)).copied()
+            let off = (r & !KIND) as usize;
+            if words[off] & DONE != 0 {
+                return Some(sink.shared_expr(ExprId(words[off + 1])));
+            }
+            memo.get(&(off as u32)).copied()
         };
         stack.push(root);
         while let Some(&top) = stack.last() {
