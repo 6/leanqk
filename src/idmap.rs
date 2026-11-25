@@ -25,7 +25,10 @@ pub struct IdMap {
     dense_mode: bool,
     dense: Vec<u32>,
     sparse: HashMap<u64, u32>,
-    count: u64,
+    /// The id [`IdMap::bind`] takes on its fast path: the next one of the
+    /// identity map, or of the dense table while there are no sparse
+    /// entries (else `u64::MAX`).
+    next: u64,
 }
 
 impl IdMap {
@@ -36,7 +39,7 @@ impl IdMap {
             dense_mode: false,
             dense: Vec::new(),
             sparse: HashMap::new(),
-            count: prebound,
+            next: prebound,
         }
     }
 
@@ -55,18 +58,31 @@ impl IdMap {
     pub fn bind(&mut self, id: u64, target: u32) -> Result<(), BindError> {
         // The common cases: the next id of an identity map, or of a dense
         // one.
-        if !self.dense_mode {
-            if id == self.identity && target as u64 == id {
-                self.identity += 1;
-                self.count += 1;
+        if id == self.next {
+            if self.dense_mode {
+                self.dense.push(target);
+                self.next += 1;
                 return Ok(());
             }
-        } else if id == self.dense.len() as u64 && self.sparse.is_empty() && id < NONE as u64 {
-            self.dense.push(target);
-            self.count += 1;
-            return Ok(());
+            if target as u64 == id {
+                self.identity += 1;
+                self.next += 1;
+                return Ok(());
+            }
         }
-        self.bind_slow(id, target)
+        let r = self.bind_slow(id, target);
+        self.next = self.fast_next();
+        r
+    }
+
+    fn fast_next(&self) -> u64 {
+        if !self.dense_mode {
+            self.identity
+        } else if self.sparse.is_empty() {
+            self.dense.len() as u64
+        } else {
+            u64::MAX
+        }
     }
 
     #[inline(never)]
@@ -75,16 +91,14 @@ impl IdMap {
             if id < self.identity {
                 return Err(BindError::Duplicate);
             }
-            if id == self.identity && target as u64 == id {
-                self.identity += 1;
-                self.count += 1;
-                return Ok(());
-            }
             self.dense.clear();
             self.dense.extend(0..self.identity as u32);
             self.dense_mode = true;
         }
-        let limit = self.count.saturating_mul(2).saturating_add(SLACK);
+        // Ids up to about twice the count bound so far go in the dense
+        // table (holes count, which only makes it a little roomier).
+        let count = (self.dense.len() + self.sparse.len()) as u64;
+        let limit = count.saturating_mul(2).saturating_add(SLACK);
         if (id as usize) < self.dense.len() {
             let slot = &mut self.dense[id as usize];
             if *slot != NONE {
@@ -108,7 +122,6 @@ impl IdMap {
         } else if self.sparse.insert(id, target).is_some() {
             return Err(BindError::Duplicate);
         }
-        self.count += 1;
         Ok(())
     }
 
@@ -146,6 +159,7 @@ impl IdMap {
                 self.sparse.insert(id, target);
             }
         }
+        self.next = self.fast_next();
     }
 
     #[cfg(test)]
