@@ -151,6 +151,15 @@ impl<T> Chunked<T> {
         &self.chunks[(i >> CHUNK_BITS) as usize][(i & CHUNK_MASK) as usize]
     }
 
+    /// The chunks, in order (each but the last full).
+    pub fn chunks(&self) -> &[Vec<T>] {
+        &self.chunks
+    }
+
+    pub fn chunks_mut(&mut self) -> &mut [Vec<T>] {
+        &mut self.chunks
+    }
+
     #[inline]
     pub fn push(&mut self, v: T) {
         match self.chunks.last_mut() {
@@ -428,6 +437,10 @@ impl<T: Node> Big<T> {
     #[inline]
     pub fn get(&self, id: u32) -> &T {
         self.nodes.get(id)
+    }
+
+    pub fn nodes(&self) -> &Chunked<T> {
+        &self.nodes
     }
 
     /// The id of `node`, if present.
