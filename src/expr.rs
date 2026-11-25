@@ -307,6 +307,29 @@ impl Exprs {
         Ok(self.add(node, levels, true)?.0)
     }
 
+    /// [`Exprs::append`] for an application, binder, `let` or projection
+    /// (the nodes that need no levels).
+    #[inline]
+    pub(crate) fn append_compound(&mut self, node: ExprNode) -> Result<ExprId, ExprError> {
+        let d = match node {
+            ExprNode::App(f, a) => self.data(f).union(self.data(a)),
+            ExprNode::Lam(_, _, t, b) | ExprNode::Pi(_, _, t, b) => {
+                self.data(t).union(self.data(b).under_binder())
+            }
+            ExprNode::Let(h, b) => {
+                let h = self.let_binder(h);
+                self.data(h.ty)
+                    .union(self.data(h.value))
+                    .union(self.data(b).under_binder())
+            }
+            ExprNode::Proj(_, _, e) => self.data(e),
+            _ => unreachable!("not a compound node"),
+        };
+        let id = self.arena.push_unindexed(node)?;
+        self.data.push(d);
+        Ok(ExprId(id))
+    }
+
     /// Index every node, on `threads` threads; if two are equal, a pair
     /// of their ids (the later, the earlier).
     pub fn index(&mut self, threads: usize) -> Result<(), (ExprId, ExprId)> {
