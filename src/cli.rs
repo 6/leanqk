@@ -203,6 +203,8 @@ pub fn main() -> ExitCode {
             &olean::Options {
                 search_path,
                 threads,
+                // An experiment: compare with theorem values read lazily.
+                lazy_proofs: std::env::var_os("NITROLEAN_LAZY_PROOFS").is_some(),
                 ..Default::default()
             },
             show,

@@ -19,7 +19,9 @@ use hashbrown::HashMap;
 use super::Fail;
 use super::decode::{LAZY, Tape};
 use super::par::{Local, Par};
-use crate::env::{Block, BlockKind, Decl, DeclKind, Env, NameList, QuotKind, RecRule};
+use crate::env::{
+    Block, BlockKind, Decl, DeclKind, Env, LAZY_BASE, NameList, QuotKind, RecRule, is_lazy,
+};
 use crate::expr::{ExprData, ExprId, ExprNode, LetBinder};
 use crate::level::{LevelId, LevelList, LevelNode};
 use crate::name::{NameId, NameNode};
@@ -41,6 +43,8 @@ pub struct ModOut {
     rules: Vec<RecRule>,
     units: Vec<Unit>,
     order: Vec<usize>,
+    /// Where each lazily read value is: (declaration, address, holder).
+    lazy: HashMap<usize, (u64, u64)>,
 }
 
 /// Intern a module's tape into `par`.
@@ -226,12 +230,18 @@ pub fn intern_module(par: &Par, loc: &mut Local, t: &Tape) -> Result<ModOut, Fai
             }
         })
         .collect();
+    let lazy = t
+        .lazy
+        .iter()
+        .map(|l| (l.decl as usize, (l.ptr, l.holder)))
+        .collect();
     Ok(ModOut {
         decls,
         pool,
         rules,
         units,
         order,
+        lazy,
     })
 }
 
@@ -247,6 +257,8 @@ pub struct Assembler<'p> {
     par: &'p Par,
     /// The module index of each declaration of `env`.
     owners: Vec<u32>,
+    /// The lazily read values: (module, address, holder).
+    pub handles: Vec<(u32, u64, u64)>,
 }
 
 impl<'p> Assembler<'p> {
@@ -255,6 +267,7 @@ impl<'p> Assembler<'p> {
             env,
             par,
             owners: Vec::new(),
+            handles: Vec::new(),
         }
     }
 
@@ -301,9 +314,24 @@ impl<'p> Assembler<'p> {
             .ok_or_else(|| Fail::malformed("too many names in declaration lists"))
     }
 
-    /// Module `m`'s declaration `i` with its lists moved into `env`'s pools.
-    fn moved(&mut self, m: &ModOut, i: usize) -> Result<Decl, Fail> {
-        let d = m.decls[i];
+    /// Module `m`'s declaration `i` with its lists moved into `env`'s pools
+    /// (and a lazily read value given its handle).
+    fn moved(&mut self, m: &ModOut, i: usize, module: u32) -> Result<Decl, Fail> {
+        let mut d = m.decls[i];
+        if let DeclKind::Theorem { value, .. } = &mut d.kind
+            && *value == LAZY
+        {
+            let &(ptr, holder) = m
+                .lazy
+                .get(&i)
+                .ok_or_else(|| Fail::malformed("internal: a lazy value without its place"))?;
+            let k = self.handles.len();
+            if k >= (u32::MAX - LAZY_BASE) as usize {
+                return Err(Fail::malformed("too many lazily read values"));
+            }
+            self.handles.push((module, ptr, holder));
+            *value = ExprId(LAZY_BASE + k as u32);
+        }
         let kind = match d.kind {
             DeclKind::Definition {
                 value,
@@ -401,7 +429,7 @@ impl<'p> Assembler<'p> {
             Ok(i) if i < u32::MAX => i,
             _ => return Err(Fail::malformed("too many declarations")),
         };
-        let d = self.moved(m, i)?;
+        let d = self.moved(m, i, module)?;
         if let Some(&prev) = self.env.by_name.get(&d.name) {
             let p = self.env.decls[prev as usize];
             if may_merge && self.subsumes(&p, &d) {
@@ -414,7 +442,7 @@ impl<'p> Assembler<'p> {
                     (DeclKind::Theorem { value: v, .. }, DeclKind::Theorem { value: w, .. }) => {
                         // Values still in their files are not compared:
                         // the copy is kept (and checked).
-                        v == w && v != LAZY
+                        v == w && !is_lazy(v)
                     }
                     (_, DeclKind::Theorem { .. }) => false,
                     _ => true,

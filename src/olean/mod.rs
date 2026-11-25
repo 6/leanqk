@@ -24,6 +24,7 @@ use crate::reader::ErrorClass;
 mod build;
 mod decode;
 mod file;
+mod lazy;
 mod obj;
 mod par;
 
@@ -530,7 +531,7 @@ fn open_parts(m: &Module) -> Result<Vec<OleanFile>, OleanError> {
 
 /// Decode one module: the constants of its last part (the private part of
 /// a module-system module holds all of them).
-fn decode_module(m: &Module, lazy: bool) -> Result<(Tape, usize, u64), OleanError> {
+fn decode_module(m: &Module, lazy: bool) -> Result<(Tape, Vec<OleanFile>, u64), OleanError> {
     let parts = open_parts(m)?;
     let last = parts.last().expect("a part");
     let refs: Vec<&OleanFile> = parts.iter().collect();
@@ -540,7 +541,9 @@ fn decode_module(m: &Module, lazy: bool) -> Result<(Tape, usize, u64), OleanErro
     d.module(last.root(), false, true)
         .map_err(|e| e.at(&last.path))?;
     let bytes = parts.iter().map(|p| p.len() as u64).sum();
-    Ok((d.finish(), parts.len(), bytes))
+    let tape = d.finish();
+    drop(heap);
+    Ok((tape, parts, bytes))
 }
 
 fn new_env() -> Env {
@@ -550,8 +553,9 @@ fn new_env() -> Env {
     env
 }
 
-/// What a worker makes of a module.
-type Done = Result<(build::ModOut, usize, u64), OleanError>;
+/// What a worker makes of a module: its declarations, its files if it
+/// has lazily read values, its number of files and their size.
+type Done = Result<(build::ModOut, Option<Vec<OleanFile>>, usize, u64), OleanError>;
 
 /// Nanoseconds spent decoding and interning, over all threads (for
 /// `NITROLEAN_OLEAN_PROFILE`).
@@ -562,14 +566,21 @@ static TAPE_NAMES: AtomicU64 = AtomicU64::new(0);
 
 fn work(par: &Par, loc: &mut par::Local, m: &Module, lazy: bool) -> Done {
     let t = Instant::now();
-    let (tape, files, bytes) = decode_module(m, lazy)?;
+    let (tape, parts, bytes) = decode_module(m, lazy)?;
     let d = t.elapsed();
+    let files = parts.len();
+    let keep = (!tape.lazy.is_empty()).then(|| {
+        for p in &parts {
+            p.release();
+        }
+        parts
+    });
     TAPE_EXPRS.fetch_add(tape.exprs.len() as u64, Ordering::Relaxed);
     TAPE_NAMES.fetch_add(tape.names.len() as u64, Ordering::Relaxed);
     let out = build::intern_module(par, loc, &tape).map_err(|e| e.at(&m.path))?;
     DECODE_NS.fetch_add(d.as_nanos() as u64, Ordering::Relaxed);
     INTERN_NS.fetch_add((t.elapsed() - d).as_nanos() as u64, Ordering::Relaxed);
-    Ok((out, files, bytes))
+    Ok((out, keep, files, bytes))
 }
 
 /// Load `mods` (in import order) with `threads` workers. Workers decode
@@ -592,8 +603,13 @@ fn load_modules(mods: &[Module], threads: usize, lazy: bool) -> Result<(Env, Sta
     };
     let names = |i: u32| mods[i as usize].name.clone();
     let mut intern = Duration::ZERO;
+    let mut kept: Vec<Option<Vec<OleanFile>>> = Vec::new();
     let mut add = |asm: &mut build::Assembler<'_>, i: usize, r: Done| {
-        let (out, files, bytes) = r?;
+        let (out, keep, files, bytes) = r?;
+        if keep.is_some() {
+            kept.resize_with(i + 1, || None);
+            kept[i] = keep;
+        }
         stats.files += files;
         stats.bytes += bytes;
         let t = Instant::now();
@@ -659,7 +675,16 @@ fn load_modules(mods: &[Module], threads: usize, lazy: bool) -> Result<(Env, Sta
             TAPE_NAMES.load(Ordering::Relaxed),
         );
     }
-    let mut env = asm.env;
+    let build::Assembler {
+        mut env, handles, ..
+    } = asm;
+    drop(add);
+    if !handles.is_empty() {
+        env.lazy = Some(Box::new(lazy::OleanValues {
+            modules: kept,
+            handles,
+        }));
+    }
     let (names, levels, exprs) = par.finish(threads).map_err(|o| {
         err(
             ErrorClass::Malformed,
@@ -668,6 +693,7 @@ fn load_modules(mods: &[Module], threads: usize, lazy: bool) -> Result<(Env, Sta
         )
     })?;
     env.names = names;
+    env.names.strings.enable_late();
     env.levels = levels;
     env.exprs = exprs;
     stats.finish_time = t.elapsed();

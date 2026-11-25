@@ -8,10 +8,93 @@
 //! and binder annotations (kernel-irrelevant, and not part of a term's
 //! identity in either arena) and `mdata` (which neither reader keeps).
 
-use crate::env::{Decl, DeclKind, Env, NameList};
+use num_bigint::BigUint;
+
+use crate::env::{Decl, DeclKind, Env, NameList, TermSink, is_lazy};
 use crate::expr::{ExprId, ExprNode, LetBinder};
-use crate::level::{LevelId, LevelNode};
+use crate::level::{LevelId, LevelList, LevelNode};
 use crate::name::{NameId, NameNode};
+
+/// Builds a lazily read value of `b` in `a`'s arenas by lookup only: a
+/// term node `a` does not have makes the result [`IntoEnv::missing`] (the
+/// value is then not one of `a`'s terms).
+struct IntoEnv<'e> {
+    a: &'e Env,
+    b: &'e Env,
+    missing: bool,
+}
+
+/// An id no arena has.
+const NONE: u32 = u32::MAX - 2;
+
+impl IntoEnv<'_> {
+    fn got<T>(&mut self, x: Option<T>, none: T) -> T {
+        x.unwrap_or_else(|| {
+            self.missing = true;
+            none
+        })
+    }
+}
+
+impl TermSink for IntoEnv<'_> {
+    fn name(&mut self, node: NameNode) -> NameId {
+        let node = match node {
+            NameNode::Str(p, s) => self
+                .a
+                .names
+                .strings
+                .find(self.b.names.strings.get(s))
+                .map(|s| NameNode::Str(p, s)),
+            n => Some(n),
+        };
+        // Not a failure by itself: binder names are not part of a term's
+        // identity. A node that needs the name will not be found.
+        node.and_then(|n| self.a.names.find(n))
+            .unwrap_or(NameId(NONE))
+    }
+
+    fn level(&mut self, node: LevelNode) -> LevelId {
+        let r = self.a.levels.find(&node);
+        self.got(r, LevelId(NONE))
+    }
+
+    fn list(&mut self, levels: &[LevelId]) -> LevelList {
+        let r = self.a.levels.find_list(levels);
+        self.got(r, LevelList(NONE))
+    }
+
+    fn expr(&mut self, node: ExprNode) -> ExprId {
+        let node = match node {
+            ExprNode::Str(s) => self
+                .a
+                .names
+                .strings
+                .find(self.b.names.strings.get(s))
+                .map(ExprNode::Str),
+            n => Some(n),
+        };
+        let r = node.and_then(|n| self.a.exprs.find(&n));
+        self.got(r, ExprId(NONE))
+    }
+
+    fn let_in(&mut self, binder: LetBinder, body: ExprId) -> ExprId {
+        let r = self
+            .a
+            .exprs
+            .find_let(&binder)
+            .and_then(|h| self.a.exprs.find(&ExprNode::Let(h, body)));
+        self.got(r, ExprId(NONE))
+    }
+
+    fn nat_big(&mut self, n: BigUint) -> ExprId {
+        let r = self
+            .a
+            .exprs
+            .find_big(&n)
+            .and_then(|b| self.a.exprs.find(&ExprNode::NatBig(b)));
+        self.got(r, ExprId(NONE))
+    }
+}
 
 const UNKNOWN: u32 = u32::MAX;
 const MISSING: u32 = u32::MAX - 1;
@@ -253,6 +336,16 @@ impl<'e> Tr<'e> {
             ) => {
                 if !self.names_eq(all_a, all_b) {
                     Some("all")
+                } else if is_lazy(value_b) {
+                    let mut sink = IntoEnv {
+                        a: self.a,
+                        b: self.b,
+                        missing: false,
+                    };
+                    match self.b.value_into(y, &mut sink) {
+                        Ok(Some(v)) if !sink.missing && v == value_a => None,
+                        _ => Some("value"),
+                    }
                 } else if !self.expr_eq(value_a, value_b) {
                     Some("value")
                 } else {

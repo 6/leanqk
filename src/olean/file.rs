@@ -89,6 +89,21 @@ impl OleanFile {
         }
     }
 
+    /// Drop the file's pages from this process's memory (they stay in the
+    /// page cache, and are read back from there if the file is read
+    /// again). Used for files kept open after loading, for their lazily
+    /// read values, so that they do not count in the process's memory.
+    #[allow(unsafe_code)]
+    pub fn release(&self) {
+        if let Bytes::Map(m) = &self.bytes {
+            // SAFETY: the map is private, read-only and backed by a file
+            // that is never modified (see `open`): after `MADV_DONTNEED`
+            // its pages read back the same bytes from the file, so no
+            // reference into the map sees different contents.
+            let _ = unsafe { m.unchecked_advise(memmap2::UncheckedAdvice::DontNeed) };
+        }
+    }
+
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.bytes().len()

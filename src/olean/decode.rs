@@ -119,6 +119,8 @@ pub struct Memo {
     mentions: Vec<u64>,
     stamp: Vec<u32>,
     epoch: u32,
+    /// Used instead of the dense array when decoding one value lazily.
+    sparse: Option<hashbrown::HashMap<u64, u32>>,
     /// (first address, end address, first entry) of each part.
     parts: Vec<(u64, u64, usize)>,
 }
@@ -138,6 +140,10 @@ const MAX_LOCAL: u32 = 1 << 30;
 impl Memo {
     /// Reset for `heap`, keeping the allocations.
     pub fn reset(&mut self, heap: &Heap<'_>) {
+        if let Some(m) = &mut self.sparse {
+            m.clear();
+            return;
+        }
         self.parts.clear();
         let mut n = 0usize;
         for (lo, hi) in heap.ranges() {
@@ -186,8 +192,20 @@ impl Memo {
         None
     }
 
+    /// A memo for decoding a few objects of a big module: a hash map.
+    pub fn sparse() -> Self {
+        Memo {
+            sparse: Some(hashbrown::HashMap::new()),
+            ..Memo::default()
+        }
+    }
+
     #[inline]
     fn get(&self, kind: Kind, addr: u64) -> Option<u32> {
+        if let Some(m) = &self.sparse {
+            let v = *m.get(&addr)?;
+            return (v >> 30 == kind as u32).then_some(v & (MAX_LOCAL - 1));
+        }
         let k = self.slot(addr)?;
         if self.bits[k / 64] >> (k % 64) & 1 == 0 {
             return None;
@@ -199,6 +217,10 @@ impl Memo {
     #[inline]
     fn insert(&mut self, kind: Kind, addr: u64, id: u32) {
         debug_assert!(id < MAX_LOCAL);
+        if let Some(m) = &mut self.sparse {
+            m.insert(addr, (kind as u32) << 30 | id);
+            return;
+        }
         if let Some(k) = self.slot(addr) {
             self.bits[k / 64] |= 1 << (k % 64);
             self.vals[k] = (kind as u32) << 30 | id;
