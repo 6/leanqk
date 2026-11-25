@@ -577,7 +577,10 @@ impl<T: Node> Big<T> {
         let mut fill = vec![0usize; BUCKETS];
         // The buckets' entries: hash (low and high halves) and id.
         if scratch.len() < 3 * BUCKETS * cap {
-            scratch.resize(3 * BUCKETS * cap, 0);
+            // A fresh zeroed buffer comes from the system zeroed, where
+            // growing one would write it.
+            *scratch = Vec::new();
+            *scratch = vec![0; 3 * BUCKETS * cap];
         }
         let ents = &mut scratch.as_chunks_mut::<3>().0[..BUCKETS * cap];
         // Entries of a bucket that is full (and, below, those that would
@@ -599,8 +602,10 @@ impl<T: Node> Big<T> {
             }
         }
         let digit = |l: u32, d: u32| (l >> (d * DIGIT)) as usize & ((1 << DIGIT) - 1);
-        let mut tmp: Vec<[u32; 3]> = Vec::with_capacity(cap);
-        let mut sorted: Vec<[u32; 3]> = Vec::with_capacity(cap);
+        // Each pass writes all of a bucket's entries, so these are never
+        // cleared.
+        let mut tmp: Vec<[u32; 3]> = vec![[0; 3]; cap];
+        let mut sorted: Vec<[u32; 3]> = vec![[0; 3]; cap];
         let slots = &mut table.slots;
         let lines = table.lines as u64;
         // The slot after the last one filled.
@@ -619,16 +624,14 @@ impl<T: Node> Big<T> {
                     (*x, sum) = (sum, sum + *x);
                 }
             }
-            tmp.clear();
-            tmp.resize(k, [0; 3]);
+            let tmp = &mut tmp[..k];
             for e in bucket {
                 let c = &mut count[0][digit(e[0], 0)];
                 tmp[*c as usize] = *e;
                 *c += 1;
             }
-            sorted.clear();
-            sorted.resize(k, [0; 3]);
-            for e in &tmp {
+            let sorted = &mut sorted[..k];
+            for e in tmp.iter() {
                 let c = &mut count[1][digit(e[0], 1)];
                 sorted[*c as usize] = *e;
                 *c += 1;

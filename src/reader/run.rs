@@ -131,6 +131,56 @@ fn nat(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(u64, usize)> {
     Some((d, p + (n8 / 8) as usize))
 }
 
+/// The number of digits of the ids from `e` on, and the first id with
+/// more.
+#[derive(Clone, Copy)]
+struct IdLen {
+    len: u32,
+    next: u64,
+}
+
+impl IdLen {
+    fn of(e: u64) -> IdLen {
+        let (mut len, mut next) = (1, 10);
+        while e >= next {
+            len += 1;
+            next *= 10;
+        }
+        IdLen { len, next }
+    }
+
+    /// From `e - 1` to `e`.
+    #[inline(always)]
+    fn step(&mut self, e: u64) {
+        if e == self.next {
+            self.len += 1;
+            self.next *= 10;
+        }
+    }
+}
+
+/// Whether the id at `p` is `e` (of `n.len` digits): where it ends. Its
+/// length is known, so this reads exactly that many digits (and the
+/// value then also rules out a leading zero).
+#[inline(always)]
+fn id_at(w: &[u8; WIN], p: usize, e: u64, n: IdLen, k: &Consts) -> Option<usize> {
+    if n.len > 8 {
+        return match nat(w, p, k) {
+            Some((i, q)) if i == e => Some(q),
+            _ => None,
+        };
+    }
+    // The digits, most significant first, in the top bytes.
+    let x = (ld(w, p) ^ 0x3030_3030_3030_3030) << (64 - 8 * n.len);
+    if (x | x.wrapping_add(k.below_ten)) & 0x8080_8080_8080_8080 != 0 {
+        return None;
+    }
+    let d = x.wrapping_mul(k.ten).wrapping_add(x >> 8) & 0x00FF_00FF_00FF_00FF;
+    let d = d.wrapping_mul(k.hundred).wrapping_add(d >> 16) & 0x0000_FFFF_0000_FFFF;
+    let d = d.wrapping_mul(k.join) >> 32;
+    (d == e).then_some(p + n.len as usize)
+}
+
 /// A binder's fields from `p` (its binder info's text): binder info,
 /// body, name, type, and where they end.
 #[inline(always)]
@@ -170,6 +220,7 @@ fn binder(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(BinderInfo, u64, u64, 
 pub(super) fn exprs(s: &[u8], e: u64, out: &mut impl Records) -> (usize, u64) {
     let k = std::hint::black_box(&CONSTS);
     let (mut pos, mut e2) = (0, e);
+    let mut n = IdLen::of(e);
     while let Some(w) = s.get(pos..pos + WIN) {
         let w: &[u8; WIN] = w.try_into().expect("a window");
         let head = ld(w, 0);
@@ -187,10 +238,10 @@ pub(super) fn exprs(s: &[u8], e: u64, out: &mut impl Records) -> (usize, u64) {
             if ld(w, q) & MASK7 != k.ie {
                 break;
             }
-            let Some((i, q)) = nat(w, q + 7, k) else {
+            let Some(q) = id_at(w, q + 7, e2, n, k) else {
                 break;
             };
-            if i != e2 || ld(w, q) & MASK2 != k.end || !out.app(i, f, a) {
+            if ld(w, q) & MASK2 != k.end || !out.app(e2, f, a) {
                 break;
             }
             q + 2
@@ -207,16 +258,18 @@ pub(super) fn exprs(s: &[u8], e: u64, out: &mut impl Records) -> (usize, u64) {
             if ld(w, q) & MASK7 != k.ie {
                 break;
             }
-            let Some((i, q)) = nat(w, q + 7, k) else {
+            let Some(q) = id_at(w, q + 7, e2, n, k) else {
                 break;
             };
-            if i != e2 || ld(w, q) & MASK2 != k.end || !out.binder(i, true, bi, name, ty, body) {
+            if ld(w, q) & MASK2 != k.end || !out.binder(e2, true, bi, name, ty, body) {
                 break;
             }
             q + 2
         } else if head & MASK6 == k.ie_head {
             // `{"ie":`, an id, then (for a lambda) `,"lam":{"binderInfo":"`.
-            let Some((i, q)) = nat(w, 6, k) else { break };
+            let Some(q) = id_at(w, 6, e2, n, k) else {
+                break;
+            };
             if ld(w, q) != k.lam[0] || ld(w, q + 8) != k.lam[1] || ld(w, q + 16) & MASK6 != k.lam[2]
             {
                 break;
@@ -224,8 +277,7 @@ pub(super) fn exprs(s: &[u8], e: u64, out: &mut impl Records) -> (usize, u64) {
             let Some((bi, body, name, ty, q)) = binder(w, q + 22, k) else {
                 break;
             };
-            if i != e2 || ld(w, q) & MASK3 != k.lam_end || !out.binder(i, false, bi, name, ty, body)
-            {
+            if ld(w, q) & MASK3 != k.lam_end || !out.binder(e2, false, bi, name, ty, body) {
                 break;
             }
             q + 3
@@ -234,6 +286,7 @@ pub(super) fn exprs(s: &[u8], e: u64, out: &mut impl Records) -> (usize, u64) {
         };
         pos += end;
         e2 += 1;
+        n.step(e2);
     }
     (pos, e2 - e)
 }
@@ -271,6 +324,43 @@ mod tests {
         let mut got = Got::default();
         let (n, k) = exprs(text.as_bytes(), e, &mut got);
         (got.0, n, k)
+    }
+
+    #[test]
+    fn ids_by_length() {
+        let pad = " ".repeat(WIN);
+        for e in [
+            0u64,
+            7,
+            9,
+            10,
+            99,
+            100,
+            12345678,
+            99_999_999,
+            100_000_000,
+            123_456_789,
+        ] {
+            let n = IdLen::of(e);
+            assert_eq!(n.len as usize, e.to_string().len());
+            for (text, ok) in [
+                (format!("{e}}}"), true),
+                (format!("0{e}}}"), false),
+                (format!("{}}}", e + 1), false),
+                (format!("{e}0}}"), false),
+                (format!(":{e}}}"), false),
+            ] {
+                let t = format!("{text}{pad}");
+                let w: &[u8; WIN] = t.as_bytes()[..WIN].try_into().unwrap();
+                // As the caller does: the id, then `}`.
+                let got = id_at(w, 0, e, n, &CONSTS).filter(|&q| w[q] == b'}');
+                assert_eq!(got.is_some(), ok, "{text}");
+            }
+            let mut m = IdLen::of(e);
+            m.step(e + 1);
+            let o = IdLen::of(e + 1);
+            assert_eq!((m.len, m.next), (o.len, o.next));
+        }
     }
 
     #[test]
