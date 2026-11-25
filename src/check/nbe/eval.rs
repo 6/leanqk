@@ -95,10 +95,18 @@ impl Nbe<'_> {
             // reducing anything: build it now, so that the same term reached
             // in different environments is the same value.
             _ => {
-                let d = self.st.data(e);
-                let env = self.trim(env, d.loose_bvar_range());
-                let ls = if d.has_level_param() { ls } else { Ls::ID };
-                let t = self.a.mk(Val::Thunk(e, env, ls));
+                let (slot, hit) = self.a.thunk_slot(e, env, ls);
+                let t = match hit {
+                    Some(t) => t,
+                    None => {
+                        let d = self.st.data(e);
+                        let env2 = self.trim(env, d.loose_bvar_range());
+                        let ls2 = if d.has_level_param() { ls } else { Ls::ID };
+                        let t = self.a.mk(Val::Thunk(e, env2, ls2));
+                        self.a.set_thunk_slot(slot, e, env, ls, t);
+                        t
+                    }
+                };
                 let f = self.a.r(t).forced;
                 if f != super::val::NONE {
                     return V(f);

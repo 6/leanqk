@@ -192,10 +192,17 @@ pub struct Arena {
     /// their name and levels (direct-mapped, in front of `vtable`): the
     /// value of a constant is made at every occurrence.
     heads: Vec<(u32, u32, V)>,
+    /// The thunks of terms by their environment before it is trimmed
+    /// (direct-mapped, in front of trimming and `vtable`): (term,
+    /// environment, substitution, thunk).
+    thunks: Vec<[u32; 4]>,
 }
 
 /// Slots of `Arena::heads`.
 const HEADS: usize = 1 << 12;
+
+/// Slots of `Arena::thunks`.
+const THUNKS: usize = 1 << 14;
 
 impl Default for Arena {
     fn default() -> Self {
@@ -226,6 +233,7 @@ impl Arena {
             }],
             lstable: HashTable::new(),
             heads: vec![(NONE, NONE, V(NONE)); HEADS],
+            thunks: vec![[NONE; 4]; THUNKS],
         }
     }
 
@@ -253,6 +261,7 @@ impl Arena {
         self.lss.truncate(1);
         self.lstable.clear();
         self.heads.fill((NONE, NONE, V(NONE)));
+        self.thunks.fill([NONE; 4]);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -266,6 +275,7 @@ impl Arena {
             + self.sps.capacity() * 4
             + self.sptable.capacity() * 9
             + self.envs.capacity() * 17
+            + self.thunks.capacity() * 16
             + self.envtable.capacity() * 9
     }
 
@@ -329,6 +339,22 @@ impl Arena {
         let v = self.mk(val);
         self.heads[i] = (a, b, v);
         v
+    }
+
+    /// The slot of `Arena::thunks` for `e` in `env` under `ls`, and the
+    /// thunk it holds for them, if it does.
+    #[inline]
+    pub fn thunk_slot(&self, e: ExprId, env: Env, ls: Ls) -> (usize, Option<V>) {
+        let h = hash2(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
+        let i = (h >> 50) as usize & (THUNKS - 1);
+        let s = self.thunks[i];
+        let hit = s[0] == e.0 && s[1] == env.0 && s[2] == ls.0;
+        (i, hit.then_some(V(s[3])))
+    }
+
+    #[inline]
+    pub fn set_thunk_slot(&mut self, i: usize, e: ExprId, env: Env, ls: Ls, v: V) {
+        self.thunks[i] = [e.0, env.0, ls.0, v.0];
     }
 
     pub fn mk(&mut self, val: Val) -> V {
