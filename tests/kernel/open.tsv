@@ -1,4 +1,1 @@
 id	class	note
-fuzz-mdata-ctor-type	wrongly accepts	nitrolean accepts mdata around a constructor type in an inductive declaration; Lean rejects it (invalid return type). No proof of False follows: mdata is transparent
-fuzz-mdata-rec-rule	wrongly accepts	nitrolean accepts mdata around a recursor rule's right-hand side; Lean rejects it (invalid recursor). No proof of False follows
-fuzz-mdata-quot-type	wrongly accepts	nitrolean accepts mdata around the type of Quot.ind; Lean's quotient check rejects it. No proof of False follows

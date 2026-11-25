@@ -350,6 +350,14 @@ fn check_block(
         }
         return Ok(());
     }
+    let mdata_errors = &tc.st.env.mdata_errors;
+    if !mdata_errors.is_empty()
+        && let Some((d, msg)) = decls
+            .iter()
+            .find_map(|d| mdata_errors.get(&d.name).map(|msg| (d, msg)))
+    {
+        return err(format!("'{}': {msg}", tc.show(d.name)));
+    }
     match b.kind {
         BlockKind::Single if use_nbe(&decls[0]) => check_nbe(tc, nb, b, &decls[0]),
         BlockKind::Single => check_single(tc, &decls[0]),

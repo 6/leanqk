@@ -250,6 +250,7 @@ pub struct Env {
     pub(crate) rule_pool: Vec<RecRule>,
     pub(crate) by_name: HashMap<NameId, u32>,
     pub(crate) lazy: Option<Box<dyn LazyValues>>,
+    pub(crate) mdata_errors: HashMap<NameId, &'static str>,
 }
 
 impl Env {
