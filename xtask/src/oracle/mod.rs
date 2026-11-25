@@ -3,7 +3,6 @@
 //! checker, declaration by declaration, on pinned public Lean projects.
 
 mod export;
-pub mod limited;
 mod pyjson;
 mod reduce;
 
@@ -16,9 +15,9 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, anyhow, bail};
 use regex::Regex;
 
+use crate::limited::run_limited;
 use crate::util::{self, exit_with, git, log, root, sha256_file};
 use export::{Index, norm_name};
-use limited::run_limited;
 use pyjson::J;
 
 #[derive(clap::Subcommand)]
@@ -605,7 +604,7 @@ pub fn read_log(path: &Path) -> String {
 }
 
 /// One limited run as the JSON object `run.py` recorded.
-fn run_json(st: &limited::Limited) -> J {
+fn run_json(st: &crate::limited::Limited) -> J {
     let mut j = J::obj();
     j.set("status", st.status.as_str());
     j.set("exit", st.exit.as_str());
@@ -683,6 +682,7 @@ fn per_decl(
             cx.args.timeout,
             cx.args.mem_mib,
             cx.path.as_deref(),
+            true,
         )?;
         let mut sj = run_json(&st);
         if st.status != "exited" {
@@ -800,6 +800,7 @@ fn single(
         cx.args.timeout,
         cx.args.mem_mib,
         cx.path.as_deref(),
+        true,
     )?;
     let mut out = J::obj();
     out.set("label", label);

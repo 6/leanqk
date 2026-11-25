@@ -10,8 +10,8 @@ use anyhow::Result;
 use regex::Regex;
 
 use super::export::{Graph, norm_name};
-use super::limited::run_limited;
 use super::{Parsed, kind_of, parse_lean, parse_nitrolean, read_log, toolchain_bin};
+use crate::limited::run_limited;
 use crate::util::{absolute, exit_with, root};
 
 /// Reduce a declaration on which Lean's checker and nitrolean disagree to a
@@ -62,7 +62,7 @@ fn verdict(
     let log = crate::corpus::temp_path("reduce-", ".log");
     let mut argv = cmd.to_vec();
     argv.push(path.into());
-    let st = run_limited(&argv, &log, timeout, 64 * 1024, None);
+    let st = run_limited(&argv, &log, timeout, 64 * 1024, None, true);
     let text = read_log(&log);
     let _ = fs::remove_file(&log);
     let st = st?;

@@ -188,9 +188,8 @@ impl Names {
     }
 }
 
-/// A declaration record: line number, kind, constant names, name ids.
+/// A declaration record: kind and constant names.
 pub struct Decl {
-    pub line: usize,
     pub kind: &'static str,
     pub names: Vec<String>,
 }
@@ -206,14 +205,13 @@ impl Index {
     pub fn new(path: &Path) -> Result<Index> {
         let mut names = Names::default();
         let mut decls = Vec::new();
-        for_lines(path, |no, raw| {
+        for_lines(path, |_no, raw| {
             let (obj, k) = parse(raw);
             if k == "name" {
                 names.add(&obj)?;
             } else if DECL_KEYS.contains(&k) {
                 let ids = decl_names(k, &obj[k])?;
                 decls.push(Decl {
-                    line: no,
                     kind: k,
                     names: ids.iter().map(|&i| names.render(i)).collect(),
                 });

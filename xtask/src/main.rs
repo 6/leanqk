@@ -1,11 +1,11 @@
 //! The repository's tooling, run as `cargo xtask <command>` (see README.md).
-#![allow(dead_code)] // TEMP while porting
 
 mod arena;
 mod ci;
 mod corpus;
 mod kc;
 mod kernel_cases;
+mod limited;
 mod oracle;
 mod proc;
 mod public_check;

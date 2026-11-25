@@ -1,5 +1,5 @@
 //! Running a command under `/usr/bin/time -v` with a wall-clock limit and a
-//! resident-memory limit, with an unlimited stack.
+//! resident-memory limit (`kc measure`, `oracle run` and `oracle reduce`).
 //!
 //! The memory limit is enforced by sampling the resident set of the whole
 //! process group every 50 ms and killing it above the limit; `ulimit -v` is
@@ -54,13 +54,15 @@ fn group_rss_kib(pgid: i32) -> u64 {
 }
 
 /// Runs `cmd` (program and arguments) with its output in `log`.
-/// With `path`, the command's PATH is that.
+/// With `path`, the command's PATH is that; with `stack_unlimited`, its soft
+/// stack limit is raised to the hard one (`ulimit -s unlimited`).
 pub fn run_limited(
     cmd: &[std::ffi::OsString],
     log: &Path,
     timeout: f64,
     mem_mib: i64,
     path: Option<&std::ffi::OsStr>,
+    stack_unlimited: bool,
 ) -> Result<Limited> {
     let tf = crate::corpus::temp_path("time-", "");
     let lf = fs::File::create(log).with_context(|| format!("{}: cannot create", log.display()))?;
@@ -76,7 +78,9 @@ pub fn run_limited(
     if let Some(p) = path {
         c.env("PATH", p);
     }
-    crate::util::unlimited_stack(&mut c);
+    if stack_unlimited {
+        crate::util::unlimited_stack(&mut c);
+    }
     let t0 = Instant::now();
     let mut child = c.spawn().context("cannot run /usr/bin/time")?;
     let pid = child.id() as i32;

@@ -11,10 +11,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::io::Write;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
@@ -325,16 +323,6 @@ pub fn main(c: Cmd) -> Result<()> {
 struct Io(Option<File>);
 
 impl Io {
-    fn out(&self) -> Stdio {
-        match &self.0 {
-            Some(f) => f
-                .try_clone()
-                .map(Stdio::from)
-                .unwrap_or_else(|_| Stdio::null()),
-            None => Stdio::inherit(),
-        }
-    }
-
     /// Standard error, or the log; also for `>&2`.
     fn err(&self) -> Stdio {
         match &self.0 {
@@ -1481,36 +1469,10 @@ fn run_limited(timeout: f64, mem_mib: u64, log: &Path, cmd: &[String]) -> Result
     run_limited_os(timeout, mem_mib, log, &cmd, false)
 }
 
-/// The resident memory of every process in the process group, in KiB.
-fn group_rss_kib(pgid: libc::pid_t) -> u64 {
-    // SAFETY: plain sysconf call.
-    let page_kib = (unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64) / 1024;
-    let mut total = 0;
-    let Ok(dir) = fs::read_dir("/proc") else {
-        return 0;
-    };
-    for e in dir.flatten() {
-        let name = e.file_name();
-        let Some(pid) = name.to_str().and_then(|s| s.parse::<libc::pid_t>().ok()) else {
-            continue;
-        };
-        // SAFETY: plain syscall.
-        if unsafe { libc::getpgid(pid) } != pgid {
-            continue;
-        }
-        if let Ok(statm) = fs::read_to_string(format!("/proc/{pid}/statm"))
-            && let Some(Ok(pages)) = statm.split_whitespace().nth(1).map(str::parse::<u64>)
-        {
-            total += pages * page_kib;
-        }
-    }
-    total
-}
-
-/// Runs `cmd` under `/usr/bin/time -v` in a new session with its output in
-/// `log`, killing its process group past `timeout` seconds or when its
-/// resident memory goes over `mem_mib`; with `stack_unlimited`, its soft
-/// stack limit is raised to the hard one.
+/// Runs `cmd` under `/usr/bin/time -v` in its own process group with its
+/// output in `log`, killing it past `timeout` seconds or when its resident
+/// memory goes over `mem_mib`; with `stack_unlimited`, its soft stack limit is
+/// raised to the hard one.
 pub(crate) fn run_limited_os(
     timeout: f64,
     mem_mib: u64,
@@ -1518,94 +1480,12 @@ pub(crate) fn run_limited_os(
     cmd: &[std::ffi::OsString],
     stack_unlimited: bool,
 ) -> Result<Limited> {
-    static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let report = std::env::temp_dir().join(format!("time-{}-{n}", std::process::id()));
-    let lf = File::create(log).with_context(|| format!("{}: cannot create", log.display()))?;
-    let mut c = Command::new("/usr/bin/time");
-    c.arg("-v")
-        .arg("-o")
-        .arg(&report)
-        .args(cmd)
-        .stdout(lf.try_clone()?)
-        .stderr(lf);
-    // SAFETY: setsid is async-signal-safe.
-    unsafe {
-        c.pre_exec(move || {
-            libc::setsid();
-            if stack_unlimited {
-                // As `ulimit -s unlimited`, within the hard limit.
-                let mut r = libc::rlimit {
-                    rlim_cur: 0,
-                    rlim_max: 0,
-                };
-                if libc::getrlimit(libc::RLIMIT_STACK, &mut r) == 0 {
-                    r.rlim_cur = r.rlim_max;
-                    libc::setrlimit(libc::RLIMIT_STACK, &r);
-                }
-            }
-            Ok(())
-        });
-    }
-    let t0 = Instant::now();
-    let mut child = c
-        .spawn()
-        .with_context(|| format!("cannot run {}", describe(&c)))?;
-    let pid = child.id() as libc::pid_t;
-    let mut status = "exited";
-    let mut peak = 0u64;
-    let mut exit = None;
-    loop {
-        if let Some(st) = child.try_wait()? {
-            exit = Some(st);
-            break;
-        }
-        peak = peak.max(group_rss_kib(pid));
-        if t0.elapsed().as_secs_f64() > timeout {
-            status = "timeout";
-        } else if peak > mem_mib * 1024 {
-            status = "oom";
-        }
-        if status != "exited" {
-            // SAFETY: plain syscall.
-            unsafe { libc::kill(-pid, libc::SIGKILL) };
-            let _ = child.wait();
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let mut wall = t0.elapsed().as_secs_f64();
-    let text = fs::read_to_string(&report).unwrap_or_default();
-    let _ = fs::remove_file(&report);
-    let rss = regex::Regex::new(r"Maximum resident set size \(kbytes\): (\d+)").unwrap();
-    if let Some(m) = rss.captures(&text) {
-        peak = peak.max(m[1].parse().unwrap_or(0));
-    }
-    let el = regex::Regex::new(r"(?m)Elapsed \(wall clock\) time.*: (?:(\d+):)?(\d+):([\d.]+)$")
-        .unwrap();
-    if let Some(m) = el.captures(&text)
-        && status == "exited"
-    {
-        let h: f64 = m.get(1).map_or(0.0, |x| x.as_str().parse().unwrap_or(0.0));
-        let mi: f64 = m[2].parse().unwrap_or(0.0);
-        let s: f64 = m[3].parse().unwrap_or(0.0);
-        wall = h * 3600.0 + mi * 60.0 + s;
-    }
-    let code = match (status, exit) {
-        ("exited", Some(st)) => {
-            use std::os::unix::process::ExitStatusExt;
-            st.code()
-                .or_else(|| st.signal().map(|s| -s))
-                .map(|c| c.to_string())
-                .unwrap_or_default()
-        }
-        _ => String::new(),
-    };
+    let r = crate::limited::run_limited(cmd, log, timeout, mem_mib as i64, None, stack_unlimited)?;
     Ok(Limited {
-        status: status.into(),
-        code,
-        wall: format!("{wall:.2}"),
-        peak: format!("{:.0}", peak as f64 / 1024.0),
+        status: r.status,
+        code: r.exit,
+        wall: format!("{:.2}", r.wall_s),
+        peak: r.peak_mib.to_string(),
     })
 }
 
