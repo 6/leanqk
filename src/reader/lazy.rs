@@ -369,30 +369,41 @@ impl Builder {
     /// [`Builder::promote`] for a record since the last declaration line.
     /// Records come children first, so this needs no stack: a pass down
     /// from `i` marks the recent records it needs (until none is left to
-    /// find), and a pass up interns them.
+    /// find), and a pass up interns them. (An alias it needs is marked
+    /// too, and so is what it stands for; the pass up unmarks it.)
     fn promote_recent(&mut self, env: &mut Env, append: bool, i: usize) -> R<ExprId> {
         let from = self.from;
-        self.recs[i] |= NEEDED;
+        let recs = &mut self.recs;
+        recs[i] |= NEEDED;
         // Records marked and not yet passed.
         let mut left = 1usize;
+        // Mark record `c` if it is recent and not yet marked or done:
+        // how many it marked.
+        let mark = |recs: &mut [u64], c: u32| -> usize {
+            let c = c as usize;
+            if c >= from && recs[c] & (DONE | NEEDED) == 0 {
+                recs[c] |= NEEDED;
+                1
+            } else {
+                0
+            }
+        };
         let mut j = i;
         loop {
-            let r = self.recs[j];
+            let r = recs[j];
             if r & NEEDED != 0 {
                 left -= 1;
-                let (kids, k) = if tag(r) == T_APP {
-                    (
-                        [(r >> ID_BITS & ID_MASK) as u32, (r & ID_MASK) as u32, 0],
-                        2,
-                    )
-                } else {
-                    decode(&self.side, r).kids()
-                };
-                for &c in &kids[..k] {
-                    let c = self.real(c) as usize;
-                    if c >= from && self.recs[c] & (DONE | NEEDED) == 0 {
-                        self.recs[c] |= NEEDED;
-                        left += 1;
+                match tag(r) {
+                    T_APP => {
+                        left += mark(recs, (r >> ID_BITS & ID_MASK) as u32);
+                        left += mark(recs, (r & ID_MASK) as u32);
+                    }
+                    T_ALIAS => left += mark(recs, (r & ID_MASK) as u32),
+                    _ => {
+                        let (kids, k) = decode(&self.side, r).kids();
+                        for &c in &kids[..k] {
+                            left += mark(recs, c);
+                        }
                     }
                 }
                 if left == 0 {
@@ -408,31 +419,48 @@ impl Builder {
                 continue;
             }
             let r = r & !NEEDED;
-            if tag(r) == T_APP {
-                let f = self.known_or_old(env, append, (r >> ID_BITS & ID_MASK) as u32)?;
-                let a = self.known_or_old(env, append, (r & ID_MASK) as u32)?;
-                let id = add_node(env, append, ExprNode::App(ExprId(f), ExprId(a)))?;
-                self.recs[x] = DONE | id as u64;
-                continue;
-            }
-            let n = decode(&self.side, r);
-            let (kids, k) = n.kids();
-            let mut ids = [0u32; 3];
-            for (&c, id) in kids[..k].iter().zip(&mut ids) {
-                *id = self.known_or_old(env, append, c)?;
-            }
-            self.recs[x] = DONE | add(env, append, n, ids)? as u64;
+            let id = match tag(r) {
+                T_APP => {
+                    let f = self.arena_id(env, append, (r >> ID_BITS & ID_MASK) as u32)?;
+                    let a = self.arena_id(env, append, (r & ID_MASK) as u32)?;
+                    add_node(env, append, ExprNode::App(ExprId(f), ExprId(a)))?
+                }
+                T_ALIAS => {
+                    self.recs[x] = r;
+                    continue;
+                }
+                _ => {
+                    let n = decode(&self.side, r);
+                    let (kids, k) = n.kids();
+                    let mut ids = [0u32; 3];
+                    for (&c, id) in kids[..k].iter().zip(&mut ids) {
+                        *id = self.arena_id(env, append, c)?;
+                    }
+                    add(env, append, n, ids)?
+                }
+            };
+            self.recs[x] = DONE | id as u64;
         }
         Ok(ExprId(self.recs[i] as u32))
     }
 
-    /// The arena id of `c`, interned by now if it is recent.
+    /// The arena id of expression `c` (interned by now if it is recent,
+    /// else interned here).
     #[inline(always)]
-    fn known_or_old(&mut self, env: &mut Env, append: bool, c: u32) -> R<u32> {
-        match self.known(c) {
-            Some(v) => Ok(v),
-            None => Ok(self.promote_old(env, append, self.real(c))?.0),
+    fn arena_id(&mut self, env: &mut Env, append: bool, c: u32) -> R<u32> {
+        let mut r = self.recs[c as usize];
+        if r & DONE != 0 {
+            return Ok(r as u32);
         }
+        let mut c = c;
+        if r >> TAG == T_ALIAS {
+            c = (r & ID_MASK) as u32;
+            r = self.recs[c as usize];
+            if r & DONE != 0 {
+                return Ok(r as u32);
+            }
+        }
+        Ok(self.promote_old(env, append, c)?.0)
     }
 
     /// [`Builder::promote`] for any record, with a stack.

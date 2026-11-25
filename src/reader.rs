@@ -2386,6 +2386,15 @@ mod tests {
                     r#"{"def":{"all":[5,6],"hints":"opaque","levelParams":[],"name":6,"safety":"partial","type":2,"value":4}}"#,
                     r#"{"in":8,"str":{"pre":0,"str":"t2"}}"#,
                     r#"{"thm":{"all":[8],"levelParams":[7],"name":8,"type":2,"value":3}}"#,
+                    // Aliases (`mdata`) in a promoted term: of an interned
+                    // term, of a stored one, of a recent one.
+                    r#"{"in":9,"str":{"pre":0,"str":"m"}}"#,
+                    r#"{"ie":5,"mdata":{"data":{},"expr":2}}"#,
+                    r#"{"app":{"arg":1,"fn":4},"ie":6}"#,
+                    r#"{"ie":7,"mdata":{"data":{},"expr":6}}"#,
+                    r#"{"ie":8,"mdata":{"data":{},"expr":7}}"#,
+                    r#"{"ie":9,"lam":{"binderInfo":"default","body":8,"name":2,"type":5}}"#,
+                    r#"{"def":{"all":[9],"hints":"abbrev","levelParams":[],"name":9,"safety":"safe","type":2,"value":9}}"#,
                 ] {
                     text.push_str(l);
                     text.push('\n');
