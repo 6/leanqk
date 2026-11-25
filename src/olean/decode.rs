@@ -117,6 +117,8 @@ pub struct Memo {
     /// a constant of the module, and the last scan that visited each.
     scanned: Vec<u64>,
     mentions: Vec<u64>,
+    /// The name objects of the module's constants.
+    decl_names: Vec<u64>,
     stamp: Vec<u32>,
     epoch: u32,
     /// Used instead of the dense array when decoding one value lazily.
@@ -166,6 +168,8 @@ impl Memo {
         self.scanned.resize(n, 0);
         self.mentions.clear();
         self.mentions.resize(n, 0);
+        self.decl_names.clear();
+        self.decl_names.resize(n, 0);
         if self.stamp.len() < self.vals.len() {
             self.stamp.resize(self.vals.len(), 0);
         }
@@ -238,6 +242,10 @@ pub struct Decoder<'h, 'a> {
     estack: Vec<(Obj<'a>, bool)>,
     name_buf: Vec<(u64, NameNode)>,
     lvl_buf: Vec<LevelId>,
+    /// The address of each constant's name object, and of the constants
+    /// array (for the scan of lazy values).
+    decl_name_ptrs: Vec<u64>,
+    consts_addr: u64,
 }
 
 fn too_many(what: &str) -> Fail {
@@ -271,6 +279,8 @@ impl<'h, 'a> Decoder<'h, 'a> {
             stack: Vec::new(),
             estack: Vec::new(),
             name_buf: Vec::new(),
+            decl_name_ptrs: Vec::new(),
+            consts_addr: 0,
             lvl_buf: Vec::new(),
         }
     }
@@ -310,6 +320,7 @@ impl<'h, 'a> Decoder<'h, 'a> {
         }
         if want_consts {
             let cs = self.obj(m.field(2), m.addr, "constants")?;
+            self.consts_addr = cs.addr;
             for p in cs.array()? {
                 let d = self.constant(p, cs.addr)?;
                 self.tape.decls.push(d);
@@ -363,6 +374,148 @@ impl<'h, 'a> Decoder<'h, 'a> {
         }
     }
 
+    /// Mark, bottom up, which expressions below `root` mention a local
+    /// constant (a literal counts if its type is local).
+    fn mention_walk(
+        &mut self,
+        root: Obj<'a>,
+        local: &[bool],
+        nat_local: bool,
+        str_local: bool,
+    ) -> Result<(), Fail> {
+        let is_local = |l: &[bool], n: NameId| l.get(n.index()).copied().unwrap_or(false);
+        let mut stack: Vec<(Obj<'a>, bool)> = vec![(root, false)];
+        while let Some(&(o, expanded)) = stack.last() {
+            let k = self.memo.slot(o.addr).expect("in the module");
+            if Memo::bit(&self.memo.scanned, k) {
+                stack.pop();
+                continue;
+            }
+            let kids = Self::scan_kids(&o)?;
+            if !expanded {
+                stack.last_mut().expect("nonempty").1 = true;
+                for &i in kids.iter().rev() {
+                    let c = self.obj(o.field(i), o.addr, "an expression")?;
+                    let ck = self.memo.slot(c.addr).expect("in the module");
+                    if !Memo::bit(&self.memo.scanned, ck) {
+                        stack.push((c, false));
+                    }
+                }
+                continue;
+            }
+            let kid = |d: &Self, i: usize| {
+                let ck = d.memo.slot(o.field(i)).expect("in the module");
+                Memo::bit(&d.memo.mentions, ck)
+            };
+            let m = match o.tag {
+                4 => is_local(local, self.name(o.field(0), o.addr)?),
+                9 => {
+                    let (n, st) = self.lit_kind(&o)?;
+                    (n && nat_local) || (st && str_local)
+                }
+                11 => {
+                    let n = self.name(o.field(0), o.addr)?;
+                    is_local(local, n) || kid(self, 2)
+                }
+                _ => kids.iter().any(|&i| kid(self, i)),
+            };
+            Memo::set_bit(&mut self.memo.scanned, k);
+            if m {
+                Memo::set_bit(&mut self.memo.mentions, k);
+            }
+            stack.pop();
+        }
+        Ok(())
+    }
+
+    /// Mark the objects in `[from, to)` (consecutive objects of one part)
+    /// in address order, so children before parents, reading each as if
+    /// it were an expression: for the expressions among them the marks
+    /// are exact, and no other object's mark is ever consulted (in a
+    /// well-formed file only expressions point to expressions). A
+    /// constant's name is recognized by its object, which the compactor
+    /// shares among all equal names. What the sweep cannot tell (a child
+    /// in an earlier part) counts as a mention, which costs only a longer
+    /// walk in phase 2, where every reference is checked by name. Stops
+    /// at anything it cannot parse; the walks then mark the rest.
+    fn sweep(&mut self, from: u64, to: u64, nat_local: bool, str_local: bool) {
+        let rd = |b: &[u8], o: usize| u64::from_le_bytes(b[o..o + 8].try_into().expect("8"));
+        let mut a = from;
+        while a < to {
+            let Some(b) = self.heap.raw(a) else { return };
+            if b.len() < 8 || b[0..4] != [0, 0, 0, 0] {
+                return;
+            }
+            let cs = u16::from_le_bytes([b[4], b[5]]) as usize;
+            let (other, tag) = (b[6], b[7]);
+            let big = |off: usize, unit: usize| -> Option<usize> {
+                let n = usize::try_from(u64::from_le_bytes(b.get(off..off + 8)?.try_into().ok()?))
+                    .ok()?;
+                n.checked_mul(unit)?
+                    .checked_add(if unit == 1 { 32 } else { 24 })
+            };
+            let size = match tag {
+                super::obj::TAG_ARRAY => big(16, 8),
+                248 => big(16, other.max(1) as usize),
+                super::obj::TAG_STRING => big(16, 1),
+                _ => Some(cs),
+            };
+            let Some(size) = size.map(|n| n.next_multiple_of(8)) else {
+                return;
+            };
+            if size < 8 || size > b.len() {
+                return;
+            }
+            let Some(k) = self.memo.slot(a) else { return };
+            let fields = other as usize;
+            let m = if tag <= 11 && size >= 8 + 8 * fields {
+                let mb = |d: &Self, i: usize| -> bool {
+                    let p = rd(b, 8 + 8 * i);
+                    if p & 1 == 1 {
+                        return false;
+                    }
+                    match d.memo.slot(p) {
+                        Some(ck) if p < a && Memo::bit(&d.memo.scanned, ck) => {
+                            Memo::bit(&d.memo.mentions, ck)
+                        }
+                        _ => true,
+                    }
+                };
+                let named = |d: &Self| {
+                    let p = rd(b, 8);
+                    p & 1 == 0
+                        && d.memo
+                            .slot(p)
+                            .is_some_and(|ck| Memo::bit(&d.memo.decl_names, ck))
+                };
+                match (tag, other) {
+                    (4, 2) => named(self),
+                    (5, 2) => mb(self, 0) || mb(self, 1),
+                    (6 | 7, 3) => mb(self, 1) || mb(self, 2),
+                    (8, 4) => mb(self, 1) || mb(self, 2) || mb(self, 3),
+                    (10, 2) => mb(self, 1),
+                    (11, 3) => named(self) || mb(self, 2),
+                    (9, 1) => {
+                        let lit = self.heap.raw(rd(b, 8)).and_then(|l| l.get(7).copied());
+                        match lit {
+                            Some(0) => nat_local,
+                            Some(1) => str_local,
+                            _ => true,
+                        }
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            };
+            Memo::set_bit(&mut self.memo.scanned, k);
+            if m {
+                Memo::set_bit(&mut self.memo.mentions, k);
+            }
+            a += size as u64;
+        }
+    }
+
     /// Find the constants of this module that each lazy value mentions,
     /// without decoding the values: first mark, bottom up, which objects
     /// mention one at all, then walk each value through the marked
@@ -383,52 +536,28 @@ impl<'h, 'a> Decoder<'h, 'a> {
                 .any(|s| self.is_dotted(d.name, s));
         }
         self.memo.reset_scan();
-        // Phase 1: post-order, marking what mentions a local constant.
-        let mut stack: Vec<(Obj<'a>, bool)> = Vec::new();
+        // Phase 1: mark what mentions a local constant. Most objects are
+        // marked by one sweep over the parts in address order (see
+        // `sweep`); anything else the values reach, by a walk.
+        for i in 0..self.decl_name_ptrs.len() {
+            if let Some(k) = self.memo.slot(self.decl_name_ptrs[i]) {
+                Memo::set_bit(&mut self.memo.decl_names, k);
+            }
+        }
+        let parts = self.memo.parts.clone();
+        for (i, &(lo, hi, _)) in parts.iter().enumerate() {
+            // The last part's constants come before its other data.
+            let end = if i + 1 == parts.len() {
+                self.consts_addr
+            } else {
+                hi
+            };
+            self.sweep(lo + 8, end, nat_local, str_local);
+        }
         for i in 0..self.tape.lazy.len() {
             let lv = self.tape.lazy[i];
             let root = self.obj(lv.ptr, lv.holder, "an expression")?;
-            stack.push((root, false));
-            while let Some(&(o, expanded)) = stack.last() {
-                let k = self.memo.slot(o.addr).expect("in the module");
-                if Memo::bit(&self.memo.scanned, k) {
-                    stack.pop();
-                    continue;
-                }
-                let kids = Self::scan_kids(&o)?;
-                if !expanded {
-                    stack.last_mut().expect("nonempty").1 = true;
-                    for &i in kids.iter().rev() {
-                        let c = self.obj(o.field(i), o.addr, "an expression")?;
-                        let ck = self.memo.slot(c.addr).expect("in the module");
-                        if !Memo::bit(&self.memo.scanned, ck) {
-                            stack.push((c, false));
-                        }
-                    }
-                    continue;
-                }
-                let kid = |d: &Self, i: usize| {
-                    let ck = d.memo.slot(o.field(i)).expect("in the module");
-                    Memo::bit(&d.memo.mentions, ck)
-                };
-                let m = match o.tag {
-                    4 => is_local(&local, self.name(o.field(0), o.addr)?),
-                    9 => {
-                        let (n, st) = self.lit_kind(&o)?;
-                        (n && nat_local) || (st && str_local)
-                    }
-                    11 => {
-                        let n = self.name(o.field(0), o.addr)?;
-                        is_local(&local, n) || kid(self, 2)
-                    }
-                    _ => kids.iter().any(|&i| kid(self, i)),
-                };
-                Memo::set_bit(&mut self.memo.scanned, k);
-                if m {
-                    Memo::set_bit(&mut self.memo.mentions, k);
-                }
-                stack.pop();
-            }
+            self.mention_walk(root, &local, nat_local, str_local)?;
         }
         // Phase 2: each value's constants, through marked objects only.
         let mut work: Vec<u64> = Vec::new();
@@ -866,6 +995,7 @@ impl<'h, 'a> Decoder<'h, 'a> {
         let cv = self.obj(v.field(0), v.addr, "a constant")?;
         cv.ctor(0, 3, 0, "constant header")?;
         let name = self.name(cv.field(0), cv.addr)?;
+        self.decl_name_ptrs.push(cv.field(0));
         let level_params = self.name_list(cv.field(1), cv.addr)?;
         let ty = self.expr(cv.field(2), cv.addr)?;
         let f = |i: usize| v.field(i);

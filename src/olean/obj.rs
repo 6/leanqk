@@ -91,6 +91,17 @@ impl<'a> Heap<'a> {
         self.parts.iter().map(|p| (p.lo, p.hi))
     }
 
+    /// The bytes from logical address `addr` to the end of its part's
+    /// data, if it is in a part.
+    pub fn raw(&self, addr: u64) -> Option<&'a [u8]> {
+        let p = self.parts.iter().rev().find(|p| p.lo <= addr)?;
+        if addr >= p.hi {
+            return None;
+        }
+        p.bytes
+            .get((addr - p.base) as usize..(p.hi - p.base) as usize)
+    }
+
     /// Resolve the field value `ptr`, held by an object at address `holder`
     /// (`u64::MAX` for the root).
     pub fn get(&self, ptr: u64, holder: u64) -> Result<Val<'a>, Fail> {

@@ -18,10 +18,10 @@ use crate::name::{NameId, NameNode};
 /// Builds a lazily read value of `b` in `a`'s arenas by lookup only: a
 /// term node `a` does not have makes the result [`IntoEnv::missing`] (the
 /// value is then not one of `a`'s terms).
-struct IntoEnv<'e> {
-    a: &'e Env,
-    b: &'e Env,
-    missing: bool,
+pub(crate) struct IntoEnv<'e> {
+    pub a: &'e Env,
+    pub b: &'e Env,
+    pub missing: bool,
 }
 
 /// An id no arena has.
