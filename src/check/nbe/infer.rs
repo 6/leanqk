@@ -471,33 +471,67 @@ impl Nbe<'_> {
         infer_only: bool,
     ) -> R<V> {
         let mut ft = self.infer_term(f, env, ls, infer_only)?;
-        for k in base..base + n {
-            let a = self.terms[k];
+        let mut k = base;
+        while k < base + n {
             ft = self.ensure_pi(ft)?;
-            let av = self.thunk(a, env, ls);
-            if !infer_only {
-                let dom = self.binder_dom(ft);
-                let ok = if self.is_eager_reduce(a) {
-                    let saved = std::mem::replace(&mut self.eager, true);
-                    let r = self.check_against(a, env, ls, dom);
-                    self.eager = saved;
-                    r?
-                } else {
-                    self.check_against(a, env, ls, dom)?
+            let Val::Pi(mut t, mut pi_env, pi_ls) = self.a.get(ft) else {
+                let a = self.terms[k];
+                let av = self.thunk(a, env, ls);
+                if !infer_only {
+                    let dom = self.binder_dom(ft);
+                    self.check_arg(a, av, env, ls, dom)?;
+                }
+                ft = self.instantiate(ft, av)?;
+                k += 1;
+                continue;
+            };
+            // Through the Π binders of the term itself, without building
+            // the values in between: the same values as instantiating one
+            // binder at a time.
+            loop {
+                let ExprNode::Pi(_, _, d, b) = self.st.node(t) else {
+                    unreachable!()
                 };
-                if !ok {
-                    let at = self.infer_term(a, env, ls, true)?;
-                    return err(format!(
-                        "application type mismatch: argument {} has type {} but is expected to have type {}",
-                        self.pp(av),
-                        self.pp(at),
-                        self.pp(dom)
-                    ));
+                let a = self.terms[k];
+                let av = self.thunk(a, env, ls);
+                if !infer_only {
+                    let dom = self.thunk(d, pi_env, pi_ls);
+                    self.check_arg(a, av, env, ls, dom)?;
+                }
+                pi_env = self.a.cons(pi_env, av);
+                k += 1;
+                if k < base + n && matches!(self.st.node(b), ExprNode::Pi(..)) {
+                    t = b;
+                } else {
+                    ft = self.eval(b, pi_env, pi_ls);
+                    break;
                 }
             }
-            ft = self.instantiate(ft, av)?;
         }
         Ok(ft)
+    }
+
+    /// Check the argument `a` (whose value is `av`) against the domain
+    /// `dom`.
+    fn check_arg(&mut self, a: ExprId, av: V, env: Env, ls: Ls, dom: V) -> R<()> {
+        let ok = if self.is_eager_reduce(a) {
+            let saved = std::mem::replace(&mut self.eager, true);
+            let r = self.check_against(a, env, ls, dom);
+            self.eager = saved;
+            r?
+        } else {
+            self.check_against(a, env, ls, dom)?
+        };
+        if !ok {
+            let at = self.infer_term(a, env, ls, true)?;
+            return err(format!(
+                "application type mismatch: argument {} has type {} but is expected to have type {}",
+                self.pp(av),
+                self.pp(at),
+                self.pp(dom)
+            ));
+        }
+        Ok(())
     }
 
     /// Check `e` in `env` and whether its type is `expected`. A λ is
