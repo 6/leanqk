@@ -2,7 +2,6 @@
 //! the store's `FVar` terms, printed with the names of their binders.
 
 use crate::expr::{ExprId, ExprNode};
-use crate::name::NameId;
 
 use super::super::pp;
 use super::super::tc::LocalDecl;
@@ -18,10 +17,9 @@ impl Nbe<'_> {
     fn term_in(&mut self, e: ExprId, env: Env, ls: Ls, depth: u32) -> ExprId {
         let mut e = e;
         if ls != super::val::Ls::ID {
-            let node = self.a.ls(ls);
-            let ps: Vec<NameId> = self.st.name_list(node.params).to_vec();
-            let lv: Vec<crate::level::LevelId> = self.st.list(node.levels).to_vec();
+            let (ps, lv) = self.ls_parts(ls);
             e = self.st.instantiate_lparams(e, &ps, &lv);
+            self.ls_put(ps, lv);
         }
         if self.st.has_loose_bvars(e) {
             let mut vs = Vec::new();

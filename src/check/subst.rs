@@ -300,6 +300,16 @@ impl Store<'_> {
         if !self.list_has_param(ll) {
             return ll;
         }
+        let n = self.list(ll).len();
+        if n <= 8 {
+            // Lists are short: no allocation.
+            let mut v = [LevelId::ZERO; 8];
+            for (i, x) in v.iter_mut().enumerate().take(n) {
+                let l = self.list(ll)[i];
+                *x = self.inst_level(l, ps, ls);
+            }
+            return self.mk_list(&v[..n]);
+        }
         let v: Vec<LevelId> = self.list(ll).to_vec();
         let v: Vec<LevelId> = v.into_iter().map(|l| self.inst_level(l, ps, ls)).collect();
         self.mk_list(&v)

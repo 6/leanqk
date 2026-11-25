@@ -70,6 +70,10 @@ const PRUNE: bool = true;
 /// substitution, right ones, depth, outcome)).
 const SYN_T: usize = 1 << 12;
 
+/// Slots of `Nbe::level_slots` and `Nbe::list_slots`, direct-mapped
+/// fronts of the universe substitution memos.
+const LEVEL_SLOTS: usize = 1 << 12;
+
 /// Slots of `Nbe::prunes`.
 const PRUNES: usize = 1 << 12;
 
@@ -94,6 +98,9 @@ pub struct Nbe<'e> {
     big_table: HashTable<u32>,
     level_cache: IdMap<(LevelId, Ls), LevelId>,
     list_cache: IdMap<(LevelList, Ls), LevelList>,
+    ls_bufs: (Vec<NameId>, Vec<LevelId>),
+    level_slots: Vec<[u32; 3]>,
+    list_slots: Vec<[u32; 3]>,
     const_type: IdMap<(NameId, LevelList), V>,
     const_value: IdMap<(NameId, LevelList), V>,
     /// Values left in their `.olean` files, as built in the store.
@@ -242,6 +249,9 @@ impl<'e> Nbe<'e> {
             big_table: HashTable::new(),
             level_cache: IdMap::default(),
             list_cache: IdMap::default(),
+            ls_bufs: (Vec::new(), Vec::new()),
+            level_slots: vec![[val::NONE; 3]; LEVEL_SLOTS],
+            list_slots: vec![[val::NONE; 3]; LEVEL_SLOTS],
             const_type: IdMap::default(),
             const_value: IdMap::default(),
             lazy_values: IdMap::default(),
@@ -394,6 +404,8 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.level_checked);
         self.a.clear();
         self.prunes.fill([val::NONE; 3]);
+        self.level_slots.fill([val::NONE; 3]);
+        self.list_slots.fill([val::NONE; 3]);
         self.trim_holes_memo.fill([val::NONE; 4]);
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
@@ -486,19 +498,25 @@ impl<'e> Nbe<'e> {
         if ls == Ls::ID || !self.st.level_has_param(l) {
             return l;
         }
-        if let Some(&r) = self.level_cache.get(&(l, ls)) {
-            return r;
+        let i = level_slot(l.0, ls.0);
+        let s = self.level_slots[i];
+        if s[0] == l.0 && s[1] == ls.0 {
+            return LevelId(s[2]);
         }
-        self.inst_level_new(l, ls)
+        let r = match self.level_cache.get(&(l, ls)) {
+            Some(&r) => r,
+            None => self.inst_level_new(l, ls),
+        };
+        self.level_slots[i] = [l.0, ls.0, r.0];
+        r
     }
 
     /// `inst_level` not in its memo yet.
     #[inline(never)]
     fn inst_level_new(&mut self, l: LevelId, ls: Ls) -> LevelId {
-        let node = self.a.ls(ls);
-        let ps: Vec<NameId> = self.st.name_list(node.params).to_vec();
-        let lv: Vec<LevelId> = self.st.list(node.levels).to_vec();
+        let (ps, lv) = self.ls_parts(ls);
         let r = self.st.inst_level(l, &ps, &lv);
+        self.ls_put(ps, lv);
         self.level_cache.insert((l, ls), r);
         r
     }
@@ -508,21 +526,43 @@ impl<'e> Nbe<'e> {
         if ls == Ls::ID || !self.st.list_has_param(ll) {
             return ll;
         }
-        if let Some(&r) = self.list_cache.get(&(ll, ls)) {
-            return r;
+        let i = level_slot(ll.0, ls.0);
+        let s = self.list_slots[i];
+        if s[0] == ll.0 && s[1] == ls.0 {
+            return LevelList(s[2]);
         }
-        self.inst_list_new(ll, ls)
+        let r = match self.list_cache.get(&(ll, ls)) {
+            Some(&r) => r,
+            None => self.inst_list_new(ll, ls),
+        };
+        self.list_slots[i] = [ll.0, ls.0, r.0];
+        r
     }
 
     /// `inst_list` not in its memo yet.
     #[inline(never)]
     fn inst_list_new(&mut self, ll: LevelList, ls: Ls) -> LevelList {
-        let node = self.a.ls(ls);
-        let ps: Vec<NameId> = self.st.name_list(node.params).to_vec();
-        let lv: Vec<LevelId> = self.st.list(node.levels).to_vec();
+        let (ps, lv) = self.ls_parts(ls);
         let r = self.st.inst_list(ll, &ps, &lv);
+        self.ls_put(ps, lv);
         self.list_cache.insert((ll, ls), r);
         r
+    }
+
+    /// The parameters and levels of `ls`, in buffers kept across calls
+    /// (give them back with `ls_put`).
+    pub(super) fn ls_parts(&mut self, ls: Ls) -> (Vec<NameId>, Vec<LevelId>) {
+        let node = self.a.ls(ls);
+        let (mut ps, mut lv) = std::mem::take(&mut self.ls_bufs);
+        ps.clear();
+        lv.clear();
+        ps.extend_from_slice(self.st.name_list(node.params));
+        lv.extend_from_slice(self.st.list(node.levels));
+        (ps, lv)
+    }
+
+    pub(super) fn ls_put(&mut self, ps: Vec<NameId>, lv: Vec<LevelId>) {
+        self.ls_bufs = (ps, lv);
     }
 
     /// The substitution of `d`'s universe parameters by `ls`.
@@ -858,4 +898,12 @@ impl<'e> Nbe<'e> {
         v.clear();
         self.elims.push(v);
     }
+}
+
+/// The slot of `(a, ls)` in a table of `LEVEL_SLOTS`.
+#[inline]
+fn level_slot(a: u32, ls: u32) -> usize {
+    let h = (a as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        ^ (ls as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f);
+    (h >> 40) as usize & (LEVEL_SLOTS - 1)
 }

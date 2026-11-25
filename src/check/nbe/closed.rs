@@ -7,7 +7,6 @@
 //! reduct of the value; when it gives up, `whnf` goes on by itself.
 
 use crate::expr::ExprId;
-use crate::name::NameId;
 
 use super::super::store::{IdMap, Store};
 use super::super::tc::Tc;
@@ -152,10 +151,9 @@ impl<'e> Nbe<'e> {
         open: bool,
     ) -> Option<ExprId> {
         if ls != Ls::ID {
-            let node = self.a.ls(ls);
-            let ps: Vec<NameId> = self.st.name_list(node.params).to_vec();
-            let lv: Vec<crate::level::LevelId> = self.st.list(node.levels).to_vec();
+            let (ps, lv) = self.ls_parts(ls);
             e = self.st.instantiate_lparams(e, &ps, &lv);
+            self.ls_put(ps, lv);
         }
         if self.st.has_loose_bvars(e) {
             let mut vs = Vec::new();
