@@ -2546,6 +2546,22 @@ fn eval_cases(v: &mut Cases) {
     );
     eval(
         v,
+        "eval-match",
+        "K.ev_match",
+        "accept",
+        "matchers on two and three discriminants, nested patterns, a sparse else that rebuilds the value matched",
+        &[],
+    );
+    eval(
+        v,
+        "eval-match-wrong",
+        "K.ev_match_wrong",
+        "reject",
+        "the same, the rebuilt list not swapped",
+        &[],
+    );
+    eval(
+        v,
         "eval-select",
         "K.ev_select",
         "accept",

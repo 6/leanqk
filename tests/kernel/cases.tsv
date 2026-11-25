@@ -210,6 +210,8 @@ eval-arr-eq	eval	accept	accept	decidable equality of an array built by push and 
 eval-arr-eq-wrong	eval	reject	reject	the same, different arrays
 eval-arr-fn	eval	accept	accept	an array of functions, elements applied
 eval-arr-fn-wrong	eval	reject	reject	the same, wrong sum
+eval-match	eval	accept	accept	matchers on two and three discriminants, nested patterns, a sparse else that rebuilds the value matched
+eval-match-wrong	eval	reject	reject	the same, the rebuilt list not swapped
 eval-select	eval	accept	accept	ite, dite and decide pick a branch: a function applied further, a value, a closed term
 eval-select-wrong	eval	reject	reject	the same, off by one
 eval-arr-vers	eval	accept	accept	old versions of an array read after set! and push on them

@@ -136,6 +136,8 @@ enum CInfo {
     /// A definition of the shape of a `casesOn` (see `cases_shape`); its
     /// value.
     Cases(Rc<CasesInfo>, ExprId),
+    /// A matcher of nested `casesOn`s (see `tree_shape`); its value.
+    Tree(Rc<TreeInfo>, ExprId),
     /// An inductive type, axiom, opaque constant, `Quot` or `Quot.mk`:
     /// it does not reduce.
     Neutral,
@@ -244,6 +246,37 @@ const MEMO_RATIO: u32 = 32;
 enum Next {
     V(V),
     Eval(ExprId, Env),
+}
+
+/// Where a matcher's decision tree (`Tree`) takes a thunk from.
+#[derive(Debug, Clone, Copy)]
+enum Src {
+    /// The definition's argument.
+    Arg(usize),
+    /// Field `f` of the constructor matched at level `l`.
+    Field(usize, usize),
+    /// The value matched at level `l` (where the term rebuilds it from its
+    /// fields).
+    Major(usize),
+    /// A closed term.
+    Closed(ExprId),
+}
+
+#[derive(Debug)]
+enum Tree {
+    /// `head args…`, then the arguments past the definition's binders.
+    Leaf(Src, Box<[Src]>),
+    /// The value of the source, a constructor: its rule's tree, one level
+    /// down (constructor, fields, tree).
+    Case(Src, Box<[(NameId, u32, Tree)]>),
+}
+
+/// A definition `fun x₀ … xₖ₋₁ => t` whose body is nested `casesOn`s with
+/// a leaf at the end of each branch (see `tree_shape`).
+#[derive(Debug)]
+pub struct TreeInfo {
+    arity: usize,
+    tree: Tree,
 }
 
 /// A recursor rule's minor premise (its index) and inductive hypotheses
@@ -356,7 +389,8 @@ impl<'a, 'e> Machine<'a, 'e> {
                 | Head::BEqProd(..)
                 | Head::BEqProdFn
                 | Head::Int(..)
-                | Head::Cases(..),
+                | Head::Cases(..)
+                | Head::Tree(..),
             ..
         } = &*v
         {
@@ -847,6 +881,11 @@ impl<'a, 'e> Machine<'a, 'e> {
                 {
                     return CInfo::Cases(Rc::new(ci), v);
                 }
+                if k == 0
+                    && let Some(t) = self.tree_shape(v)
+                {
+                    return CInfo::Tree(Rc::new(t), v);
+                }
                 CInfo::Unfold(v, k)
             }
             DeclKind::Constructor {
@@ -931,6 +970,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             CInfo::BEqProd(v) => self.saturate_n(c, Head::BEqProd(v), args),
             CInfo::Int(op, v) => self.saturate_n(c, Head::Int(op, v), args),
             CInfo::Cases(ci, v) => self.saturate_n(c, Head::Cases(ci, v), args),
+            CInfo::Tree(t, v) => self.saturate_n(c, Head::Tree(t, v), args),
             CInfo::Ctor(info) if args.is_empty() => {
                 // One shared value per constructor constant.
                 if let Some(v) = self.s.nullary.get(&c) {
@@ -1155,6 +1195,10 @@ impl<'a, 'e> Machine<'a, 'e> {
                     let (ci, v) = (ci.clone(), *v);
                     return self.cases_n(&ci, v, args);
                 }
+                Head::Tree(t, v) => {
+                    let (t, v) = (t.clone(), *v);
+                    return self.tree_n(&t, v, args);
+                }
                 _ => {}
             }
         }
@@ -1188,6 +1232,10 @@ impl<'a, 'e> Machine<'a, 'e> {
             Head::QuotLift | Head::QuotInd => self.quot_head(matches!(kind, Head::QuotLift), args),
             Head::Cases(ci, v) => {
                 let n = self.cases_n(&ci, v, args)?;
+                self.finish(n)
+            }
+            Head::Tree(t, v) => {
+                let n = self.tree_n(&t, v, args)?;
                 self.finish(n)
             }
         }
@@ -1691,6 +1739,207 @@ impl<'a, 'e> Machine<'a, 'e> {
             major,
             rules,
         })
+    }
+
+    /// `Some` if `v = fun x₀ … xₖ₋₁ => t` and `t` is an application of a
+    /// definition of the shape of a `casesOn` (`cases_shape`), whose minor
+    /// premises the reduction picks (applied to the fields, or the extra
+    /// arguments of a sparse `casesOn`'s `else`) are again such
+    /// applications or leaves: a variable, a field or a closed term applied
+    /// to variables, fields, closed terms or a constructor rebuilding a
+    /// matched value from its fields. That is what a matcher of several
+    /// discriminants or nested patterns compiles to. Unfolding `v` and the
+    /// `casesOn`s on the way to a leaf, and reducing them, gives the leaf
+    /// (`tree_n`); the rebuilt constructor is the matched value itself (up
+    /// to its parameters, which typing makes the same).
+    #[inline(never)]
+    fn tree_shape(&mut self, v: ExprId) -> Option<TreeInfo> {
+        let mut e = v;
+        let mut ctx = Vec::new();
+        while let ExprNode::Lam(_, _, _, b) = self.tc.st.node(e) {
+            ctx.push(Src::Arg(ctx.len()));
+            e = b;
+        }
+        let arity = ctx.len();
+        let mut budget = 64u32;
+        let tree = self.tree_of(e, &mut ctx, &mut Vec::new(), &mut budget)?;
+        if !matches!(tree, Tree::Case(..)) {
+            return None;
+        }
+        Some(TreeInfo { arity, tree })
+    }
+
+    /// The source of the term `x` in `ctx` (a source per bound variable,
+    /// the innermost last), at the matched `levels` (constructor, fields).
+    fn src_of(&mut self, x: ExprId, ctx: &[Src], levels: &[(NameId, usize)]) -> Option<Src> {
+        if !self.tc.st.has_loose_bvars(x) {
+            return Some(Src::Closed(x));
+        }
+        if let ExprNode::BVar(i) = self.tc.st.node(x) {
+            return ctx.len().checked_sub(1 + i as usize).map(|j| ctx[j]);
+        }
+        let mut a = Vec::new();
+        let h = self.tc.st.spine(x, &mut a);
+        let ExprNode::Const(n, _) = self.tc.st.node(h) else {
+            return None;
+        };
+        let CInfo::Ctor(ci) = self.info(h) else {
+            return None;
+        };
+        let (lv, &(_, nf)) = levels.iter().enumerate().rev().find(|(_, l)| l.0 == n)?;
+        if nf == 0 || a.len() != ci.nparams as usize + nf {
+            return None;
+        }
+        for (f, &y) in a[a.len() - nf..].iter().enumerate() {
+            match self.src_of(y, ctx, levels)? {
+                Src::Field(l, g) if l == lv && g == f => {}
+                _ => return None,
+            }
+        }
+        Some(Src::Major(lv))
+    }
+
+    fn tree_of(
+        &mut self,
+        t: ExprId,
+        ctx: &mut Vec<Src>,
+        levels: &mut Vec<(NameId, usize)>,
+        budget: &mut u32,
+    ) -> Option<Tree> {
+        *budget = budget.checked_sub(1)?;
+        let mut a = Vec::new();
+        let h = self.tc.st.spine(t, &mut a);
+        if let ExprNode::Const(..) = self.tc.st.node(h)
+            && let CInfo::Cases(ci, _) = self.info(h)
+            && a.len() >= ci.arity
+        {
+            let major = self.src_of(a[ci.major], ctx, levels)?;
+            let mut rules = Vec::with_capacity(ci.rules.len());
+            for (cn, nf, e, m) in &ci.rules {
+                let (nf, e) = (*nf as usize, *e as usize);
+                if a.len() < ci.arity + e {
+                    return None;
+                }
+                let tail = &a[ci.arity + e..];
+                let lv = levels.len();
+                levels.push((*cn, nf));
+                let fields: Vec<Src> = (0..nf).map(|f| Src::Field(lv, f)).collect();
+                let sub = match m {
+                    Minor::Arg(l) => self.apply_tree(a[*l], &fields, tail, ctx, levels, budget),
+                    Minor::Extra(j, ts) => {
+                        let ts: Vec<Src> = ts.iter().map(|&t| Src::Closed(t)).collect();
+                        self.apply_tree(a[ci.arity + *j as usize], &ts, tail, ctx, levels, budget)
+                    }
+                    Minor::Closed(c) => self.apply_tree(*c, &[], tail, ctx, levels, budget),
+                    Minor::Var(l) => self.apply_tree(a[*l], &[], tail, ctx, levels, budget),
+                };
+                levels.pop();
+                rules.push((*cn, nf as u32, sub?));
+            }
+            return Some(Tree::Case(major, rules.into_boxed_slice()));
+        }
+        let head = self.src_of(h, ctx, levels)?;
+        let mut xs = Vec::with_capacity(a.len());
+        for &x in &a {
+            xs.push(self.src_of(x, ctx, levels)?);
+        }
+        Some(Tree::Leaf(head, xs.into_boxed_slice()))
+    }
+
+    /// The tree of `x xs… tail…`, `xs` sources and `tail` terms in `ctx`.
+    fn apply_tree(
+        &mut self,
+        x: ExprId,
+        xs: &[Src],
+        tail: &[ExprId],
+        ctx: &mut Vec<Src>,
+        levels: &mut Vec<(NameId, usize)>,
+        budget: &mut u32,
+    ) -> Option<Tree> {
+        let mut ts = Vec::with_capacity(tail.len());
+        for &t in tail {
+            ts.push(self.src_of(t, ctx, levels)?);
+        }
+        let n = ctx.len();
+        let mut body = x;
+        let mut used = 0;
+        while used < xs.len()
+            && let ExprNode::Lam(_, _, _, b) = self.tc.st.node(body)
+        {
+            ctx.push(xs[used]);
+            used += 1;
+            body = b;
+        }
+        let r = if used == xs.len() && ts.is_empty() {
+            self.tree_of(body, ctx, levels, budget)
+        } else {
+            self.src_of(body, ctx, levels).map(|h| {
+                let mut args = xs[used..].to_vec();
+                args.extend(ts);
+                Tree::Leaf(h, args.into_boxed_slice())
+            })
+        };
+        ctx.truncate(n);
+        r
+    }
+
+    fn src(&mut self, s: Src, args: &[Th], levels: &[(Th, Vec<Th>)]) -> Th {
+        match s {
+            Src::Arg(i) => args[i].clone(),
+            Src::Field(l, f) => levels[l].1[f].clone(),
+            Src::Major(l) => levels[l].0.clone(),
+            Src::Closed(e) => self.closed(e),
+        }
+    }
+
+    /// A matcher of nested `casesOn`s applied to (at least) its arguments:
+    /// down the tree while the values matched are constructors of its
+    /// rules, to a leaf. Else the definition.
+    fn tree_n(&mut self, ti: &TreeInfo, v: ExprId, mut args: Vec<Th>) -> ER<Next> {
+        let tail = args.split_off(ti.arity);
+        let mut levels: Vec<(Th, Vec<Th>)> = Vec::new();
+        let mut t = &ti.tree;
+        loop {
+            match t {
+                Tree::Leaf(h, xs) => {
+                    self.s.fast[5] += 1;
+                    let h = self.src(*h, &args, &levels);
+                    let f = self.force(&h)?;
+                    let mut call = Vec::with_capacity(xs.len() + tail.len());
+                    for &x in xs.iter() {
+                        call.push(self.src(x, &args, &levels));
+                    }
+                    call.extend(tail);
+                    return self.apply_n(f, call);
+                }
+                Tree::Case(m, rules) => {
+                    let th = self.src(*m, &args, &levels);
+                    let mut mv = self.force(&th)?;
+                    if matches!(&*mv, Val::Nat(_) | Val::Str(_) | Val::Arr(_)) {
+                        mv = self.as_ctor(mv)?;
+                    }
+                    let next = match &*mv {
+                        Val::Ctor { c, args: margs, .. } => match self.tc.st.node(*c) {
+                            ExprNode::Const(cn, _) => rules
+                                .iter()
+                                .find(|r| r.0 == cn && r.1 as usize <= margs.len())
+                                .map(|r| (r, margs[margs.len() - r.1 as usize..].to_vec())),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let Some((r, fields)) = next else {
+                        break;
+                    };
+                    levels.push((th, fields));
+                    t = &r.2;
+                }
+            }
+        }
+        args.extend(tail);
+        let t = self.closed(v);
+        let f = self.force(&t)?;
+        self.apply_n(f, args)
     }
 
     /// The number of inductive hypotheses of a recursor rule `fun x₁ … xₙ
@@ -2923,6 +3172,7 @@ pub enum Head {
     BEqProdFn,
     Int(IntOp, ExprId),
     Cases(Rc<CasesInfo>, ExprId),
+    Tree(Rc<TreeInfo>, ExprId),
 }
 
 impl Head {
@@ -2950,6 +3200,7 @@ impl Head {
             Head::Int(IntOp::Neg | IntOp::NegOfNat | IntOp::NatAbs | IntOp::ToNat, _) => 1,
             Head::Int(_, _) => 2,
             Head::Cases(ci, _) => ci.arity,
+            Head::Tree(t, _) => t.arity,
         }
     }
 }
