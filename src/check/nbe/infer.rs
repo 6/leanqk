@@ -328,8 +328,7 @@ impl Nbe<'_> {
             }
             ExprNode::Lam(..) if infer_only => {
                 let d = self.st.data(e);
-                let env = self.trim(env, d.loose_bvar_range());
-                let env = self.prune(env, d);
+                let env = self.trim_prune(env, d);
                 let ls = if d.has_level_param() { ls } else { Ls::ID };
                 return Ok(self.a.mk(Val::PiInfer(e, env, ls)));
             }
@@ -607,8 +606,7 @@ impl Nbe<'_> {
             self.pop_fvar(x);
         }
         let d = self.st.data(e);
-        let env = self.trim(env, d.loose_bvar_range());
-        let env = self.prune(env, d);
+        let env = self.trim_prune(env, d);
         let ls = if d.has_level_param() { ls } else { Ls::ID };
         Ok(self.a.mk(Val::PiInfer(e, env, ls)))
     }
