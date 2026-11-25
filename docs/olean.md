@@ -110,6 +110,11 @@ the default for `check`; `src/reader/lazy.rs`):
   a later declaration that needs one of its terms adds it then. If the ids
   are not dense, the reader adds every record to the arena and goes on
   without lazy proofs.
+- A theorem's value is built from the table into the checker's store
+  (`Env::value_into`) the way the reader adds recent records: its own
+  records, from its declaration's first line on, in two passes (one down
+  marks the ones the value needs, one up builds them in order, with a
+  dense memo); records of earlier declarations it uses, from a stack.
 - Lines are read by a byte scanner for the fixed shapes lean4export
   writes (`src/reader/scan.rs`), with no allocation per line. It looks at
   a window of 288 bytes from the line's start; each token checks its
