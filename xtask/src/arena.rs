@@ -709,6 +709,11 @@ pub struct RunArgs {
     /// Print only mismatches and errors.
     #[arg(long)]
     quiet: bool,
+    /// Exit with an error unless every test run gets a verdict the arena
+    /// scores as right (`correct`, or either verdict on an `either` test),
+    /// or if no test is run.
+    #[arg(long)]
+    check: bool,
 }
 
 fn sh_quote(s: &str) -> String {
@@ -1041,7 +1046,8 @@ fn cmd_run(a: RunArgs) -> Result<()> {
         tmp: tmp.clone(),
     };
     let res = run_all(
-        &a.quiet,
+        a.quiet,
+        a.check,
         a.no_timeout,
         a.timeout_scale,
         &tools,
@@ -1056,7 +1062,8 @@ fn cmd_run(a: RunArgs) -> Result<()> {
 
 #[allow(clippy::too_many_arguments)]
 fn run_all(
-    quiet: &bool,
+    quiet: bool,
+    check: bool,
     no_timeout: bool,
     timeout_scale: f64,
     tools: &Tools,
@@ -1112,7 +1119,7 @@ fn run_all(
             } else {
                 ""
             };
-            if !*quiet || !flag.is_empty() || corr == "error" {
+            if !quiet || !flag.is_empty() || corr == "error" {
                 eprintln!(
                     "{name:10} {test:50} {expected:7} {:9} {:>9}s {:>9} MiB{flag}",
                     r.status, r.wall_s, r.max_rss_mib
@@ -1128,6 +1135,26 @@ fn run_all(
             .collect::<Vec<_>>()
             .join(", ")
     );
+    if check {
+        let run: usize = counts.values().sum();
+        let wrong: usize = counts
+            .iter()
+            .filter(|(k, _)| !matches!(**k, "correct" | "either"))
+            .map(|(_, v)| v)
+            .sum();
+        if run == 0 {
+            return Err(exit_with(
+                1,
+                "run: --check: no test was run (none selected, or all already in the output TSV)",
+            ));
+        }
+        if wrong > 0 {
+            return Err(exit_with(
+                1,
+                format!("run: --check: {wrong} of {run} tests without a right verdict"),
+            ));
+        }
+    }
     Ok(())
 }
 

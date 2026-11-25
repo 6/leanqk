@@ -228,6 +228,15 @@ and the children it waited for), peak RSS (GNU time's `%M`, as the arena),
 the instruction count (in billions) when `perf stat` works, and the first line of
 standard error. Rows are appended to `results/results.tsv`; pairs already
 there are skipped, so an interrupted run resumes.
+`--check` makes the run fail unless every test it ran got a verdict the
+arena scores as right (`correct`, or either verdict on an `either` test). CI
+(job `arena-small` of `.github/workflows/ci.yml`) builds the tutorial,
+`bugs/`, `corner-cases/` and `other/` tests on every pull request and runs
+nitrolean on them this way:
+
+    cargo xtask arena fetch tutorial 'bugs/*' 'corner-cases/*' 'other/*'
+    cargo xtask arena run --check --quiet --test 'tutorial/*' --test 'bugs/*' \
+        --test 'corner-cases/*' --test 'other/*'
 
 The arena's timeouts are applied, multiplied by `--timeout-scale` (on a
 slower machine than the arena's, use 2 or more; `--no-timeout` drops them).
