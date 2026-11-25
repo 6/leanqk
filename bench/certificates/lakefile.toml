@@ -1,0 +1,5 @@
+name = "MatCert"
+defaultTargets = ["MatCert"]
+
+[[lean_lib]]
+name = "MatCert"
