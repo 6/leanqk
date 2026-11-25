@@ -661,6 +661,9 @@ fn finish(
 fn read_single(f: &File, st: State) -> Result<Done, ReadError> {
     use std::os::unix::fs::FileExt;
     const BLOCK: usize = 1 << 20;
+    if let Some(m) = crate::olean::Mapped::new(f) {
+        return finish(st, |st| map_lines(st, &m));
+    }
     finish(st, |st| {
         let mut lines = Lines::default();
         let mut buf = vec![0u8; BLOCK];
@@ -698,6 +701,36 @@ fn read_single(f: &File, st: State) -> Result<Done, ReadError> {
             }
         }
     })
+}
+
+/// Apply the lines of a mapped file, a step of whole lines at a time; the
+/// pages of each step go back after it.
+fn map_lines(st: &mut State, m: &crate::olean::Mapped) -> Result<ReadStats, ReadError> {
+    const STEP: usize = 16 << 20;
+    let b = m.bytes();
+    let mut lines = Lines::default();
+    let mut pos = 0;
+    while b.len() - pos > STEP {
+        // The whole lines that start in the step (a line longer than the
+        // step goes with them).
+        let end = match memchr_from(b, pos + STEP) {
+            Some(p) => p + 1,
+            None => break,
+        };
+        st.lines(&mut lines, &b[pos..end])?;
+        // The step's last page may hold the start of the next one: it is
+        // read back from the page cache.
+        m.release(pos, end);
+        pos = end;
+    }
+    st.lines(&mut lines, &b[pos..])?;
+    m.release(pos, b.len());
+    st.end_lines(lines)
+}
+
+/// The first newline at or after `from`.
+fn memchr_from(b: &[u8], from: usize) -> Option<usize> {
+    b[from..].iter().position(|&c| c == b'\n').map(|p| from + p)
 }
 
 /// Time the index at the end of a read took (for
