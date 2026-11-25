@@ -32,6 +32,9 @@ pub(super) const PEND: u32 = 1 << 30;
 pub(super) const STORED: u32 = 2 << 30;
 const KIND: u32 = 3 << 30;
 const NONE: u32 = u32::MAX;
+/// A pending record's arena id while [`Builder::promote`] has found it
+/// needed and not yet interned it.
+const NEEDED: u32 = u32::MAX - 1;
 
 /// A compound expression record, with references as above.
 #[derive(Clone, Copy)]
@@ -178,6 +181,42 @@ fn read_node(words: &[u32], off: u32) -> Node {
     }
 }
 
+/// Intern record `n` in `env`, its children's arena ids being `ids` (in
+/// the order of [`Node::kids`]); its arena id.
+#[inline]
+fn add(env: &mut Env, append: bool, n: Node, ids: [u32; 3]) -> R<u32> {
+    let e = |i: usize| ExprId(ids[i]);
+    let node = match n {
+        Node::App(..) => ExprNode::App(e(0), e(1)),
+        Node::Bind { pi, bi, name, .. } => {
+            if pi {
+                ExprNode::Pi(bi, name, e(0), e(1))
+            } else {
+                ExprNode::Lam(bi, name, e(0), e(1))
+            }
+        }
+        Node::Let { name, nondep, .. } => {
+            let b = LetBinder {
+                name,
+                ty: e(0),
+                value: e(1),
+                nondep,
+            };
+            ExprNode::Let(env.exprs.intern_let(b)?, e(2))
+        }
+        Node::Proj(s, i, _) => ExprNode::Proj(s, i, e(0)),
+    };
+    let id = if append {
+        env.exprs.append(node, &env.levels)?
+    } else {
+        env.exprs.intern(node, &env.levels)?.0
+    };
+    if id.0 >= PEND {
+        return Err(Fail::from(Overflow("too many expressions")));
+    }
+    Ok(id.0)
+}
+
 /// The reader's side of lazy proofs.
 #[derive(Default)]
 pub(super) struct Builder {
@@ -250,10 +289,72 @@ impl Builder {
         if let Some(id) = self.known(r) {
             return Ok(ExprId(id));
         }
+        if r & KIND == PEND {
+            return self.promote_pending(env, append, (r & !KIND) as usize);
+        }
+        self.promote_stored(env, append, r)
+    }
+
+    /// [`Builder::promote`] for pending record `i`. Pending records come
+    /// children first, so this needs no stack: a pass down from `i` marks
+    /// the records it needs (until none is left to find), and a pass up
+    /// interns them.
+    fn promote_pending(&mut self, env: &mut Env, append: bool, i: usize) -> R<ExprId> {
+        let p = &mut self.pend_ids;
+        p[i] = NEEDED;
+        // Records marked and not yet passed.
+        let mut left = 1usize;
+        let mut j = i;
+        loop {
+            if p[j] == NEEDED {
+                left -= 1;
+                let (kids, k) = self.pending[j].1.kids();
+                for &c in &kids[..k] {
+                    if c & KIND == PEND {
+                        let c = (c & !KIND) as usize;
+                        if p[c] == NONE {
+                            p[c] = NEEDED;
+                            left += 1;
+                        }
+                    }
+                }
+                if left == 0 {
+                    break;
+                }
+            }
+            // A marked record is left, below `j`.
+            j -= 1;
+        }
+        for x in j..=i {
+            if self.pend_ids[x] != NEEDED {
+                continue;
+            }
+            let n = self.pending[x].1;
+            let (kids, k) = n.kids();
+            let mut ids = [0u32; 3];
+            for (&c, id) in kids[..k].iter().zip(&mut ids) {
+                *id = match c & KIND {
+                    0 => c,
+                    // Marked, so interned by now.
+                    PEND => self.pend_ids[(c & !KIND) as usize],
+                    _ => match self.known(c) {
+                        Some(v) => v,
+                        None => self.promote_stored(env, append, c)?.0,
+                    },
+                };
+            }
+            self.pend_ids[x] = add(env, append, n, ids)?;
+        }
+        Ok(ExprId(self.pend_ids[i]))
+    }
+
+    /// [`Builder::promote`] for a stored record (which refers to nothing
+    /// pending).
+    fn promote_stored(&mut self, env: &mut Env, append: bool, r: u32) -> R<ExprId> {
         let mut stack = std::mem::take(&mut self.stack);
         stack.clear();
         stack.push(r);
-        let res = (|| {
+        let res: R<()> = (|| {
             while let Some(&top) = stack.last() {
                 if self.known(top).is_some() {
                     stack.pop();
@@ -275,42 +376,13 @@ impl Builder {
                 if !ready {
                     continue;
                 }
-                // The kids' arena ids, in the order of `kids`.
-                let e = |i: usize| ExprId(ids[i]);
-                let node = match n {
-                    Node::App(..) => ExprNode::App(e(0), e(1)),
-                    Node::Bind { pi, bi, name, .. } => {
-                        if pi {
-                            ExprNode::Pi(bi, name, e(0), e(1))
-                        } else {
-                            ExprNode::Lam(bi, name, e(0), e(1))
-                        }
-                    }
-                    Node::Let { name, nondep, .. } => {
-                        let b = LetBinder {
-                            name,
-                            ty: e(0),
-                            value: e(1),
-                            nondep,
-                        };
-                        ExprNode::Let(env.exprs.intern_let(b)?, e(2))
-                    }
-                    Node::Proj(s, i, _) => ExprNode::Proj(s, i, e(0)),
-                };
-                let id = if append {
-                    env.exprs.append(node, &env.levels)?
-                } else {
-                    env.exprs.intern(node, &env.levels)?.0
-                };
-                if id.0 >= PEND {
-                    return Err(Fail::from(Overflow("too many expressions")));
-                }
+                let id = add(env, append, n, ids)?;
                 if top & KIND == PEND {
-                    self.pend_ids[(top & !KIND) as usize] = id.0;
+                    self.pend_ids[(top & !KIND) as usize] = id;
                 } else {
                     let off = (top & !KIND) as usize;
                     self.words[off] |= DONE;
-                    self.words[off + 1] = id.0;
+                    self.words[off + 1] = id;
                 }
                 stack.pop();
             }

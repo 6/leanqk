@@ -147,10 +147,12 @@ impl C<'_> {
             return None;
         }
         let w = self.word(0);
-        let x = w.wrapping_sub(0x3030_3030_3030_3030);
+        // Digits become 0 to 9, and every other byte something else (this
+        // is one instruction, where a subtraction would take three).
+        let x = w ^ 0x3030_3030_3030_3030;
         // The high bit of each byte that is not a digit. A byte below a
-        // non-digit is a digit, so no borrow or carry reaches the first
-        // non-digit from below.
+        // non-digit is a digit, so no carry reaches the first non-digit
+        // from below.
         let t = (x | x.wrapping_add(0x7676_7676_7676_7676)) & 0x8080_8080_8080_8080;
         // Eight times the number of leading digits (`t` has bits only at
         // 7, 15, ..., so this is 8n for n < 8, and 64 when t is 0).
