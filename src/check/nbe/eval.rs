@@ -217,26 +217,16 @@ impl Nbe<'_> {
                     }
                     f = self.eval(body, env, ls);
                 }
-                Val::Const(n, l, mut sp) => {
-                    while i < end {
-                        sp = self.a.snoc(sp, Elim::Arg(self.vargs[i]));
-                        i += 1;
-                    }
+                Val::Const(n, l, sp) => {
+                    let sp = self.a.snoc_args(sp, &self.vargs[i..end]);
                     return self.a.mk(Val::Const(n, l, sp));
                 }
-                Val::FVar(k, mut sp) => {
-                    while i < end {
-                        sp = self.a.snoc(sp, Elim::Arg(self.vargs[i]));
-                        i += 1;
-                    }
+                Val::FVar(k, sp) => {
+                    let sp = self.a.snoc_args(sp, &self.vargs[i..end]);
                     return self.a.mk(Val::FVar(k, sp));
                 }
                 _ => {
-                    let mut sp = Sp::NIL;
-                    while i < end {
-                        sp = self.a.snoc(sp, Elim::Arg(self.vargs[i]));
-                        i += 1;
-                    }
+                    let sp = self.a.snoc_args(Sp::NIL, &self.vargs[i..end]);
                     return self.bottom(sp);
                 }
             }

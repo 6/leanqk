@@ -527,7 +527,7 @@ impl Nbe<'_> {
         }
         match self.a.sp_len(sp) {
             1 if Some(n) == self.ext.nat_succ => {
-                let Elim::Arg(a) = self.a.sp_last(sp).1 else {
+                let Elim::Arg(a) = self.a.sp_elim(sp, 0) else {
                     unreachable!()
                 };
                 let a = self.whnf(a)?;
@@ -542,8 +542,8 @@ impl Nbe<'_> {
                 let Some(op) = self.ext.nat_op(n) else {
                     return Ok(None);
                 };
-                let (p, e_r) = self.a.sp_last(sp);
-                let (_, e_l) = self.a.sp_last(p);
+                let e_r = self.a.sp_elim(sp, 1);
+                let e_l = self.a.sp_elim(sp, 0);
                 let (Elim::Arg(a_l), Elim::Arg(a_r)) = (e_l, e_r) else {
                     unreachable!()
                 };

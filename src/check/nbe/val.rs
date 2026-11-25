@@ -110,24 +110,9 @@ pub enum Elim {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct SpNode {
-    prev: Sp,
-    a: u32,
-    /// `NONE` for an argument, else the field index of a projection.
-    b: u32,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
 struct EnvNode {
     prev: Env,
     v: V,
-}
-
-/// A spine cell with its length and flags (`HAS_FVAR_BIT`, `HAS_PROJ_BIT`).
-#[derive(Clone, Copy)]
-struct SpRec {
-    node: SpNode,
-    len: u32,
 }
 
 /// An environment cell with its length and `HAS_FVAR_BIT`.
@@ -169,6 +154,9 @@ const CHECKED: u8 = 2;
 /// unwinding with [`OutOfRoom`]) and the substituting one checks it.
 const LIMIT: u32 = 1 << 23;
 
+/// The most words the spines of one declaration may take.
+const SP_WORDS: usize = 8 << 23;
+
 /// The payload of the unwind when an arena is full.
 pub struct OutOfRoom;
 
@@ -183,8 +171,15 @@ pub struct Arena {
     vals: Vec<Rec>,
     vtable: HashTable<(u32, u32)>,
 
-    sps: Vec<SpRec>,
+    /// Spines, each a header (its length and `HAS_FVAR_BIT`,
+    /// `HAS_PROJ_BIT`) and then two words per elimination (an argument's
+    /// id and `NONE`, or a projection's structure and field). A spine is
+    /// the offset of its header; `Sp::NIL` is the empty one at 0.
+    sps: Vec<u32>,
+    /// Spines by content.
     sptable: HashTable<(u32, u32)>,
+    /// Scratch words for building a spine.
+    sp_buf: Vec<u32>,
     envs: Vec<EnvRec>,
     envtable: HashTable<(u32, u32)>,
     lss: Vec<LsNode>,
@@ -209,15 +204,9 @@ impl Arena {
         Arena {
             vals: Vec::new(),
             vtable: HashTable::new(),
-            sps: vec![SpRec {
-                node: SpNode {
-                    prev: Sp::NIL,
-                    a: 0,
-                    b: 0,
-                },
-                len: 0,
-            }],
+            sps: vec![0],
             sptable: HashTable::new(),
+            sp_buf: Vec::new(),
             envs: vec![EnvRec {
                 node: EnvNode {
                     prev: Env::NIL,
@@ -252,6 +241,7 @@ impl Arena {
         self.vals.clear();
         self.vtable.clear();
         self.sps.truncate(1);
+        self.sp_buf.clear();
         self.sptable.clear();
         self.envs.truncate(1);
         self.envtable.clear();
@@ -268,7 +258,7 @@ impl Arena {
     pub fn heap_bytes(&self) -> usize {
         self.vals.capacity() * size_of::<Rec>()
             + self.vtable.capacity() * 9
-            + self.sps.capacity() * 17
+            + self.sps.capacity() * 4
             + self.sptable.capacity() * 9
             + self.envs.capacity() * 13
             + self.envtable.capacity() * 9
@@ -363,7 +353,7 @@ impl Arena {
             Val::Lam(_, e, _) | Val::Pi(_, e, _) | Val::PiInfer(_, e, _) | Val::Thunk(_, e, _) => {
                 self.envs[e.0 as usize].len & HAS_FVAR_BIT != 0
             }
-            Val::Const(_, _, sp) => self.sps[sp.0 as usize].len & HAS_FVAR_BIT != 0,
+            Val::Const(_, _, sp) => self.sps[sp.0 as usize] & HAS_FVAR_BIT != 0,
             Val::FVar(..) => true,
         };
         if fv {
@@ -377,34 +367,53 @@ impl Arena {
 
     #[inline]
     pub fn sp_len(&self, sp: Sp) -> u32 {
-        self.sps[sp.0 as usize].len & LEN_BITS
+        self.sps[sp.0 as usize] & LEN_BITS
     }
 
     /// Whether `sp` has a projection.
     #[inline]
     pub fn sp_has_proj(&self, sp: Sp) -> bool {
-        self.sps[sp.0 as usize].len & HAS_PROJ_BIT != 0
+        self.sps[sp.0 as usize] & HAS_PROJ_BIT != 0
+    }
+
+    /// Elimination `i` of `sp`, from the first.
+    #[inline]
+    pub fn sp_elim(&self, sp: Sp, i: u32) -> Elim {
+        let k = sp.0 as usize + 1 + 2 * i as usize;
+        let (a, b) = (self.sps[k], self.sps[k + 1]);
+        if b == NONE {
+            Elim::Arg(V(a))
+        } else {
+            Elim::Proj(NameId(a), b)
+        }
+    }
+
+    /// The last elimination of a non-empty spine.
+    #[inline]
+    pub fn sp_last_elim(&self, sp: Sp) -> Elim {
+        self.sp_elim(sp, self.sp_len(sp) - 1)
     }
 
     /// The first `n` eliminations of `sp`.
-    pub fn sp_prefix(&self, mut sp: Sp, n: u32) -> Sp {
-        let len = self.sp_len(sp);
-        for _ in n..len {
-            sp = self.sps[sp.0 as usize].node.prev;
+    pub fn sp_prefix(&mut self, sp: Sp, n: u32) -> Sp {
+        if n >= self.sp_len(sp) {
+            return sp;
         }
-        sp
+        let mut buf = std::mem::take(&mut self.sp_buf);
+        buf.clear();
+        let k = sp.0 as usize + 1;
+        buf.extend_from_slice(&self.sps[k..k + 2 * n as usize]);
+        let r = self.intern_sp(&buf);
+        self.sp_buf = buf;
+        r
     }
 
     /// The last elimination of a non-empty spine, and the rest.
     #[inline]
-    pub fn sp_last(&self, sp: Sp) -> (Sp, Elim) {
-        let n = self.sps[sp.0 as usize].node;
-        let e = if n.b == NONE {
-            Elim::Arg(V(n.a))
-        } else {
-            Elim::Proj(NameId(n.a), n.b)
-        };
-        (n.prev, e)
+    pub fn sp_last(&mut self, sp: Sp) -> (Sp, Elim) {
+        let n = self.sp_len(sp);
+        let e = self.sp_elim(sp, n - 1);
+        (self.sp_prefix(sp, n - 1), e)
     }
 
     pub fn snoc(&mut self, sp: Sp, e: Elim) -> Sp {
@@ -412,58 +421,98 @@ impl Arena {
             Elim::Arg(v) => (v.0, NONE),
             Elim::Proj(n, i) => (n.0, i),
         };
-        let node = SpNode { prev: sp, a, b };
-        let h = h32(hash2(sp.0 as u64 | 1 << 40, (a as u64) << 32 | b as u64));
+        let mut buf = self.sp_words(sp);
+        buf.push(a);
+        buf.push(b);
+        let r = self.intern_sp(&buf);
+        self.sp_buf = buf;
+        r
+    }
+
+    /// `sp` followed by the arguments `xs`.
+    pub fn snoc_args(&mut self, sp: Sp, xs: &[V]) -> Sp {
+        if xs.is_empty() {
+            return sp;
+        }
+        let mut buf = self.sp_words(sp);
+        for x in xs {
+            buf.push(x.0);
+            buf.push(NONE);
+        }
+        let r = self.intern_sp(&buf);
+        self.sp_buf = buf;
+        r
+    }
+
+    /// The scratch buffer, holding the words of `sp`'s eliminations.
+    fn sp_words(&mut self, sp: Sp) -> Vec<u32> {
+        let mut buf = std::mem::take(&mut self.sp_buf);
+        buf.clear();
+        let k = sp.0 as usize + 1;
+        let n = self.sp_len(sp) as usize;
+        buf.extend_from_slice(&self.sps[k..k + 2 * n]);
+        buf
+    }
+
+    /// The spine of the elimination words `w`.
+    fn intern_sp(&mut self, w: &[u32]) -> Sp {
+        if w.is_empty() {
+            return Sp::NIL;
+        }
+        let mut h: u64 = w.len() as u64;
+        for &x in w {
+            h = (h.rotate_left(5) ^ x as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+        }
+        let h = h32(h);
         let Self { sps, sptable, .. } = self;
         if let Some(&(id, _)) = sptable.find(spread(h), |&(id, k)| {
-            k == h && sps[id as usize].node == node
+            k == h && {
+                let i = id as usize;
+                sps[i] & LEN_BITS == (w.len() / 2) as u32 && sps[i + 1..i + 1 + w.len()] == *w
+            }
         }) {
             return Sp(id);
         }
         let id = sps.len() as u32;
-        if id >= LIMIT {
+        if sps.len() + w.len() >= SP_WORDS {
             out_of_room();
         }
-        let prev = self.sps[sp.0 as usize].len;
-        let fv = prev & HAS_FVAR_BIT != 0
-            || match e {
-                Elim::Arg(v) => self.has_fvar(v),
-                Elim::Proj(..) => false,
-            };
-        let pj = prev & HAS_PROJ_BIT != 0 || matches!(e, Elim::Proj(..));
-        let len = ((prev & LEN_BITS) + 1)
+        let mut fv = false;
+        let mut pj = false;
+        for p in w.as_chunks::<2>().0 {
+            if p[1] == NONE {
+                fv = fv || self.has_fvar(V(p[0]));
+            } else {
+                pj = true;
+            }
+        }
+        let hdr = (w.len() / 2) as u32
             | if fv { HAS_FVAR_BIT } else { 0 }
             | if pj { HAS_PROJ_BIT } else { 0 };
-        self.sps.push(SpRec { node, len });
+        self.sps.push(hdr);
+        self.sps.extend_from_slice(w);
         self.sptable
             .insert_unique(spread(h), (id, h), |&(_, k)| spread(k));
         Sp(id)
     }
 
     /// The eliminations of `sp`, in order.
-    pub fn elims(&self, mut sp: Sp, out: &mut Vec<Elim>) {
+    pub fn elims(&self, sp: Sp, out: &mut Vec<Elim>) {
         out.clear();
-        while sp != Sp::NIL {
-            let (p, e) = self.sp_last(sp);
-            out.push(e);
-            sp = p;
+        for i in 0..self.sp_len(sp) {
+            out.push(self.sp_elim(sp, i));
         }
-        out.reverse();
     }
 
     /// The arguments of `sp`, if it has no projections.
-    pub fn args(&self, mut sp: Sp, out: &mut Vec<V>) -> bool {
+    pub fn args(&self, sp: Sp, out: &mut Vec<V>) -> bool {
         out.clear();
-        while sp != Sp::NIL {
-            match self.sp_last(sp) {
-                (p, Elim::Arg(v)) => {
-                    out.push(v);
-                    sp = p;
-                }
-                (_, Elim::Proj(..)) => return false,
-            }
+        if self.sp_has_proj(sp) {
+            return false;
         }
-        out.reverse();
+        let k = sp.0 as usize + 1;
+        let n = self.sp_len(sp) as usize;
+        out.extend(self.sps[k..k + 2 * n].iter().step_by(2).map(|&a| V(a)));
         true
     }
 

@@ -164,20 +164,21 @@ impl Nbe<'_> {
 
     /// The arguments after the last projection of a neutral's spine, and
     /// the spine before them.
-    fn split_args(&self, sp: Sp, out: &mut Vec<V>) -> Sp {
+    fn split_args(&mut self, sp: Sp, out: &mut Vec<V>) -> Sp {
         out.clear();
-        let mut cur = sp;
-        while cur != Sp::NIL {
-            match self.a.sp_last(cur) {
-                (p, Elim::Arg(v)) => {
+        let n = self.a.sp_len(sp);
+        let mut k = n;
+        while k > 0 {
+            match self.a.sp_elim(sp, k - 1) {
+                Elim::Arg(v) => {
                     out.push(v);
-                    cur = p;
+                    k -= 1;
                 }
-                (_, Elim::Proj(..)) => break,
+                Elim::Proj(..) => break,
             }
         }
         out.reverse();
-        cur
+        self.a.sp_prefix(sp, k)
     }
 
     /// Whether the term `d`, under binders whose domains are `ctx`
@@ -302,16 +303,13 @@ impl Nbe<'_> {
         } else {
             0
         };
-        let (mut ts, mut ss) = (tsp, ssp);
-        loop {
-            match (ts == Sp::NIL, ss == Sp::NIL) {
-                (true, true) => return Ok(true),
-                (false, false) => {}
-                _ => return Ok(false),
-            }
-            let (tp, te) = self.a.sp_last(ts);
-            let (sp_, se) = self.a.sp_last(ss);
-            let pos = self.a.sp_len(tp);
+        let len = self.a.sp_len(tsp);
+        if len != self.a.sp_len(ssp) {
+            return Ok(false);
+        }
+        for pos in (0..len).rev() {
+            let te = self.a.sp_elim(tsp, pos);
+            let se = self.a.sp_elim(ssp, pos);
             match (te, se) {
                 (Elim::Arg(_), Elim::Arg(_)) if pos < 64 && props & 1 << pos != 0 => {}
                 (Elim::Arg(a), Elim::Arg(b)) => {
@@ -321,9 +319,8 @@ impl Nbe<'_> {
                 }
                 _ => return Ok(false),
             }
-            ts = tp;
-            ss = sp_;
         }
+        Ok(true)
     }
 
     fn try_eta_expansion_core(&mut self, t: V, s: V) -> R<bool> {
@@ -669,7 +666,7 @@ impl Nbe<'_> {
                     && ls == LevelList::EMPTY
                     && self.a.sp_len(sp) == 1 =>
             {
-                match self.a.sp_last(sp).1 {
+                match self.a.sp_elim(sp, 0) {
                     Elim::Arg(a) => Some(a),
                     Elim::Proj(..) => None,
                 }
@@ -798,8 +795,11 @@ impl Nbe<'_> {
         if sp == Sp::NIL {
             return None;
         }
-        match self.a.sp_last(sp) {
-            (pre, Elim::Proj(s, i)) => Some((self.with_spine(head, pre), s, i)),
+        match self.a.sp_last_elim(sp) {
+            Elim::Proj(s, i) => {
+                let pre = self.a.sp_prefix(sp, self.a.sp_len(sp) - 1);
+                Some((self.with_spine(head, pre), s, i))
+            }
             _ => None,
         }
     }
@@ -986,13 +986,17 @@ impl Nbe<'_> {
         if f != super::val::NONE { V(f) } else { v }
     }
 
-    fn syn_eq_sp(&mut self, mut a: Sp, mut b: Sp, budget: &mut u32) -> bool {
-        if self.a.sp_len(a) != self.a.sp_len(b) {
+    fn syn_eq_sp(&mut self, a: Sp, b: Sp, budget: &mut u32) -> bool {
+        let n = self.a.sp_len(a);
+        if n != self.a.sp_len(b) {
             return false;
         }
-        while a != b {
-            let (pa, ea) = self.a.sp_last(a);
-            let (pb, eb) = self.a.sp_last(b);
+        if a == b {
+            return true;
+        }
+        for i in (0..n).rev() {
+            let ea = self.a.sp_elim(a, i);
+            let eb = self.a.sp_elim(b, i);
             let ok = match (ea, eb) {
                 (Elim::Arg(x), Elim::Arg(y)) => self.syn_eq_v(x, y, budget),
                 (Elim::Proj(s_l, i_l), Elim::Proj(s_r, i_r)) => s_l == s_r && i_l == i_r,
@@ -1001,8 +1005,6 @@ impl Nbe<'_> {
             if !ok {
                 return false;
             }
-            a = pa;
-            b = pb;
         }
         true
     }
@@ -1193,18 +1195,19 @@ impl Nbe<'_> {
             Val::Const(_, _, sp) | Val::FVar(_, sp) => {
                 let head = self.a.get(x);
                 let mut cur = t;
-                let mut sp = sp;
+                let mut m = self.a.sp_len(sp);
                 loop {
                     match self.st.node(cur) {
                         ExprNode::BVar(j) if j >= k => {
                             let Some(y) = self.a.lookup(e, j - k) else {
                                 return false;
                             };
-                            let h = self.with_spine(head, sp);
+                            let pre = self.a.sp_prefix(sp, m);
+                            let h = self.with_spine(head, pre);
                             return self.syn_eq_v(h, y, budget);
                         }
-                        ExprNode::App(f, a) if sp != Sp::NIL => {
-                            let (p, el) = self.a.sp_last(sp);
+                        ExprNode::App(f, a) if m > 0 => {
+                            let el = self.a.sp_elim(sp, m - 1);
                             let Elim::Arg(y) = el else {
                                 return false;
                             };
@@ -1212,18 +1215,17 @@ impl Nbe<'_> {
                                 return false;
                             }
                             cur = f;
-                            sp = p;
+                            m -= 1;
                         }
-                        ExprNode::Proj(s_r, i_r, b) if sp != Sp::NIL => {
-                            let (p, el) = self.a.sp_last(sp);
-                            if el != Elim::Proj(s_r, i_r) {
+                        ExprNode::Proj(s_r, i_r, b) if m > 0 => {
+                            if self.a.sp_elim(sp, m - 1) != Elim::Proj(s_r, i_r) {
                                 return false;
                             }
                             cur = b;
-                            sp = p;
+                            m -= 1;
                         }
                         n => {
-                            if sp != Sp::NIL {
+                            if m > 0 {
                                 return false;
                             }
                             return match (head, n) {
