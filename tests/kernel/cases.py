@@ -1081,3 +1081,53 @@ eval_case("eval-arr-eq", "K.ev_arr_eq", "accept",
 eval_case("eval-arr-eq-wrong", "K.ev_arr_eq_wrong", "reject", "the same, different arrays")
 eval_case("eval-arr-fn", "K.ev_arr_fn", "accept", "an array of functions, elements applied")
 eval_case("eval-arr-fn-wrong", "K.ev_arr_fn_wrong", "reject", "the same, wrong sum")
+eval_case("eval-list", "K.ev_lists", "accept",
+          "List.any, all, filter, getLast?, foldl, reverse, elem and eraseDups on numbers")
+eval_case("eval-list-wrong", "K.ev_lists_wrong", "reject", "the same fold, off by one")
+eval_case("eval-list-filter-lazy", "K.ev_filter_lazy", "accept",
+          "the head of a filter, whose later tests would divide by zero")
+eval_case("eval-list-filter-lazy-wrong", "K.ev_filter_lazy_wrong", "reject",
+          "the same, the wrong head")
+
+
+def eval_case_old(id, thm, expected, why, consts=()):
+    """A case of lean/KCases434.lean, exported from Lean v4.34.0."""
+    case(id, "eval", expected, why)(lambda tc: with_rfl(tc.old(), thm, consts))
+
+
+eval_case_old("eval434-deceq", "K34.ev_deceq", "accept",
+              "DecidableEq on lists of (subtype, Bool) pairs, equal (v4.34.0)")
+eval_case_old("eval434-deceq-wrong", "K34.ev_deceq_wrong", "reject",
+              "the same, lists of different lengths")
+eval_case_old("eval434-deceq-ne", "K34.ev_deceq_ne", "accept",
+              "pairs that differ in the second component")
+eval_case_old("eval434-deceq-ne-wrong", "K34.ev_deceq_ne_wrong", "reject",
+              "pairs that differ in the first component, claimed equal")
+eval_case_old("eval434-beq", "K34.ev_beq", "accept", "== on pairs (instBEqProd) in a filter")
+eval_case_old("eval434-beq-wrong", "K34.ev_beq_wrong", "reject", "the same, off by one")
+eval_case_old("eval434-nodup", "K34.ev_nodup", "accept", "decide Nodup of distinct pairs")
+eval_case_old("eval434-nodup-wrong", "K34.ev_nodup_wrong", "reject",
+              "the same with a repeated pair")
+eval_case_old("eval434-dedup", "K34.ev_dedup", "accept", "eraseDups on pairs")
+eval_case_old("eval434-dedup-wrong", "K34.ev_dedup_wrong", "reject", "the same, off by one")
+eval_case_old("eval434-elem", "K34.ev_elem", "accept", "List.elem on pairs, found and not")
+eval_case_old("eval434-elem-wrong", "K34.ev_elem_wrong", "reject", "the one not found, claimed found")
+eval_case_old("eval434-cast", "K34.ev_cast_ok", "accept",
+              "a cast over a DecidableEq proof: the erased proof is a K-like major premise")
+eval_case_old("eval434-cast-wrong", "K34.ev_cast_wrong", "reject", "the same, the other branch")
+eval_case_old("eval434-hold", "K34.ev_hold_ok", "accept",
+              "a value holding a decision, compared with one built by hand")
+eval_case_old("eval434-hold-wrong", "K34.ev_hold_wrong", "reject", "the same, claimed none")
+eval_case_old("eval434-hold-match", "K34.ev_hold_n_ok", "accept",
+              "a match on a value holding a decision")
+eval_case_old("eval434-hold-match-wrong", "K34.ev_hold_n_wrong", "reject",
+              "the same, wrong sum")
+eval_case_old("eval434-axiom", "K34.ev_ax_eq", "reject",
+              "elem of an axiom pair in a list of it: left to the definition, stuck as in Lean")
+eval_case_old("eval434-list", "K34.ev_lists", "accept",
+              "List.any, all, filter, getLast?, foldl and reverse (v4.34.0)")
+eval_case_old("eval434-list-wrong", "K34.ev_lists_wrong", "reject", "the same fold, off by one")
+eval_case_old("eval434-filter-lazy", "K34.ev_filter_lazy", "accept",
+              "the head of a filter, whose later tests would divide by zero")
+eval_case_old("eval434-filter-lazy-wrong", "K34.ev_filter_lazy_wrong", "reject",
+              "the same, the wrong head")

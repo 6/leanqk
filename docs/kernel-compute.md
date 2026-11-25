@@ -198,13 +198,87 @@ value, makes the operation unfold to its definition. A vector meeting a
 projection or a recursor is turned back into the constructor application it
 stands for. `set` and `push` copy the vector only if it is shared.
 
+## Lists and decidable equality
+
+What is left of a proof checked by LRAT-Catcher's kernel checker is mostly
+lists of literals and their comparisons. A literal is a pair of a `PosFin n`
+(a subtype of `Nat`) and a `Bool`. Comparing two literals with `==` or with
+`decide (a = b)` goes through `instBEqProd` or `instDecidableEqProd`, then
+`Subtype.instDecidableEq`, `Nat.decEq` and `Bool.decEq`. Each is a few
+matches, each match a `casesOn`, and a recursor step. List functions such as
+`List.any` are compiled to structural recursion (`List.brecOn`), which
+builds a table of results per cell. So the evaluator runs a few of these
+definitions directly:
+
+| definition | on values |
+|---|---|
+| `List.any l p`, `List.all l p` | `p` on the elements until one is `true` (`false`) |
+| `List.elem a l` | `a == x` on the elements until one is `true` |
+| `List.filter p l` | `p` on the elements up to the first one kept; the rest of the result is `List.filter p t`, not evaluated |
+| `List.reverseAux l r` | `l` reversed onto `r` |
+| `List.foldl f a l` | the thunk `f (… (f a x₀) …) xₙ₋₁`, then forced |
+| `List.getLast l h` | the last element |
+| `List.eraseDupsBy.loop r l acc` | the elements kept, then reversed |
+| `instBEqProd α β bα bβ` | `BEq.mk` of a function that runs `a₁ == a₂ && b₁ == b₂` on pairs |
+| `Nat.decEq n m` | on two literals |
+| `Bool.decEq a b` | on two booleans |
+| `instDecidableEqProd dα dβ x y` | on two pairs: `dα` on the first components, then `dβ` on the second |
+| `Subtype.instDecidableEq dα x y` | on two subtype values: `dα` on the values |
+
+Each one is enabled only if its definition and everything it depends on
+match one Lean version's prelude (the fingerprint rule above). Every known
+version defines the same function, so the loop computes what the definition
+computes. Each loop forces the same thunks as the definition, in the same
+order, and stops where the definition reaches its weak head normal form:
+`any`, `all`, `elem` and `filter` stop at the first element that decides,
+while the others need the whole list, as their definitions do. So laziness
+and termination are as before. Where a value is not of the expected kind (a
+list that is not built from `List.cons` and `List.nil`, a pair that is not
+`Prod.mk`, a test that is not a `Bool`), the operation is its definition,
+from the original arguments.
+
+**What the results stand for.** A boolean result is the constructor the
+definition reduces to. A list result is made of `List.cons` cells whose
+elements are the original thunks. The rest of a `filter` stands for
+`List.filter p t`. The definition's reduct has, in its place, the
+corresponding entry of the `brecOn` table, which reduces to the same thing.
+`instBEqProd α β bα bβ` stands for `BEq.mk T (F' α β bα bβ)`, where
+`F' = fun α β bα bβ => F` is built from the definition
+`fun α β bα bβ => BEq.mk T F`. One beta step turns it into the definition's
+reduct. In every case the value stands for a term definitionally equal to
+the input, by the unfoldings and reductions of the kernel. That is what the
+argument above needs.
+
+**Decisions.** A `DecidableEq` result is `isTrue p h` or `isFalse p h`. Here
+`p` is the proposition `x = y` of the type `Decidable p` of the
+application, taken from the instance's type over its arguments. `h` is an
+erased proof whose environment is already gone. The definition reduces to
+the same constructor, with a proposition definitionally equal to `p`, and
+some proof `h'` of it. A run that never forces or reads back `h` takes the
+same steps as with `h'`, for the reasons given under *Proofs*: the machine
+only looks at a thunk to force it or read it back, and `h` has no known
+term, so no memo key is built from it. A run that needs `h` (a cast over
+the equality, say: a `K`-like major premise) gives up with
+`Bail::Erased`. Then `whnf` evaluates again keeping proofs, and with proofs
+kept these four instances are their definitions. A decision that is the
+answer itself is read back by *Decisions* above, without `h`.
+
+These four instances are only for Lean v4.34.0 and v4.30.0. From v4.36.0,
+`Decidable` is a structure with a `Bool` field, and the derived instances
+already compute that field with `&&`.
+
+On the LRAT proof of 67 KB (lrat05), this takes the evaluator from 53.7
+million steps to 18.4 million, and the check from 3.8 s to 1.9 s.
+
 ## Built-in operations of several Lean versions
 
 The fingerprint table (`src/check/fingerprint_table.rs`, written by
-`examples/fingerprints.rs`) holds the prelude definitions of the `Nat` and
-`Array` operations of Lean v4.36.0, v4.34.0 and v4.30.0, each digest with the
-versions it comes from. An operation is enabled only if every declaration it
-depends on matches one and the same version. Before this, an export made
+`examples/fingerprints.rs`) holds the prelude definitions of the `Nat`,
+`Array`, `List` and `DecidableEq` operations of Lean v4.36.0, v4.34.0 and
+v4.30.0, each digest with the versions it comes from. An operation is
+enabled only if every declaration it depends on matches one and the same
+version. An operation that is only for some versions is enabled only if
+that version is one of them. Before this, an export made
 with v4.34.0 or v4.30.0 got no built-in `Nat.div`, `Nat.mod`, `Nat.gcd`,
 `Nat.land` or `Nat.xor`, because `dite`, `ite` and a few others differ from
 v4.36.0's. Literal division then ran in unary: the published planar-graph
@@ -213,9 +287,10 @@ out of memory.
 
 ## Tests
 
-`tests/kernel/cases.py` has 38 `eval-*` cases, each a claim proved by
-`Eq.refl` (so only reduction decides it) together with a false twin. They
-cover:
+`tests/kernel/cases.py` has 65 `eval*` cases. Each is a claim proved by
+`Eq.refl`, so only reduction decides it, and nearly every one has a false
+twin. The 23 `eval434-*` cases are exported from Lean v4.34.0, where the
+`DecidableEq` fast paths apply. They cover:
 
 - K-like recursors whose indices do or do not match;
 - structure eta on an opaque major premise;
@@ -229,7 +304,14 @@ cover:
   equality, and arrays of functions;
 - erased proofs that are needed after all: a cast over a theorem applied to
   a variable, `And.rec` on a constructed proof, an answer that holds a
-  proof.
+  proof;
+- `List.any`, `all`, `elem`, `filter` (lazily: later tests would divide by
+  zero), `getLast?`, `foldl`, `reverse` and `eraseDups`, in v4.36.0 and
+  v4.34.0;
+- `DecidableEq` and `==` on lists of (subtype, `Bool`) pairs, equal and not,
+  `Nodup`, `eraseDups` and `elem` on them; a cast over a `DecidableEq` proof
+  (the erased proof is a `K`-like major premise); a value that holds a
+  decision; and a pair that is an axiom, which stays stuck, as in Lean.
 
 Lean's verdict on each is recorded in `cases.tsv`. The arena's `perf` tests in
 `corpus/` exercise the evaluator on larger computations. Every corpus and

@@ -210,3 +210,30 @@ eval-arr-eq	eval	accept	accept	decidable equality of an array built by push and 
 eval-arr-eq-wrong	eval	reject	reject	the same, different arrays
 eval-arr-fn	eval	accept	accept	an array of functions, elements applied
 eval-arr-fn-wrong	eval	reject	reject	the same, wrong sum
+eval-list	eval	accept	accept	List.any, all, filter, getLast?, foldl, reverse, elem and eraseDups on numbers
+eval-list-wrong	eval	reject	reject	the same fold, off by one
+eval-list-filter-lazy	eval	accept	accept	the head of a filter, whose later tests would divide by zero
+eval-list-filter-lazy-wrong	eval	reject	reject	the same, the wrong head
+eval434-deceq	eval	accept	accept	DecidableEq on lists of (subtype, Bool) pairs, equal (v4.34.0)
+eval434-deceq-wrong	eval	reject	reject	the same, lists of different lengths
+eval434-deceq-ne	eval	accept	accept	pairs that differ in the second component
+eval434-deceq-ne-wrong	eval	reject	reject	pairs that differ in the first component, claimed equal
+eval434-beq	eval	accept	accept	== on pairs (instBEqProd) in a filter
+eval434-beq-wrong	eval	reject	reject	the same, off by one
+eval434-nodup	eval	accept	accept	decide Nodup of distinct pairs
+eval434-nodup-wrong	eval	reject	reject	the same with a repeated pair
+eval434-dedup	eval	accept	accept	eraseDups on pairs
+eval434-dedup-wrong	eval	reject	reject	the same, off by one
+eval434-elem	eval	accept	accept	List.elem on pairs, found and not
+eval434-elem-wrong	eval	reject	reject	the one not found, claimed found
+eval434-cast	eval	accept	accept	a cast over a DecidableEq proof: the erased proof is a K-like major premise
+eval434-cast-wrong	eval	reject	reject	the same, the other branch
+eval434-hold	eval	accept	accept	a value holding a decision, compared with one built by hand
+eval434-hold-wrong	eval	reject	reject	the same, claimed none
+eval434-hold-match	eval	accept	accept	a match on a value holding a decision
+eval434-hold-match-wrong	eval	reject	reject	the same, wrong sum
+eval434-axiom	eval	reject	reject	elem of an axiom pair in a list of it: left to the definition, stuck as in Lean
+eval434-list	eval	accept	accept	List.any, all, filter, getLast?, foldl and reverse (v4.34.0)
+eval434-list-wrong	eval	reject	reject	the same fold, off by one
+eval434-filter-lazy	eval	accept	accept	the head of a filter, whose later tests would divide by zero
+eval434-filter-lazy-wrong	eval	reject	reject	the same, the wrong head

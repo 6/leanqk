@@ -28,6 +28,13 @@ Lean is pinned in `lean-toolchain` (elan), Python in `mise.toml`.
 (`src/check/eval/`); each claim is proved by `Eq.refl`, so only reduction
 decides it, and each has a false twin.
 
+The `eval434-*` cases come from `lean/KCases434.lean`, built with Lean
+v4.34.0 and exported with the lean4export commit for it (pinned in `gen.py`;
+the first run fetches it from GitHub and builds it into `out/`). They test
+the evaluator's fast paths that are only for Lean versions before v4.36.0.
+Their `lean` column is still the verdict of v4.36.0's `leanchecker`, which
+checks any export.
+
 `lean/KCases.lean` holds the valid source declarations. `gen.py` compiles it,
 runs `leanexport` on the closure of a few constants, and applies the mutation
 defined in `cases.py`. Some cases (universe levels) are built from scratch with
