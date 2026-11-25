@@ -31,6 +31,10 @@ const EQ_FAIL: u8 = 4;
 const SYN_OK: u8 = 8;
 const SYN_FAIL: u8 = 16;
 
+/// Steps a failed structural comparison must have taken to be remembered
+/// (`SYN_FAIL`): a cheaper one is cheaper to try again than to remember.
+const SYN_FAIL_MIN: u32 = 4;
+
 fn compare_hints(h_l: Hints, h_r: Hints) -> i32 {
     match (h_l, h_r) {
         (Hints::Regular(a), Hints::Regular(b)) => {
@@ -162,10 +166,20 @@ impl Nbe<'_> {
     }
 
     fn quick_is_def_eq(&mut self, t: V, s: V) -> R<Option<bool>> {
-        if t == s || self.pf(t, s) & EQ != 0 {
+        if t == s {
             return Ok(Some(true));
         }
-        if self.syn_eq(t, s) {
+        let known = self.pf(t, s);
+        self.quick_known(t, s, known)
+    }
+
+    /// `quick_is_def_eq` of two different values, with what is `known` of
+    /// them.
+    fn quick_known(&mut self, t: V, s: V, known: u8) -> R<Option<bool>> {
+        if known & EQ != 0 {
+            return Ok(Some(true));
+        }
+        if self.syn_eq_known(t, s, known) {
             return Ok(Some(true));
         }
         let (nt, ns) = (self.a.get(t), self.a.get(s));
@@ -941,9 +955,18 @@ impl Nbe<'_> {
     }
 
     pub fn is_def_eq_core(&mut self, t: V, s: V) -> R<bool> {
-        let t = self.force(t);
-        let s = self.force(s);
-        if let Some(r) = self.quick_is_def_eq(t, s)? {
+        self.is_def_eq_known(t, s, None)
+    }
+
+    /// `is_def_eq_core`, with what is `known` of `t` and `s` if looked up.
+    fn is_def_eq_known(&mut self, t0: V, s0: V, known: Option<u8>) -> R<bool> {
+        let t = self.force(t0);
+        let s = self.force(s0);
+        let quick = match known {
+            Some(k) if (t, s) == (t0, s0) && t != s => self.quick_known(t, s, k)?,
+            _ => self.quick_is_def_eq(t, s)?,
+        };
+        if let Some(r) = quick {
             return Ok(r);
         }
         if (!self.a.has_fvar(t) || self.eager) && self.is_bool_true(s) {
@@ -1040,7 +1063,7 @@ impl Nbe<'_> {
             } else {
                 None
             };
-        let r = self.is_def_eq_core(t, s)?;
+        let r = self.is_def_eq_known(t, s, Some(known))?;
         if let Some(k) = named {
             self.name_eq.insert(k, r);
         }
@@ -1080,11 +1103,13 @@ impl Nbe<'_> {
     /// (Lean's `eqv_manager` check): equal closures over equal environments,
     /// equal spines. Nothing is reduced. Sound, and much cheaper than a
     /// comparison by reduction when two routes built the same computation.
-    pub(super) fn syn_eq(&mut self, t: V, s: V) -> bool {
-        let mut budget = SYN_BUDGET;
-        let r = self.syn_eq_v(t, s, &mut budget);
-        if !r {
-            // Out of budget too: a heuristic, not tried again on this pair.
+    /// For two different values, with what is `known` of them.
+    fn syn_eq_known(&mut self, t: V, s: V, known: u8) -> bool {
+        let mut budget = SYN_BUDGET - 1;
+        let r = self.syn_eq_with(t, s, &mut budget, known);
+        if !r && budget == 0 {
+            // Out of budget too (a failure within it is remembered by
+            // `syn_eq_v`): a heuristic, not tried again on this pair.
             self.pset(t, s, SYN_FAIL);
         }
         r
@@ -1099,6 +1124,12 @@ impl Nbe<'_> {
         }
         *budget -= 1;
         let known = self.pf(t, s);
+        self.syn_eq_with(t, s, budget, known)
+    }
+
+    /// `syn_eq_v` past its first step, with what is `known` of the pair.
+    fn syn_eq_with(&mut self, t: V, s: V, budget: &mut u32, known: u8) -> bool {
+        let start = *budget;
         if known & (EQ | SYN_OK) != 0 {
             return true;
         }
@@ -1128,7 +1159,7 @@ impl Nbe<'_> {
         };
         if r {
             self.pset(t, s, SYN_OK);
-        } else if *budget > 0 {
+        } else if *budget > 0 && start - *budget >= SYN_FAIL_MIN {
             self.pset(t, s, SYN_FAIL);
         }
         r
