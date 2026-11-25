@@ -43,6 +43,7 @@ fn local_id(i: u32) -> u32 {
 
 pub struct Store<'e> {
     pub env: &'e Env,
+    pub(super) decls: &'e [Decl],
     names: Interner<NameNode>,
     levels: Interner<LevelNode>,
     level_hp: Vec<bool>,
@@ -65,8 +66,13 @@ pub struct Store<'e> {
 
 impl<'e> Store<'e> {
     pub fn new(env: &'e Env) -> Self {
+        Self::with_decls(env, &env.decls)
+    }
+
+    pub(super) fn with_decls(env: &'e Env, decls: &'e [Decl]) -> Self {
         Store {
             env,
+            decls,
             names: Interner::new("too many names"),
             levels: Interner::new("too many levels"),
             level_hp: Vec::new(),
@@ -88,8 +94,7 @@ impl<'e> Store<'e> {
 
     /// Drop the overlay. Every overlay id becomes invalid.
     pub fn clear(&mut self) {
-        let env = self.env;
-        *self = Store::new(env);
+        *self = Store::with_decls(self.env, self.decls);
     }
 
     /// Number of overlay expressions.
