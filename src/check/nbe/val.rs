@@ -10,6 +10,7 @@
 //! routes.
 
 use hashbrown::HashTable;
+use hashbrown::hash_table::Entry;
 
 use crate::env::NameList;
 use crate::expr::ExprId;
@@ -388,15 +389,19 @@ impl Arena {
         }
         let h = val.hash();
         let Self { vals, vtable, .. } = self;
-        if let Some(&(id, _)) =
-            vtable.find(spread(h), |&(id, k)| k == h && vals[id as usize] == val)
-        {
-            return V(id);
-        }
+        let slot = match vtable.entry(
+            spread(h),
+            |&(id, k)| k == h && vals[id as usize] == val,
+            |&(_, k)| spread(k),
+        ) {
+            Entry::Occupied(o) => return V(o.get().0),
+            Entry::Vacant(slot) => slot,
+        };
         let id = vals.len() as u32;
         if id >= LIMIT {
             out_of_room();
         }
+        slot.insert((id, h));
         vals.push(val);
         self.recs.push(Rec {
             flags: 0,
@@ -406,7 +411,6 @@ impl Arena {
             ty: NONE,
             delta: NONE,
         });
-        vtable.insert_unique(spread(h), (id, h), |&(_, k)| spread(k));
         let fv = match val {
             Val::Sort(_) | Val::Nat(..) | Val::NatBig(_) | Val::Str(_) => false,
             Val::Lam(_, e, _) | Val::Pi(_, e, _) | Val::PiInfer(_, e, _) | Val::Thunk(_, e, _) => {
@@ -522,42 +526,51 @@ impl Arena {
         }
         let h = h32(h);
         let Self {
-            vals, sps, nutable, ..
+            vals,
+            sps,
+            nutable,
+            recs,
+            ..
         } = self;
-        let found = nutable.find(spread(h), |&(id, k2)| {
-            k2 == h && {
-                let (same, sp) = match (vals[id as usize], head) {
-                    (Val::Const(n2, l2, sp), Val::Const(n1, l1, _)) => (n1 == n2 && l1 == l2, sp),
-                    (Val::FVar(k2, sp), Val::FVar(k1, _)) => (k1 == k2, sp),
-                    _ => (false, Sp::NIL),
-                };
-                let i = sp.0 as usize;
-                same && (sps[i] & LEN_BITS) as usize == n + xs.len()
-                    && sps[i + 1..i + 1 + 2 * n] == sps[k..k + 2 * n]
-                    && xs
-                        .iter()
-                        .enumerate()
-                        .all(|(j, x)| sps[i + 1 + 2 * (n + j)] == x.0)
-            }
-        });
-        if let Some(&(id, _)) = found {
-            return V(id);
-        }
+        let slot = match nutable.entry(
+            spread(h),
+            |&(id, k2)| {
+                k2 == h && {
+                    let (same, sp) = match (vals[id as usize], head) {
+                        (Val::Const(n2, l2, sp), Val::Const(n1, l1, _)) => {
+                            (n1 == n2 && l1 == l2, sp)
+                        }
+                        (Val::FVar(k2, sp), Val::FVar(k1, _)) => (k1 == k2, sp),
+                        _ => (false, Sp::NIL),
+                    };
+                    let i = sp.0 as usize;
+                    same && (sps[i] & LEN_BITS) as usize == n + xs.len()
+                        && sps[i + 1..i + 1 + 2 * n] == sps[k..k + 2 * n]
+                        && xs
+                            .iter()
+                            .enumerate()
+                            .all(|(j, x)| sps[i + 1 + 2 * (n + j)] == x.0)
+                }
+            },
+            |&(_, k)| spread(k),
+        ) {
+            Entry::Occupied(o) => return V(o.get().0),
+            Entry::Vacant(slot) => slot,
+        };
         let sp = match sp {
             Some(sp) => sp,
             None => {
-                let id = self.sps.len();
+                let id = sps.len();
                 if id + 1 + 2 * (n + xs.len()) >= SP_WORDS {
                     out_of_room();
                 }
-                let base = self.sps[k - 1] & (HAS_FVAR_BIT | HAS_PROJ_BIT);
-                let fv = xs.iter().any(|&x| self.has_fvar(x));
-                self.sps
-                    .push((n + xs.len()) as u32 | base | if fv { HAS_FVAR_BIT } else { 0 });
-                self.sps.extend_from_within(k..k + 2 * n);
+                let base = sps[k - 1] & (HAS_FVAR_BIT | HAS_PROJ_BIT);
+                let fv = xs.iter().any(|&x| recs[x.0 as usize].flags & HAS_FVAR != 0);
+                sps.push((n + xs.len()) as u32 | base | if fv { HAS_FVAR_BIT } else { 0 });
+                sps.extend_from_within(k..k + 2 * n);
                 for x in xs {
-                    self.sps.push(x.0);
-                    self.sps.push(NONE);
+                    sps.push(x.0);
+                    sps.push(NONE);
                 }
                 Sp(id as u32)
             }
@@ -567,24 +580,21 @@ impl Arena {
             Val::FVar(k, _) => Val::FVar(k, sp),
             _ => unreachable!(),
         };
-        let id = self.vals.len() as u32;
+        let id = vals.len() as u32;
         if id >= LIMIT {
             out_of_room();
         }
-        self.vals.push(val);
-        self.recs.push(Rec {
-            flags: 0,
+        slot.insert((id, h));
+        vals.push(val);
+        let fv = matches!(head, Val::FVar(..)) || sps[sp.0 as usize] & HAS_FVAR_BIT != 0;
+        recs.push(Rec {
+            flags: if fv { HAS_FVAR } else { 0 },
             forced: NONE,
             whnf_core: NONE,
             whnf: NONE,
             ty: NONE,
             delta: NONE,
         });
-        if matches!(head, Val::FVar(..)) || self.sps[sp.0 as usize] & HAS_FVAR_BIT != 0 {
-            self.recs[id as usize].flags = HAS_FVAR;
-        }
-        self.nutable
-            .insert_unique(spread(h), (id, h), |&(_, k)| spread(k));
         V(id)
     }
 
@@ -699,26 +709,33 @@ impl Arena {
     #[inline(never)]
     fn cons_find(&mut self, env: Env, v: V, h: u32) -> Env {
         let node = EnvNode { prev: env, v };
-        let Self { envs, envtable, .. } = self;
-        if let Some(&(id, _)) = envtable.find(spread(h), |&(id, k)| {
-            k == h && envs[id as usize].node == node
-        }) {
-            return Env(id);
-        }
+        let Self {
+            envs,
+            envtable,
+            recs,
+            ..
+        } = self;
+        let slot = match envtable.entry(
+            spread(h),
+            |&(id, k)| k == h && envs[id as usize].node == node,
+            |&(_, k)| spread(k),
+        ) {
+            Entry::Occupied(o) => return Env(o.get().0),
+            Entry::Vacant(slot) => slot,
+        };
         let id = envs.len() as u32;
         if id >= LIMIT {
             out_of_room();
         }
-        let p = self.envs[env.0 as usize];
-        let fv = p.len & HAS_FVAR_BIT != 0 || self.has_fvar(v);
+        slot.insert((id, h));
+        let p = envs[env.0 as usize];
+        let fv = p.len & HAS_FVAR_BIT != 0 || recs[v.0 as usize].flags & HAS_FVAR != 0;
         let len = ((p.len & LEN_BITS) + 1) | if fv { HAS_FVAR_BIT } else { 0 };
-        let j = self.envs[p.jump.0 as usize];
+        let j = envs[p.jump.0 as usize];
         let (lp, lj) = (p.len & LEN_BITS, j.len & LEN_BITS);
-        let ljj = self.envs[j.jump.0 as usize].len & LEN_BITS;
+        let ljj = envs[j.jump.0 as usize].len & LEN_BITS;
         let jump = if lp - lj == lj - ljj { j.jump } else { env };
-        self.envs.push(EnvRec { node, len, jump });
-        self.envtable
-            .insert_unique(spread(h), (id, h), |&(_, k)| spread(k));
+        envs.push(EnvRec { node, len, jump });
         Env(id)
     }
 
