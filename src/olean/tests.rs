@@ -379,3 +379,66 @@ fn corrupt_real_files_never_panic() {
         let _ = put(&bs);
     }
 }
+
+/// Loading with theorem values left in their files gives the same
+/// declarations in the same order, and each value decodes to the one read
+/// at load time; on a real library, if `NITROLEAN_LEAN_LIB` is set.
+#[test]
+fn lazy_values_match_eager_ones() {
+    let Some(lib) = std::env::var_os("NITROLEAN_LEAN_LIB") else {
+        return;
+    };
+    let module = std::env::var("NITROLEAN_LEAN_MODULE").unwrap_or_else(|_| "Init".into());
+    let o = |lazy| Options {
+        threads: 2,
+        no_toolchain: true,
+        search_path: vec![PathBuf::from(&lib)],
+        lazy_proofs: lazy,
+        ..Options::default()
+    };
+    let (eager, _) = load(&module, &o(false)).expect("loads");
+    let (lazy, _) = load(&module, &o(true)).expect("loads");
+    assert!(lazy.lazy_values() > 0);
+    // Later copies of a theorem are kept when their values are lazy (see
+    // `build`): compare the declarations found by name, in order.
+    let main = |e: &crate::env::Env| -> Vec<String> {
+        e.decls
+            .iter()
+            .enumerate()
+            .filter(|&(j, d)| e.by_name.get(&d.name) == Some(&(j as u32)))
+            .map(|(_, d)| e.names.display(d.name).to_string())
+            .collect()
+    };
+    assert_eq!(main(&eager), main(&lazy), "same declarations, same order");
+    let mut decoded = 0;
+    for (j, d) in lazy.decls.iter().enumerate() {
+        if lazy.by_name.get(&d.name) != Some(&(j as u32)) {
+            continue;
+        }
+        let DeclKind::Theorem { value, .. } = d.kind else {
+            continue;
+        };
+        if !crate::env::is_lazy(value) {
+            continue;
+        }
+        let e = eager
+            .find_dotted(&lazy.names.display(d.name).to_string())
+            .expect("in both");
+        let DeclKind::Theorem { value: want, .. } = e.kind else {
+            panic!("a theorem in both");
+        };
+        let mut sink = crate::compare::IntoEnv {
+            a: &eager,
+            b: &lazy,
+            missing: false,
+        };
+        let got = lazy.value_into(d, &mut sink).expect("decodes");
+        assert!(
+            !sink.missing && got == Some(want),
+            "value of {}",
+            lazy.names.display(d.name)
+        );
+        decoded += 1;
+    }
+    assert!(decoded > 1000);
+}

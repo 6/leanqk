@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::hash::hash2;
-use crate::intern::{Interner, Node};
+use crate::intern::{Big, Node};
 use crate::strings::{Overflow, StrId, StrPool};
 
 /// Id of an interned name. `NameId::ANON` is the anonymous name.
@@ -37,7 +37,7 @@ impl Node for NameNode {
 }
 
 pub struct Names {
-    arena: Interner<NameNode>,
+    arena: Big<NameNode>,
     pub strings: StrPool,
 }
 
@@ -49,13 +49,18 @@ impl Default for Names {
 
 impl Names {
     pub fn new() -> Self {
-        let mut arena = Interner::new("too many names");
+        let mut arena = Big::new("too many names");
         let (anon, _) = arena.intern(NameNode::Anon).expect("empty arena");
         debug_assert_eq!(anon, NameId::ANON.0);
         Names {
             arena,
             strings: StrPool::new(),
         }
+    }
+
+    /// Names built by the `.olean` loader (id 0 is the anonymous name).
+    pub(crate) fn from_parts(arena: Big<NameNode>, strings: StrPool) -> Self {
+        Names { arena, strings }
     }
 
     pub fn len(&self) -> usize {

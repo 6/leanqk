@@ -177,6 +177,7 @@ pub fn main() -> ExitCode {
                     threads,
                     no_toolchain: false,
                     modules: module,
+                    lazy_proofs: lazy_proofs(true),
                 })
             } else {
                 Source::Export
@@ -200,6 +201,7 @@ pub fn main() -> ExitCode {
             &olean::Options {
                 search_path,
                 threads,
+                lazy_proofs: lazy_proofs(false),
                 ..Default::default()
             },
             show,
@@ -367,6 +369,16 @@ fn report_error(file: &Path, e: &ReadError) -> u8 {
         eprintln!("nitrolean: {verdict}: {}: {e}", file.display());
     }
     code
+}
+
+/// Whether to leave theorem values in their `.olean` files until checked:
+/// `NITROLEAN_LAZY_PROOFS=0` or `=1` overrides the default.
+fn lazy_proofs(default: bool) -> bool {
+    match std::env::var("NITROLEAN_LAZY_PROOFS").as_deref() {
+        Ok("0") => false,
+        Ok("1") => true,
+        _ => default,
+    }
 }
 
 #[cfg(test)]

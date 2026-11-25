@@ -86,6 +86,22 @@ impl<'a> Heap<'a> {
         })
     }
 
+    /// The logical address ranges of the parts' data, in order.
+    pub fn ranges(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
+        self.parts.iter().map(|p| (p.lo, p.hi))
+    }
+
+    /// The bytes from logical address `addr` to the end of its part's
+    /// data, if it is in a part.
+    pub fn raw(&self, addr: u64) -> Option<&'a [u8]> {
+        let p = self.parts.iter().rev().find(|p| p.lo <= addr)?;
+        if addr >= p.hi {
+            return None;
+        }
+        p.bytes
+            .get((addr - p.base) as usize..(p.hi - p.base) as usize)
+    }
+
     /// Resolve the field value `ptr`, held by an object at address `holder`
     /// (`u64::MAX` for the root).
     pub fn get(&self, ptr: u64, holder: u64) -> Result<Val<'a>, Fail> {
@@ -105,8 +121,8 @@ impl<'a> Heap<'a> {
         if !ptr.is_multiple_of(8) {
             return bad("misaligned");
         }
-        let i = self.parts.partition_point(|p| p.lo <= ptr);
-        let Some(p) = i.checked_sub(1).map(|i| &self.parts[i]) else {
+        // Parts are sorted; most objects are in the last one.
+        let Some(p) = self.parts.iter().rev().find(|p| p.lo <= ptr) else {
             return bad("outside the module");
         };
         if ptr >= p.hi || p.hi - ptr < 8 {

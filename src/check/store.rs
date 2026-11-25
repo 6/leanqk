@@ -445,6 +445,13 @@ impl<'e> Store<'e> {
             value,
             nondep: false,
         };
+        self.mk_let_binder(b, body)
+    }
+
+    fn mk_let_binder(&mut self, b: LetBinder, body: ExprId) -> ExprId {
+        let LetBinder {
+            name, ty, value, ..
+        } = b;
         let h = if !is_local(name.0) && !is_local(ty.0) && !is_local(value.0) {
             self.env.exprs.find_let(&b)
         } else {
@@ -603,3 +610,31 @@ impl std::hash::Hasher for IdHasher {
 pub type IdBuild = std::hash::BuildHasherDefault<IdHasher>;
 pub type IdMap<K, V> = hashbrown::HashMap<K, V, IdBuild>;
 pub type IdSet<K> = hashbrown::HashSet<K, IdBuild>;
+
+/// A value read lazily from an `.olean` file is built in the store, like
+/// the checker's own terms (see [`Env::value_into`]).
+impl crate::env::TermSink for Store<'_> {
+    fn name(&mut self, node: NameNode) -> NameId {
+        self.mk_name(node)
+    }
+
+    fn level(&mut self, node: LevelNode) -> LevelId {
+        self.mk_level(node)
+    }
+
+    fn list(&mut self, levels: &[LevelId]) -> LevelList {
+        self.mk_list(levels)
+    }
+
+    fn expr(&mut self, node: ExprNode) -> ExprId {
+        self.mk(node)
+    }
+
+    fn let_in(&mut self, binder: LetBinder, body: ExprId) -> ExprId {
+        self.mk_let_binder(binder, body)
+    }
+
+    fn nat_big(&mut self, n: BigUint) -> ExprId {
+        self.nat(n)
+    }
+}

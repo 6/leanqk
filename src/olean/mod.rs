@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -24,6 +24,7 @@ use crate::reader::ErrorClass;
 mod build;
 mod decode;
 mod file;
+mod lazy;
 mod obj;
 mod par;
 
@@ -107,6 +108,9 @@ pub struct Options {
     /// Root modules to load instead of the target's own (for a project
     /// target: modules of the project or its packages).
     pub modules: Vec<String>,
+    /// Leave theorem values in their files (an experiment: the checker
+    /// cannot use such an environment yet).
+    pub lazy_proofs: bool,
 }
 
 /// Statistics of a load.
@@ -130,21 +134,24 @@ pub struct Stats {
 struct Module {
     name: String,
     path: PathBuf,
+    /// Whether it uses the module system (has `.server` and `.private`
+    /// parts); known once its main part has been read.
+    is_module: bool,
 }
 
 /// Load `target` and its import closure. `target` is a Lake project
 /// directory (all modules it built), an `.olean` file, or a module name.
 pub fn load(target: &str, opts: &Options) -> Result<(Env, Stats), OleanError> {
-    let imports_start = Instant::now();
-    let (roots, search) = resolve_target(target, opts)?;
-    let mods = import_closure(&roots, &search)?;
-    let imports_time = imports_start.elapsed();
     let threads = match opts.threads {
         0 => std::thread::available_parallelism().map_or(1, |n| n.get()),
         n => n,
     };
+    let imports_start = Instant::now();
+    let (roots, search) = resolve_target(target, opts)?;
+    let mods = import_closure(&roots, &search, threads)?;
+    let imports_time = imports_start.elapsed();
     let load_start = Instant::now();
-    let (env, mut stats) = load_modules(&mods, threads)?;
+    let (env, mut stats) = load_modules(&mods, threads, opts.lazy_proofs)?;
     stats.imports_time = imports_time;
     stats.load_time = load_start.elapsed();
     stats.threads = threads;
@@ -201,7 +208,11 @@ fn resolve_target(target: &str, opts: &Options) -> Result<(Vec<Module>, Vec<Path
             }
             found.sort();
             for (name, path) in found {
-                roots.push(Module { name, path });
+                roots.push(Module {
+                    name,
+                    path,
+                    is_module: false,
+                });
             }
             if roots.is_empty() {
                 return Err(err(ErrorClass::Io, &lib, "no .olean files"));
@@ -219,6 +230,7 @@ fn resolve_target(target: &str, opts: &Options) -> Result<(Vec<Module>, Vec<Path
         roots.push(Module {
             name,
             path: p.to_path_buf(),
+            is_module: false,
         });
     }
     if let Some(lp) = std::env::var_os("LEAN_PATH") {
@@ -247,6 +259,7 @@ fn resolve_target(target: &str, opts: &Options) -> Result<(Vec<Module>, Vec<Path
         roots.push(Module {
             name: m.to_string(),
             path,
+            is_module: false,
         });
     }
     Ok((roots, search))
@@ -334,56 +347,132 @@ fn dotted(t: &Tape, n: NameId) -> String {
     parts.join(".")
 }
 
-/// The import closure of `roots`, each module after its imports.
-fn import_closure(roots: &[Module], search: &[PathBuf]) -> Result<Vec<Module>, OleanError> {
-    // Read each module's imports once.
-    let mut index: HashMap<String, usize> = HashMap::new();
-    let mut mods: Vec<Module> = Vec::new();
-    let mut imports: Vec<Vec<usize>> = Vec::new();
-    let mut todo: Vec<usize> = Vec::new();
+/// A module's direct imports (dotted names) and whether it uses the
+/// module system, from its main part.
+fn read_imports(path: &Path) -> Result<(Vec<String>, bool), OleanError> {
+    let f = OleanFile::open(path)?;
+    let heap = Heap::new(&[&f]).map_err(|e| e.at(path))?;
+    let mut d = Decoder::new(&heap);
+    d.module(f.root(), true, false).map_err(|e| e.at(path))?;
+    let t = d.finish();
+    Ok((
+        t.imports.iter().map(|&n| dotted(&t, n)).collect(),
+        t.is_module,
+    ))
+}
+
+/// The import closure of `roots`, each module after its imports. The
+/// modules' headers are read on `threads` threads.
+fn import_closure(
+    roots: &[Module],
+    search: &[PathBuf],
+    threads: usize,
+) -> Result<Vec<Module>, OleanError> {
+    struct State {
+        index: HashMap<String, usize>,
+        mods: Vec<Module>,
+        imports: Vec<Vec<usize>>,
+        todo: Vec<usize>,
+        busy: usize,
+        error: Option<OleanError>,
+    }
+    let mut st = State {
+        index: HashMap::new(),
+        mods: Vec::new(),
+        imports: Vec::new(),
+        todo: Vec::new(),
+        busy: 0,
+        error: None,
+    };
     for r in roots {
-        if !index.contains_key(&r.name) {
-            index.insert(r.name.clone(), mods.len());
-            todo.push(mods.len());
-            mods.push(Module {
+        if !st.index.contains_key(&r.name) {
+            st.index.insert(r.name.clone(), st.mods.len());
+            st.todo.push(st.mods.len());
+            st.mods.push(Module {
                 name: r.name.clone(),
                 path: r.path.clone(),
+                is_module: false,
             });
-            imports.push(Vec::new());
+            st.imports.push(Vec::new());
         }
     }
-    while let Some(i) = todo.pop() {
-        let path = mods[i].path.clone();
-        let f = OleanFile::open(&path)?;
-        let heap = Heap::new(&[&f]).map_err(|e| e.at(&path))?;
-        let mut d = Decoder::new(&heap);
-        d.module(f.root(), true, false).map_err(|e| e.at(&path))?;
-        let t = d.finish();
-        let mut deps = Vec::new();
-        for &n in &t.imports {
-            let name = dotted(&t, n);
-            let j = match index.get(&name) {
-                Some(&j) => j,
-                None => {
-                    let p = find_module(&name, search).ok_or_else(|| {
-                        err(
-                            ErrorClass::Io,
-                            &path,
-                            format!("imported module {name} not found in the search path"),
-                        )
-                    })?;
-                    let j = mods.len();
-                    index.insert(name.clone(), j);
-                    mods.push(Module { name, path: p });
-                    imports.push(Vec::new());
-                    todo.push(j);
-                    j
+    let state = std::sync::Mutex::new(st);
+    let wake = std::sync::Condvar::new();
+    let worker = || {
+        let mut guard = state.lock().expect("lock");
+        loop {
+            if guard.error.is_some() {
+                break;
+            }
+            let Some(i) = guard.todo.pop() else {
+                if guard.busy == 0 {
+                    break;
+                }
+                guard = wake.wait(guard).expect("lock");
+                continue;
+            };
+            guard.busy += 1;
+            let path = guard.mods[i].path.clone();
+            drop(guard);
+            let res = read_imports(&path);
+            guard = state.lock().expect("lock");
+            guard.busy -= 1;
+            let (names, is_module) = match res {
+                Ok(x) => x,
+                Err(e) => {
+                    guard.error.get_or_insert(e);
+                    wake.notify_all();
+                    break;
                 }
             };
-            deps.push(j);
+            guard.mods[i].is_module = is_module;
+            let mut deps = Vec::with_capacity(names.len());
+            for name in names {
+                let j = match guard.index.get(&name) {
+                    Some(&j) => j,
+                    None => {
+                        let Some(p) = find_module(&name, search) else {
+                            guard.error.get_or_insert(err(
+                                ErrorClass::Io,
+                                &path,
+                                format!("imported module {name} not found in the search path"),
+                            ));
+                            break;
+                        };
+                        let st = &mut *guard;
+                        let j = st.mods.len();
+                        st.index.insert(name.clone(), j);
+                        st.mods.push(Module {
+                            name,
+                            path: p,
+                            is_module: false,
+                        });
+                        st.imports.push(Vec::new());
+                        st.todo.push(j);
+                        j
+                    }
+                };
+                deps.push(j);
+            }
+            guard.imports[i] = deps;
+            wake.notify_all();
         }
-        imports[i] = deps;
+        wake.notify_all();
+    };
+    if threads <= 1 {
+        worker();
+    } else {
+        std::thread::scope(|s| {
+            for _ in 0..threads {
+                s.spawn(worker);
+            }
+        });
     }
+    let st = state.into_inner().expect("lock");
+    if let Some(e) = st.error {
+        return Err(e);
+    }
+    let State { mods, imports, .. } = st;
     // Post-order DFS, with an explicit stack; a cycle is an error.
     let mut state = vec![0u8; mods.len()];
     let mut order = Vec::with_capacity(mods.len());
@@ -431,15 +520,8 @@ fn import_closure(roots: &[Module], search: &[PathBuf]) -> Result<Vec<Module>, O
 /// the parts before them (`readModuleDataPartsOfMod` in
 /// `src/Lean/Environment.lean`).
 fn open_parts(m: &Module) -> Result<Vec<OleanFile>, OleanError> {
-    let main = OleanFile::open(&m.path)?;
-    let heap = Heap::new(&[&main]).map_err(|e| e.at(&m.path))?;
-    let mut d = Decoder::new(&heap);
-    d.module(main.root(), false, false)
-        .map_err(|e| e.at(&m.path))?;
-    let is_module = d.finish().is_module;
-    drop(heap);
-    let mut parts = vec![main];
-    if is_module {
+    let mut parts = vec![OleanFile::open(&m.path)?];
+    if m.is_module {
         for ext in ["olean.server", "olean.private"] {
             parts.push(OleanFile::open(&m.path.with_extension(ext))?);
         }
@@ -449,16 +531,19 @@ fn open_parts(m: &Module) -> Result<Vec<OleanFile>, OleanError> {
 
 /// Decode one module: the constants of its last part (the private part of
 /// a module-system module holds all of them).
-fn decode_module(m: &Module) -> Result<(Tape, usize, u64), OleanError> {
+fn decode_module(m: &Module, lazy: bool) -> Result<(Tape, Vec<OleanFile>, u64), OleanError> {
     let parts = open_parts(m)?;
     let last = parts.last().expect("a part");
     let refs: Vec<&OleanFile> = parts.iter().collect();
     let heap = Heap::new(&refs).map_err(|e| e.at(&last.path))?;
     let mut d = Decoder::new(&heap);
+    d.lazy_proofs = lazy;
     d.module(last.root(), false, true)
         .map_err(|e| e.at(&last.path))?;
     let bytes = parts.iter().map(|p| p.len() as u64).sum();
-    Ok((d.finish(), parts.len(), bytes))
+    let tape = d.finish();
+    drop(heap);
+    Ok((tape, parts, bytes))
 }
 
 fn new_env() -> Env {
@@ -468,19 +553,40 @@ fn new_env() -> Env {
     env
 }
 
-/// What a worker makes of a module.
-type Done = Result<(build::ModOut, usize, u64), OleanError>;
+/// What a worker makes of a module: its declarations, its files if it
+/// has lazily read values, its number of files and their size.
+type Done = Result<(build::ModOut, Option<Vec<OleanFile>>, usize, u64), OleanError>;
 
-fn work(par: &Par, m: &Module) -> Done {
-    let (tape, files, bytes) = decode_module(m)?;
-    let out = build::intern_module(par, &tape).map_err(|e| e.at(&m.path))?;
-    Ok((out, files, bytes))
+/// Nanoseconds spent decoding and interning, over all threads (for
+/// `NITROLEAN_OLEAN_PROFILE`).
+static DECODE_NS: AtomicU64 = AtomicU64::new(0);
+static INTERN_NS: AtomicU64 = AtomicU64::new(0);
+static TAPE_EXPRS: AtomicU64 = AtomicU64::new(0);
+static TAPE_NAMES: AtomicU64 = AtomicU64::new(0);
+
+fn work(par: &Par, loc: &mut par::Local, m: &Module, lazy: bool) -> Done {
+    let t = Instant::now();
+    let (tape, parts, bytes) = decode_module(m, lazy)?;
+    let d = t.elapsed();
+    let files = parts.len();
+    let keep = (!tape.lazy.is_empty()).then(|| {
+        for p in &parts {
+            p.release();
+        }
+        parts
+    });
+    TAPE_EXPRS.fetch_add(tape.exprs.len() as u64, Ordering::Relaxed);
+    TAPE_NAMES.fetch_add(tape.names.len() as u64, Ordering::Relaxed);
+    let out = build::intern_module(par, loc, &tape).map_err(|e| e.at(&m.path))?;
+    DECODE_NS.fetch_add(d.as_nanos() as u64, Ordering::Relaxed);
+    INTERN_NS.fetch_add((t.elapsed() - d).as_nanos() as u64, Ordering::Relaxed);
+    Ok((out, keep, files, bytes))
 }
 
 /// Load `mods` (in import order) with `threads` workers. Workers decode
 /// and intern whole modules, any number at once, into the concurrent
 /// arenas; this thread appends their declarations in import order.
-fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanError> {
+fn load_modules(mods: &[Module], threads: usize, lazy: bool) -> Result<(Env, Stats), OleanError> {
     // The parts' sizes, to size the arenas.
     let bytes: u64 = mods
         .iter()
@@ -489,7 +595,7 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
                 .map(|e| std::fs::metadata(m.path.with_extension(e)).map_or(0, |md| md.len()))
         })
         .sum();
-    let par = Par::new(bytes);
+    let par = Par::new(bytes, threads);
     let mut asm = build::Assembler::new(new_env(), &par);
     let mut stats = Stats {
         modules: mods.len(),
@@ -497,8 +603,13 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
     };
     let names = |i: u32| mods[i as usize].name.clone();
     let mut intern = Duration::ZERO;
+    let mut kept: Vec<Option<Vec<OleanFile>>> = Vec::new();
     let mut add = |asm: &mut build::Assembler<'_>, i: usize, r: Done| {
-        let (out, files, bytes) = r?;
+        let (out, keep, files, bytes) = r?;
+        if keep.is_some() {
+            kept.resize_with(i + 1, || None);
+            kept[i] = keep;
+        }
         stats.files += files;
         stats.bytes += bytes;
         let t = Instant::now();
@@ -508,8 +619,9 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
         Ok::<(), OleanError>(())
     };
     if threads <= 1 {
+        let mut loc = par::Local::default();
         for (i, m) in mods.iter().enumerate() {
-            add(&mut asm, i, work(&par, m))?;
+            add(&mut asm, i, work(&par, &mut loc, m, lazy))?;
         }
     } else {
         let next = AtomicUsize::new(0);
@@ -520,12 +632,13 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
                 let tx = tx.clone();
                 let (next, failed, par) = (&next, &failed, &par);
                 s.spawn(move || {
+                    let mut loc = par::Local::default();
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);
                         if i >= mods.len() || failed.load(Ordering::Relaxed) {
                             break;
                         }
-                        if tx.send((i, work(par, &mods[i]))).is_err() {
+                        if tx.send((i, work(par, &mut loc, &mods[i], lazy))).is_err() {
                             break;
                         }
                     }
@@ -553,12 +666,22 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
     let t = Instant::now();
     if std::env::var_os("NITROLEAN_OLEAN_PROFILE").is_some() {
         eprintln!(
-            "rss before finish: {:?} peak {:?}",
+            "rss before finish: {:?} MiB, peak {:?}; decode {:.3} s, intern {:.3} s (all threads); module-local expressions {}, names {}",
             rss_now(),
-            crate::stats::peak_rss_bytes()
+            crate::stats::peak_rss_bytes(),
+            DECODE_NS.load(Ordering::Relaxed) as f64 / 1e9,
+            INTERN_NS.load(Ordering::Relaxed) as f64 / 1e9,
+            TAPE_EXPRS.load(Ordering::Relaxed),
+            TAPE_NAMES.load(Ordering::Relaxed),
         );
     }
-    let mut env = asm.env;
+    let build::Assembler {
+        mut env, handles, ..
+    } = asm;
+    drop(add);
+    if !handles.is_empty() {
+        env.lazy = Some(Box::new(lazy::OleanValues::new(kept, handles)));
+    }
     let (names, levels, exprs) = par.finish(threads).map_err(|o| {
         err(
             ErrorClass::Malformed,
@@ -567,6 +690,7 @@ fn load_modules(mods: &[Module], threads: usize) -> Result<(Env, Stats), OleanEr
         )
     })?;
     env.names = names;
+    env.names.strings.enable_late();
     env.levels = levels;
     env.exprs = exprs;
     stats.finish_time = t.elapsed();

@@ -652,6 +652,10 @@ impl<'a, 'e> Machine<'a, 'e> {
         }
         match d.kind {
             DeclKind::Definition { value, .. } | DeclKind::Theorem { value, .. } => {
+                let value = match self.tc.value(&d) {
+                    Ok(v) => v.unwrap_or(value),
+                    Err(e) => panic!("{e}"),
+                };
                 let v = self.inst_levels(&d, ls, value);
                 if ls == LevelList::EMPTY
                     && let Some(op) = ext.nat_op(n)

@@ -7,9 +7,11 @@
 
 use hashbrown::HashMap;
 
-use crate::expr::{ExprId, Exprs};
-use crate::level::Levels;
-use crate::name::{NameId, Names};
+use num_bigint::BigUint;
+
+use crate::expr::{ExprId, ExprNode, Exprs, LetBinder};
+use crate::level::{LevelId, LevelList, LevelNode, Levels};
+use crate::name::{NameId, NameNode, Names};
 
 /// A list of names, as a range into [`Env::name_list`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -185,6 +187,42 @@ pub struct DeclCounts {
     pub recursors: usize,
 }
 
+/// Lazily read values: a value left in its `.olean` file has the id
+/// `LAZY_BASE + k` until it is decoded ([`Env::value_into`]). Such an id
+/// is never a valid id in the shared arena or in a checker's overlay
+/// (which uses ids from 2^31 up, far fewer than 2^31 - 2^28 of them).
+pub const LAZY_BASE: u32 = u32::MAX - (1 << 28);
+
+/// Whether `e` stands for a value left in its file.
+#[inline]
+pub fn is_lazy(e: ExprId) -> bool {
+    e.0 >= LAZY_BASE
+}
+
+/// Where [`Env::value_into`] builds a lazily read value: a checker's own
+/// store, which looks each node up in the shared arena first. Nodes come
+/// children first; names after their prefixes. Strings are the shared
+/// pool's ([`crate::strings::StrPool::intern_late`] adds those first met in
+/// a lazily read value).
+pub trait TermSink {
+    fn name(&mut self, node: NameNode) -> NameId;
+    fn level(&mut self, node: LevelNode) -> LevelId;
+    fn list(&mut self, levels: &[LevelId]) -> LevelList;
+    /// A node other than `Let` and big literals.
+    fn expr(&mut self, node: ExprNode) -> ExprId;
+    fn let_in(&mut self, binder: LetBinder, body: ExprId) -> ExprId;
+    /// A natural number literal of at least 2^64.
+    fn nat_big(&mut self, n: BigUint) -> ExprId;
+}
+
+/// The source of lazily read values (the `.olean` loader's).
+pub(crate) trait LazyValues: Send + Sync {
+    /// Decode value `k` into `sink`.
+    fn decode(&self, env: &Env, k: u32, sink: &mut dyn TermSink) -> Result<ExprId, String>;
+    fn count(&self) -> usize;
+    fn heap_bytes(&self) -> usize;
+}
+
 #[derive(Default)]
 pub struct Env {
     pub meta: Meta,
@@ -196,6 +234,7 @@ pub struct Env {
     pub(crate) name_pool: Vec<NameId>,
     pub(crate) rule_pool: Vec<RecRule>,
     pub(crate) by_name: HashMap<NameId, u32>,
+    pub(crate) lazy: Option<Box<dyn LazyValues>>,
 }
 
 impl Env {
@@ -213,6 +252,32 @@ impl Env {
 
     pub fn block_decls(&self, b: &Block) -> &[Decl] {
         &self.decls[b.start as usize..b.start as usize + b.len()]
+    }
+
+    /// The value of a definition, theorem or opaque constant (`None` for
+    /// other kinds). A value read at load time is the shared arena's id; a
+    /// value left in its `.olean` file is decoded into `sink`, every time
+    /// this is called (nothing is cached, so the shared arena never
+    /// changes). An error means the file is malformed.
+    pub fn value_into(&self, d: &Decl, sink: &mut dyn TermSink) -> Result<Option<ExprId>, String> {
+        let v = match d.kind {
+            DeclKind::Definition { value, .. }
+            | DeclKind::Theorem { value, .. }
+            | DeclKind::Opaque { value, .. } => value,
+            _ => return Ok(None),
+        };
+        if !is_lazy(v) {
+            return Ok(Some(v));
+        }
+        match &self.lazy {
+            Some(l) => l.decode(self, v.0 - LAZY_BASE, sink).map(Some),
+            None => Err("internal: a lazy value without its source".into()),
+        }
+    }
+
+    /// Number of values left in their files.
+    pub fn lazy_values(&self) -> usize {
+        self.lazy.as_ref().map_or(0, |l| l.count())
     }
 
     /// The declaration named `n`, if any.
@@ -268,5 +333,6 @@ impl Env {
             + self.name_pool.capacity() * 4
             + self.rule_pool.capacity() * size_of::<RecRule>()
             + self.by_name.capacity() * 9
+            + self.lazy.as_ref().map_or(0, |l| l.heap_bytes())
     }
 }
