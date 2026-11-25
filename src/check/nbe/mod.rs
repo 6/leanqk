@@ -574,7 +574,8 @@ impl<'e> Nbe<'e> {
     pub fn key_env(&mut self, env: val::Env, e: ExprId) -> val::Env {
         let n = self.st.data(e).loose_bvar_range();
         let env = self.trim(env, n);
-        if n <= 1 {
+        // Only worth its cost where terms are inferred again and again.
+        if n <= 1 || self.decl_steps <= conv::HEAVY_STEPS {
             return env;
         }
         let m = self.used_bvars(e);

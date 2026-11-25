@@ -773,7 +773,7 @@ impl Nbe<'_> {
 
 /// Lazy delta steps after which a declaration counts as heavy, and
 /// definitional equality also goes by names (`is_def_eq`).
-const HEAVY_STEPS: u32 = 1 << 10;
+pub(super) const HEAVY_STEPS: u32 = 1 << 10;
 
 /// Bound on the nodes one structural comparison may visit.
 const SYN_BUDGET: u32 = 1 << 10;
