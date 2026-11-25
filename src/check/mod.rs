@@ -76,19 +76,27 @@ pub fn check_env(env: &Env) -> Result<Report, Failure> {
     check_env_jobs(env, default_jobs())
 }
 
-/// While the process holds more than this beyond what it held when
-/// checking started (the environment), a thread starts a new block only if
-/// no other is checking one (`NITROLEAN_MEM_BUDGET_MIB`; default 1 GiB). Some blocks take gigabytes (huge literals, long computations);
-/// this keeps several of them from running at once.
 /// How many blocks a thread starts between looks at the process's size.
 const POLL_EVERY: u32 = 16;
 
-fn mem_budget() -> u64 {
-    std::env::var("NITROLEAN_MEM_BUDGET_MIB")
+/// While the process holds more than this, a thread starts a new block only
+/// if no other is checking one. Some blocks take gigabytes (huge literals,
+/// long computations); this keeps several of them from running at once.
+/// `NITROLEAN_MEM_BUDGET_MIB` is the room beyond what the process held when
+/// checking started (`start`, the environment). By default it is three
+/// quarters of the memory the process may use (see
+/// [`crate::stats::memory_limit_bytes`]), and at least 1 GiB more than
+/// `start`.
+fn mem_budget(start: u64) -> u64 {
+    const MIN_ROOM: u64 = 1 << 30;
+    if let Some(mib) = std::env::var("NITROLEAN_MEM_BUDGET_MIB")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(1024)
-        << 20
+    {
+        return start.saturating_add(mib << 20);
+    }
+    let usable = crate::stats::memory_limit_bytes().map_or(0, |m| m / 4 * 3);
+    usable.max(start.saturating_add(MIN_ROOM))
 }
 
 /// `NITROLEAN_JOBS` if set, else the number of cores.
@@ -138,7 +146,7 @@ pub fn check_env_jobs(env: &Env, jobs: usize) -> Result<Report, Failure> {
         failures: Mutex::new(Vec::new()),
         times,
         busy: AtomicUsize::new(0),
-        budget: crate::stats::rss_bytes().unwrap_or(0) + mem_budget(),
+        budget: mem_budget(crate::stats::rss_bytes().unwrap_or(0)),
     };
     let jobs = jobs.clamp(1, env.blocks.len().max(1));
     std::thread::scope(|s| {
