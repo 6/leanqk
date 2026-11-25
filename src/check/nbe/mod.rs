@@ -162,7 +162,7 @@ const FOUND_BITS: u32 = 12;
 /// its capacity, and one big declaration should not slow down every later
 /// one.
 fn shrink<T: Default + Cap>(c: &mut T) {
-    if c.cap() > 1 << 12 {
+    if c.cap() > 1 << 16 {
         *c = T::default();
     } else {
         c.clear_keep();

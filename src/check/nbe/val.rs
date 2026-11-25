@@ -665,7 +665,7 @@ impl Arena {
         if i >= len {
             return None;
         }
-        if i < 4 {
+        if i < 8 {
             for _ in 0..i {
                 r = self.envs[r.node.prev.0 as usize];
             }

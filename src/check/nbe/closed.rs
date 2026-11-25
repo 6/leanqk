@@ -69,8 +69,8 @@ impl<'e> Nbe<'e> {
 
     /// Drop the names (their terms stay in the store until it is cleared).
     pub(super) fn forget_names(&mut self) {
-        self.names = IdMap::default();
-        self.name_eq = IdMap::default();
+        super::shrink(&mut self.names);
+        super::shrink(&mut self.name_eq);
     }
 
     /// The term a value stands for (its closures' terms with their
