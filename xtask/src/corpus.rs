@@ -657,7 +657,7 @@ fn collect_cases(cases_dir: &Path, out: &Path, source: &str) -> Result<Vec<Strin
 /// against a pinned SHA-256; the exports are made with the `leanexport` of the
 /// pinned Lean toolchain and checked against corpus/exports.sha256, so that
 /// every run produces the same files byte for byte. See corpus/SOURCES.md for
-/// the sources. Needs git, curl, elan and uv (see mise.corpus.toml).
+/// the sources. Needs git, curl, elan and uv (`mise install` gives uv).
 #[derive(clap::Args)]
 pub struct FetchArgs {
     /// also build the large real-world exports (Init, Std, Mathlib, ...) that
@@ -802,7 +802,7 @@ fn fetch_corpus(a: FetchArgs) -> Result<()> {
     need(
         FC,
         &["git", "curl", "elan", "uv"],
-        " (see mise.corpus.toml)",
+        " (`mise install` gives uv)",
     )?;
 
     install_pinned_lean(FC)?;

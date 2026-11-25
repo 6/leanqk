@@ -1,2 +1,4 @@
 [tools]
 rust = { version = "1.100.0", components = "rustfmt,clippy", profile = "minimal" }
+# Only needed for the corpus and arena fetches (`cargo xtask fetch-corpus`, `cargo xtask arena fetch`), which run the Lean Kernel Arena's upstream runner.
+uv = "0.13.9"

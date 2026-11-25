@@ -16,7 +16,7 @@ for the deliberate divergences listed in `divergences.md`.
 | `divergences.md` | the tests where nitrolean's intended verdict differs from Lean's, and why |
 | `lean/` | tests written as Lean files, exported with the Lean Kernel Arena's tutorial machinery |
 
-`cargo xtask fetch-corpus` needs git, curl, elan and uv (`MISE_ENV=corpus mise install`
+`cargo xtask fetch-corpus` needs git, curl, elan and uv (`mise install`
 gives uv). It takes about 3 minutes on two cores and makes the same files byte
 for byte on every run. `--full` also builds the Arena's large real-world exports
 (Mathlib and others), which takes hours and is not part of the checked corpus.
