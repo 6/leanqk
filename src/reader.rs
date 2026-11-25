@@ -2243,6 +2243,29 @@ mod tests {
         true
     }
 
+    /// Strings of every length, with an escape, a control character or a
+    /// non-ASCII character at every place: the scanner (which reads
+    /// eight bytes at a time) takes them or not as the general parser
+    /// reads them.
+    #[test]
+    fn scanned_strings_agree_with_general_path() {
+        for n in 0..40 {
+            let plain = "a".repeat(n);
+            assert!(scanned_as_general(&format!(
+                r#"{{"in":1,"str":{{"pre":0,"str":"{plain}"}}}}"#
+            )));
+            for i in 0..=n {
+                for odd in ["\\\"", "\\n", "\u{1}", "\u{1f}", "é", "\u{7f}"] {
+                    let text = format!("{}{odd}{}", &plain[..i], &plain[i..]);
+                    let line = format!(r#"{{"in":1,"str":{{"pre":0,"str":"{text}"}}}}"#);
+                    let took = scanned_as_general(&line);
+                    let plain_enough = !odd.starts_with('\\') && odd.as_bytes()[0] >= 0x20;
+                    assert_eq!(took, plain_enough, "{line:?}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn fast_path_agrees_with_general_path() {
         let taken = [
