@@ -1,16 +1,15 @@
 [package]
 name = "nitrolean"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.100"
 description = "An independent Lean 4 proof checker in Rust"
 license = "Apache-2.0"
 repository = "https://github.com/6/nitrolean"
-homepage = "https://github.com/6/nitrolean"
 readme = "README.md"
 keywords = ["lean", "proof-checker", "kernel"]
 categories = ["command-line-utilities", "mathematics"]
-exclude = [".github/", "mise.toml", "mise.*.toml", "corpus/", "scripts/"]
+include = ["/src/**/*.rs", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/NOTICE", "/README.md"]
 
 [lib]
 name = "nitrolean"
