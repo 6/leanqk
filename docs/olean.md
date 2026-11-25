@@ -117,6 +117,10 @@ the default for `check`; `src/reader/lazy.rs`):
   know, goes to the general JSON parser. Keys and fixed text are compared
   8 or 16 bytes at a time against a table of words (`Keys`), and numbers
   are read 8 digits at a time.
+- Runs of application and binder lines (nine lines in ten) are read in
+  one loop (`src/reader/run.rs`) straight into the table: it matches
+  their fixed text and reads their numbers, and stops at any line it does
+  not take, which the scanner then reads.
 - On one thread (`--threads 1`) the scanner hands each line straight to
   the reader's state, declarations included. On several, each thread
   parses chunks of whole lines, and their batches are applied in file
@@ -127,8 +131,8 @@ the default for `check`; `src/reader/lazy.rs`):
 - An export lists each term once, so expressions are added without
   hash-consing, and their cached data (`ExprData`) is filled in one pass
   over the arena before the index. The index is built at the end, on all
-  threads: entries are bucketed by hash into a scratch buffer (the id
-  map's, no longer needed by then), each bucket is sorted, and the table
+  threads: entries are bucketed by hash into a scratch buffer (the
+  expression id map's, without lazy proofs), each bucket is sorted, and the table
   is filled in order. If two terms are equal after all (an export that
   repeats one), the file is read again with hash-consing.
 
