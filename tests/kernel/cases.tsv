@@ -212,12 +212,12 @@ eval-arr-fn	eval	accept	accept	an array of functions, elements applied
 eval-arr-fn-wrong	eval	reject	reject	the same, wrong sum
 eval-list	eval	accept	accept	List.any, all, filter, getLast?, foldl, reverse, elem and eraseDups on numbers
 eval-list-wrong	eval	reject	reject	the same fold, off by one
+eval-list-filter-lazy	eval	accept	accept	the head of a filter, whose later tests would divide by zero
+eval-list-filter-lazy-wrong	eval	reject	reject	the same, the wrong head
 eval-int	eval	accept	accept	Int +, -, *, neg, / and % (Euclidean and toward zero), ^, subNatNat, negOfNat, natAbs and toNat on every sign, zero and big values, hashed
 eval-int-wrong	eval	reject	reject	the same hash, off by one
 eval-list-lazy	eval	accept	accept	List.map, zipWith, append and length
 eval-list-lazy-wrong	eval	reject	reject	the length, off by one
-eval-list-filter-lazy	eval	accept	accept	the head of a filter, whose later tests would divide by zero
-eval-list-filter-lazy-wrong	eval	reject	reject	the same, the wrong head
 eval-methods	eval	accept	accept	+ through 20 instances built from a number, an instance argument and a computed field
 eval-methods-wrong	eval	reject	reject	the same sum, off by one
 eval-cases	eval	accept	accept	matches through casesOn and sparse casesOn: wildcards, a literal, a structure, a function result
@@ -249,8 +249,6 @@ eval434-dec-cast	eval	accept	accept	a cast along a proof from Nat.decEq: evaluat
 eval434-dec-cast-wrong	eval	reject	reject	the same sum, off by one
 eval434-cases	eval	accept	accept	matches through casesOn and sparse casesOn, as in eval-cases
 eval434-cases-wrong	eval	reject	reject	the same sum, off by one
-
-
 fuzz-quot-lift-direct	quot	accept	reject	a theorem stated with Quot.lift and Quot.mk, with the names the fuzzer's seed had: valid, but leanchecker --from-export says unknown constant Quot.lift; with other names (K.fz_quot_direct as exported) it accepts
 fuzz-str-deceq	eval.string	accept	reject	decide ("abc" = "abc") = true by decide: valid (Lean compiles it, and leanchecker accepts the .olean), but leanchecker --from-export fails to reduce it
 fuzz-mdata-ctor-type	inductive.mdata	reject	reject	Bool.true's type is mdata around Bool: Lean rejects (invalid return type)
