@@ -454,18 +454,33 @@ impl<T: Node> Big<T> {
                         if lo >= n {
                             return;
                         }
-                        for id in lo..(lo + STEP).min(n) {
-                            let node = nodes.get(id as u32);
-                            let (got, fresh) = table.insert_shared(
-                                node.hash(),
-                                |o| nodes.get(o).same(node),
-                                || id as u32,
-                            );
-                            if !fresh {
-                                let mut d = dup.lock().unwrap_or_else(|e| e.into_inner());
-                                let (a, b) = (got.max(id as u32), got.min(id as u32));
-                                if d.is_none_or(|(x, _)| a < x) {
-                                    *d = Some((a, b));
+                        let hi = (lo + STEP).min(n);
+                        // Hash a group of nodes and touch their lines
+                        // first, so that the cache misses overlap.
+                        const GROUP: usize = 16;
+                        let mut hs = [0u64; GROUP];
+                        let mut acc = 0u64;
+                        for g in (lo..hi).step_by(GROUP) {
+                            let k = GROUP.min(hi - g);
+                            for (i, h) in hs[..k].iter_mut().enumerate() {
+                                *h = nodes.get((g + i) as u32).hash();
+                                acc = acc.wrapping_add(table.touch(*h));
+                            }
+                            std::hint::black_box(acc);
+                            for (i, &h) in hs[..k].iter().enumerate() {
+                                let id = g + i;
+                                let node = nodes.get(id as u32);
+                                let (got, fresh) = table.insert_shared(
+                                    h,
+                                    |o| nodes.get(o).same(node),
+                                    || id as u32,
+                                );
+                                if !fresh {
+                                    let mut d = dup.lock().unwrap_or_else(|e| e.into_inner());
+                                    let (a, b) = (got.max(id as u32), got.min(id as u32));
+                                    if d.is_none_or(|(x, _)| a < x) {
+                                        *d = Some((a, b));
+                                    }
                                 }
                             }
                         }
