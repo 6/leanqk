@@ -1,0 +1,811 @@
+checker	version	test	status	correctness	wall_s	cpu_s	max_rss_bytes	ginstructions	date
+gruszka	0.2.0	bugs/closure-level-subst	rejected	correct	0.040	0.026	70909952	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/constlevels	rejected	correct	0.019	0.028	110936064	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/ctor-num-fields	rejected	correct	0.022	0.036	123523072	0.013	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/eta-ctor-alias	rejected	correct	0.020	0.029	98492416	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/k-rec-conv	rejected	correct	0.020	0.029	100200448	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/large-elim-param	rejected	correct	0.020	0.028	71200768	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/large-elim-prop-bool	rejected	correct	0.071	0.086	90124288	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/level-imax-leq	rejected	correct	0.018	0.025	56528896	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/level-imax-normalization	rejected	correct	0.019	0.026	85852160	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/loose-bvar-value	rejected	correct	0.019	0.026	64798720	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/nat-rec-k-lie	rejected	correct	0.017	0.023	81666048	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/nat-rec-rules	rejected	correct	0.017	0.022	64835584	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/nat-shift-huge	accepted	correct	0.034	0.061	144691200	0.030	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/nested-name-capture	rejected	correct	0.026	0.040	104808448	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/nested-rec-rule-nfields	rejected	correct	0.025	0.034	108945408	0.013	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/nested-unused-param	rejected	correct	0.020	0.032	119484416	0.014	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/open-term-cache-context	rejected	correct	0.017	0.024	56623104	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/orphan-rec	rejected	correct	0.023	0.028	56680448	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/pi-closure-context	rejected	correct	0.017	0.023	66965504	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/proj-non-structure	rejected	correct	0.018	0.027	88113152	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/proj-of-imax-prop	rejected	correct	0.019	0.026	96071680	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/proj-of-stuck-prop	rejected	correct	0.023	0.043	155013120	0.026	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/proj-of-subst-prop	rejected	correct	0.023	0.040	148856832	0.025	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/quot-bad-type	rejected	correct	0.019	0.024	71041024	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/rec-k-lie	rejected	correct	0.017	0.022	67162112	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/rec-missing-ih	rejected	correct	0.024	0.038	155164672	0.025	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/rec-of-subst-prop	rejected	correct	0.024	0.042	148803584	0.026	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/rec-rule-proof-irrel	rejected	correct	0.019	0.029	111128576	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/rec-rule-proof-irrel-nested	rejected	correct	0.021	0.033	127688704	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/rec-rule-wrong-arg	rejected	correct	0.021	0.034	127803392	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/rec-type-proof-irrel	rejected	correct	0.023	0.035	108797952	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/str-lit-utf8	accepted	correct	0.027	0.046	144744448	0.043	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/str-lit-utf8-bad	rejected	correct	0.025	0.043	140566528	0.046	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	bugs/unit-rec-rule	rejected	correct	0.019	0.025	75382784	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	cedar	accepted	correct	4.326	14.390	618196992	61.971	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	con-leche	accepted	correct	2.852	9.777	610734080	53.864	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/alg-conv-trans-acc	rejected	either	0.026	0.044	129765376	0.015	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/alg-conv-trans-acc-left	accepted	either	0.022	0.033	134062080	0.015	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/alg-conv-trans-acc-right	accepted	either	0.023	0.034	129970176	0.015	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/alg-conv-trans-quot	rejected	either	0.017	0.023	73101312	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/alg-conv-trans-quot-left	rejected	either	0.017	0.023	73383936	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/alg-conv-trans-quot-left-def	accepted	either	0.018	0.021	79441920	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/alg-conv-trans-quot-right	accepted	either	0.017	0.022	77389824	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/eta-ctor	rejected	either	0.025	0.030	85872640	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/eta-rec-struct	rejected	either	0.019	0.026	89985024	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/eta-rule-k	rejected	either	0.017	0.024	79392768	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/eta-struct-major-and	accepted	either	0.018	0.024	98373632	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/eta-struct-major-and-no-whnf	accepted	either	0.020	0.029	111058944	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/eta-struct-major-no-whnf	accepted	either	0.018	0.024	87883776	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/eta-unit-like-nested	rejected	either	0.018	0.027	96251904	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/eta-unit-like-pi	rejected	either	0.017	0.023	85884928	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/eta-unit-like-proof-field	rejected	either	0.018	0.024	85893120	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/eta-unit-like-struct	rejected	either	0.018	0.025	96387072	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/imax-nested-absorption	rejected	either	0.017	0.022	52293632	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/imax-right-successor	rejected	either	0.024	0.030	58507264	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/large-elim-maybe-prop	rejected	either	0.022	0.021	56623104	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/let-value-type-mismatch	rejected	either	0.025	0.030	48173056	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/nested-nonuniform-param	accepted	either	0.018	0.025	79638528	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/nested-redex-aux	accepted	either	0.032	0.028	98504704	0.013	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/positivity-whnf	rejected	either	0.017	0.024	75120640	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/proj-maybe-prop	accepted	either	0.017	0.023	87957504	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/proj-maybe-prop-past	accepted	either	0.018	0.027	98353152	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/proof-param-ok	accepted	correct	0.017	0.023	62570496	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/proof-param-swap	rejected	either	0.016	0.021	62963712	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/subject-reduction-redex	accepted	either	0.020	0.033	129814528	0.015	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/subject-reduction-reduct	rejected	either	0.020	0.030	129777664	0.015	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	corner-cases/vanishing-occurrence	accepted	either	0.017	0.024	81670144	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	cslib	accepted	correct	11.094	37.457	1289715712	164.254	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	init	accepted	correct	1.318	4.691	452841472	24.877	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	init-prelude	accepted	correct	0.038	0.075	159649792	0.187	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	mathlib	accepted	correct	29.455	101.161	2751664128	460.836	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	navier-stokes-euler	accepted	correct	5.921	21.445	850567168	131.183	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	other/extra-rec	rejected	correct	0.014	0.016	39976960	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	other/inductive-undeclared-universe	rejected	correct	0.014	0.018	45793280	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	other/level-index-out-of-order	accepted	correct	0.022	0.026	45735936	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	other/nat-lit-add	accepted	correct	0.017	0.021	69132288	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	other/nat-lit-add-bad	rejected	correct	0.020	0.027	111185920	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	other/nat-lit-ble	accepted	correct	0.019	0.028	109047808	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	other/nat-lit-sub	accepted	correct	0.019	0.027	108859392	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	other/orphan-ctor	rejected	correct	0.014	0.015	35287040	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	other/proj-of-prop	rejected	correct	0.018	0.025	77496320	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	other/sparse-name-index	accepted	correct	0.015	0.018	46055424	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/app-lam	accepted	correct	0.057	0.074	157794304	0.444	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/args-before-unfold	accepted	correct	0.020	0.028	90513408	0.020	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/beta-ladder	accepted	correct	0.035	0.048	126799872	0.226	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/church-numerals	accepted	correct	0.025	0.034	105910272	0.054	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/discarded-argument	accepted	correct	0.025	0.031	88166400	0.013	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/discarded-argument-match	accepted	correct	0.019	0.027	102694912	0.014	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/folded-constant-first	accepted	correct	0.020	0.028	88862720	0.022	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/folded-constant-last	accepted	correct	0.049	0.029	107966464	0.022	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/fueled-chain	accepted	correct	0.035	0.053	153219072	0.087	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/gf3-matrix-product	accepted	correct	1.368	1.448	381542400	14.531	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/grind-ring-5	accepted	correct	0.197	0.278	291201024	1.447	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/identical-nesting	accepted	correct	0.017	0.024	81723392	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/irrelevance-before-evaluation	accepted	correct	0.018	0.024	88358912	0.013	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/irrelevance-refutes	accepted	correct	0.019	0.028	94212096	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/ite-taken-branch	accepted	correct	0.043	0.087	172544000	0.295	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/ite-taken-branch-bad	rejected	correct	0.464	0.525	448380928	2.926	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/let-fold	accepted	correct	0.051	0.049	144646144	0.032	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/let-ladder	accepted	correct	0.024	0.031	106078208	0.025	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/loop-unfolded-once	accepted	correct	0.041	0.084	178507776	0.265	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/loop-unfolded-once-bad	rejected	correct	0.040	0.084	180801536	0.298	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/magma-list-deep-n21	accepted	correct	0.050	0.072	178659328	0.319	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/magma-list-deep-n36	accepted	correct	0.352	0.385	336449536	2.672	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/magma-list-pair-n21	accepted	correct	4.452	4.659	1033543680	18.391	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/magma-list-pair-n7	accepted	correct	0.279	0.310	308142080	1.375	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/magma-string-n4	accepted	correct	0.118	0.262	211361792	1.514	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/magma-string-pair-n9	accepted	correct	0.396	0.571	410869760	3.388	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/proj-app-lazy-delta	accepted	correct	0.022	0.036	144506880	0.017	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/proj-applied-struct	accepted	correct	0.046	0.035	142356480	0.017	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/proj-applied-struct-arg-bad	rejected	correct	1.093	1.147	651284480	6.205	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/proj-applied-struct-bad	rejected	correct	1.119	1.176	644100096	6.204	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/proj-cheap-struct	accepted	correct	0.020	0.032	123584512	0.015	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/proj-lazy-struct	accepted	correct	0.021	0.030	100745216	0.025	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/proj-stuck-struct	accepted	correct	0.021	0.031	115150848	0.013	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/prop-struct-projections	accepted	correct	0.022	0.035	130031616	0.053	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/refute-cheap-first	rejected	correct	0.019	0.024	88248320	0.013	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/refute-cheap-last	rejected	correct	0.020	0.026	92487680	0.020	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/repeated-subproblem	accepted	correct	0.020	0.027	92385280	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/shared-subterm	accepted	correct	0.021	0.030	95404032	0.036	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/shift-cascade	accepted	correct	0.023	0.031	89227264	0.022	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/short-circuit-and	accepted	correct	0.045	0.092	174546944	0.331	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/short-circuit-and-bad	rejected	correct	2.177	2.307	554958848	9.058	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/unfold-before-literal	accepted	correct	0.021	0.031	100896768	0.031	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/unfold-before-literal-bad	rejected	correct	1.182	1.243	631832576	6.197	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/unfold-before-literal-fallback	accepted	correct	2.645	4.070	1185382400	21.670	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	perf/unroll-versus-evaluate	accepted	correct	0.019	0.028	92532736	0.014	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	reachability	accepted	correct	1.295	2.349	902057984	11.129	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	std	accepted	correct	2.122	7.290	595587072	40.139	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/001_basicDef	accepted	correct	0.024	0.039	53985280	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/002_badDef	rejected	correct	0.022	0.029	48173056	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/003_arrowType	accepted	correct	0.017	0.020	52371456	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/004_dependentType	accepted	correct	0.024	0.029	52260864	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/005_constType	accepted	correct	0.023	0.034	52359168	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/006_betaReduction	accepted	correct	0.016	0.021	60764160	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/007_betaReduction2	accepted	correct	0.022	0.027	60612608	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/008_forallSortWhnf	accepted	correct	0.023	0.028	62988288	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/009_forallSortBad	rejected	correct	0.018	0.021	64745472	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/010_nonTypeType	rejected	correct	0.023	0.035	54550528	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/011_nonTypeAxiom	rejected	correct	0.016	0.020	58482688	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/012_nonPropThm	rejected	correct	0.023	0.027	52228096	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/013_thmProof	accepted	correct	0.023	0.027	67100672	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/014_selfProof	rejected	correct	0.022	0.026	43638784	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/015_levelComp1	accepted	correct	0.015	0.019	48115712	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/016_levelComp2	accepted	correct	0.023	0.031	43892736	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/017_levelComp3	accepted	correct	0.014	0.019	48181248	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/018_levelParams	accepted	correct	0.024	0.029	60645376	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/019_tut06_bad01	rejected	correct	0.015	0.019	45785088	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/020_levelComp4	accepted	correct	0.014	0.017	39821312	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/021_levelComp5	accepted	correct	0.020	0.024	41963520	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/022_imax1	accepted	correct	0.022	0.026	52281344	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/023_imax2	accepted	correct	0.023	0.033	50286592	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/024_levelMaxComm	accepted	correct	0.016	0.019	45981696	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/025_levelMaxAssoc	accepted	correct	0.022	0.026	50159616	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/026_levelMaxIdem	accepted	correct	0.016	0.021	48238592	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/027_levelMaxAbsorb	accepted	correct	0.015	0.020	48185344	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/028_inferVar	accepted	correct	0.016	0.020	52383744	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/029_defEqLambda	accepted	correct	0.023	0.027	54493184	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/030_peano1	accepted	correct	0.016	0.022	73351168	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/031_peano2	accepted	correct	0.017	0.023	71245824	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/032_peano3	accepted	correct	0.018	0.026	81678336	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/033_letType	accepted	correct	0.016	0.021	52318208	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/034_letTypeDep	accepted	correct	0.017	0.022	60735488	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/035_letRed	accepted	correct	0.017	0.020	54390784	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/036_empty	accepted	correct	0.017	0.020	58724352	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/037_boolType	accepted	correct	0.016	0.020	58736640	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/038_twoBool	accepted	correct	0.023	0.029	69079040	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/039_andType	accepted	correct	0.017	0.022	64917504	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/040_prodType	accepted	correct	0.017	0.022	71008256	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/041_pprodType	accepted	correct	0.017	0.018	52187136	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/042_pUnitType	accepted	correct	0.017	0.022	62865408	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/043_eqType	accepted	correct	0.016	0.021	64884736	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/044_natDef	accepted	correct	0.017	0.023	62636032	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/045_rbTreeDef	accepted	correct	0.016	0.024	77279232	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/046_inductBadNonSort	rejected	correct	0.016	0.021	58671104	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/047_inductBadNonSort2	rejected	correct	0.016	0.020	50049024	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/048_inductLevelParam	rejected	correct	0.015	0.018	41717760	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/049_inductTooFewParams	rejected	correct	0.016	0.019	52350976	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/050_inductWrongCtorParams	rejected	correct	0.016	0.020	56573952	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/051_inductWrongCtorResParams	rejected	correct	0.016	0.020	58564608	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/052_inductWrongCtorResLevel	rejected	correct	0.017	0.022	54697984	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/053_inductInIndex	rejected	correct	0.023	0.027	54599680	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/054_indNeg	rejected	correct	0.016	0.016	39690240	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/055_reduceCtorParam.mk	accepted	correct	0.016	0.021	73334784	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/056_reduceCtorType.mk	rejected	correct	0.016	0.020	58609664	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/057_indNegReducible	rejected	correct	0.024	0.030	62861312	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/058_predWithTypeField	accepted	correct	0.017	0.021	56582144	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/059_typeWithTypeField	accepted	correct	0.016	0.022	67010560	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/060_typeWithTypeFieldPoly	accepted	correct	0.016	0.022	62783488	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/061_typeWithTooHighTypeField.mk	rejected	correct	0.016	0.020	56463360	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/062_emptyRec	accepted	correct	0.024	0.030	64991232	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/063_boolRec	accepted	correct	0.019	0.025	71159808	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/064_twoBoolRec	accepted	correct	0.018	0.026	79409152	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/065_andRec	accepted	correct	0.016	0.022	71020544	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/066_prodRec	accepted	correct	0.024	0.029	69316608	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/067_pprodRec	accepted	correct	0.016	0.021	68952064	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/068_punitRec	accepted	correct	0.017	0.022	66945024	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/069_eqRec	accepted	correct	0.016	0.023	70975488	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/070_nRec	accepted	correct	0.016	0.022	69050368	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/071_rbTreeRef	accepted	correct	0.018	0.024	79704064	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/072_boolPropRec	accepted	correct	0.017	0.023	71102464	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/073_BogusRecursor	rejected	correct	0.041	0.025	58654720	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/074_existsRec	accepted	correct	0.017	0.022	71172096	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/075_typeSingletonRecReduction	accepted	correct	0.017	0.023	81526784	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/076_sortElimPropRec	accepted	correct	0.018	0.023	77447168	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/077_sortElimProp2Rec	accepted	correct	0.018	0.024	83922944	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/078_boolRecEqns	accepted	correct	0.018	0.025	92266496	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/079_prodRecEqns	accepted	correct	0.017	0.023	81555456	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/080_nRecReduction	accepted	correct	0.018	0.026	90062848	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/081_listRecReduction	accepted	correct	0.020	0.029	104652800	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/082_RBTree.id_spec	accepted	correct	0.018	0.026	94437376	0.013	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/083_And.right	accepted	correct	0.018	0.025	85901312	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/084_Prod.snd	accepted	correct	0.016	0.020	77447168	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/085_PProd.snd	accepted	correct	0.017	0.022	81555456	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/086_PSigma.snd	accepted	correct	0.025	0.031	77553664	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/087_projOutOfRange	rejected	correct	0.017	0.022	67018752	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/088_projNotStruct	rejected	correct	0.016	0.016	48115712	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/089_projProp1	accepted	correct	0.020	0.026	87756800	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/090_projProp2	rejected	correct	0.017	0.021	67178496	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/091_projProp3	accepted	correct	0.017	0.024	81731584	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/092_projProp4	rejected	correct	0.018	0.025	79527936	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/093_projProp5	rejected	correct	0.017	0.021	77471744	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/094_projProp6	rejected	correct	0.018	0.024	88109056	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/095_projDataIndexRec	accepted	correct	0.018	0.024	89964544	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/096_projIndexData	rejected	correct	0.017	0.024	90112000	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/097_projIndexData2	rejected	correct	0.026	0.032	87994368	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/098_projRed	accepted	correct	0.025	0.030	83750912	0.012	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/099_ruleK	accepted	correct	0.017	0.022	85856256	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/100_ruleKbad	rejected	correct	0.018	0.025	83943424	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/101_ruleKAcc	rejected	correct	0.017	0.024	75522048	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/102_aNatLit	accepted	correct	0.017	0.022	64995328	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/103_natLitEq	accepted	correct	0.017	0.023	81690624	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/104_proofIrrelevance	accepted	correct	0.018	0.025	81657856	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/105_proofIrrelevanceBad	rejected	correct	0.018	0.023	75472896	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/106_proofIrrelevanceWhnf	accepted	correct	0.018	0.025	79618048	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/107_proofIrrelevanceUnderBinder	accepted	correct	0.016	0.021	62840832	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/108_unitEta1	accepted	correct	0.017	0.024	81801216	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/109_unitEta2	accepted	correct	0.018	0.027	90050560	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/110_unitEta3	accepted	correct	0.018	0.025	79437824	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/111_indexedUnitEta	rejected	correct	0.017	0.026	81735680	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/112_structEta	accepted	correct	0.018	0.025	90206208	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/113_indexedStructEta	rejected	correct	0.017	0.024	88002560	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/114_funEta	accepted	correct	0.018	0.024	83746816	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/115_funEtaDep	accepted	correct	0.017	0.024	79351808	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/116_funEtaBad	rejected	correct	0.016	0.019	66977792	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/117_reflOccLeft	rejected	correct	0.016	0.021	60809216	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/118_reflOccInIndex	rejected	correct	0.017	0.022	67026944	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/119_reduceCtorParamRefl.mk	accepted	correct	0.017	0.023	75419648	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/120_reduceCtorParamRefl2.mk	accepted	correct	0.016	0.023	75403264	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/121_rTreeRec	accepted	correct	0.016	0.023	79478784	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/122_rtreeRecReduction	accepted	correct	0.020	0.029	94105600	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/123_accRecType	accepted	correct	0.034	0.025	71245824	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/124_accRecReduction	accepted	correct	0.019	0.027	83836928	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/125_accRecNoEta	rejected	correct	0.018	0.025	94240768	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/126_quotMkType	accepted	correct	0.016	0.021	64729088	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/127_quotIndType	accepted	correct	0.016	0.022	71274496	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/128_quotLiftType	accepted	correct	0.018	0.025	71217152	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/129_quotSoundType	accepted	correct	0.019	0.024	73445376	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/130_quotLiftReduction	accepted	correct	0.019	0.025	77529088	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/131_quotIndReduction	accepted	correct	0.018	0.022	77660160	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/132_dup_defs	rejected	correct	0.018	0.025	37294080	0.010	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/133_dup_ind_def	rejected	correct	0.011	0.011	4136960	0.009	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/134_dup_ctor_def	rejected	correct	0.011	0.011	4055040	0.009	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/135_dup_rec_def	rejected	correct	0.019	0.018	20357120	0.009	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/136_misnamed_rec_user	rejected	correct	0.023	0.029	60690432	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/137_dup_rec_def2	rejected	correct	0.017	0.023	54386688	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/138_dup_ctor_rec	rejected	correct	0.011	0.011	4284416	0.009	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/139_DupConCon	rejected	correct	0.011	0.011	4235264	0.009	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/140_falseFromUnsafe	rejected	correct	0.015	0.021	62910464	0.011	2026-11-24 19:10:13 UTC
+gruszka	0.2.0	tutorial/141_falseFromPartial	rejected	correct	0.018	0.019	50245632	0.011	2026-11-24 19:10:13 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/closure-level-subst	rejected	correct	0.032	0.015	16375808	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/constlevels	rejected	correct	0.008	0.009	22831104	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/ctor-num-fields	rejected	correct	0.009	0.012	39981056	0.005	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/eta-ctor-alias	rejected	correct	0.007	0.008	20766720	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/k-rec-conv	rejected	correct	0.008	0.009	21094400	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/large-elim-param	rejected	correct	0.007	0.008	20578304	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/large-elim-prop-bool	rejected	correct	0.008	0.010	24920064	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/level-imax-leq	rejected	correct	0.007	0.009	22634496	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/level-imax-normalization	rejected	correct	0.007	0.007	22765568	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/loose-bvar-value	rejected	correct	0.007	0.007	16211968	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/nat-rec-k-lie	rejected	correct	0.007	0.009	22974464	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/nat-rec-rules	rejected	correct	0.008	0.009	22884352	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/nat-shift-huge	declined	declined	12.812	28.295	11839922176	72.933	2026-11-22 11:42:55 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/nested-name-capture	rejected	correct	0.008	0.011	31629312	0.005	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/nested-rec-rule-nfields	rejected	correct	0.009	0.011	31498240	0.007	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/nested-unused-param	rejected	correct	0.009	0.012	38068224	0.008	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/open-term-cache-context	rejected	correct	0.008	0.006	12079104	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/orphan-rec	rejected	correct	0.006	0.005	12177408	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/pi-closure-context	rejected	correct	0.010	0.010	14073856	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/proj-non-structure	rejected	correct	0.008	0.009	20668416	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/proj-of-imax-prop	rejected	correct	0.009	0.010	24866816	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/proj-of-stuck-prop	rejected	correct	0.011	0.018	62697472	0.017	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/proj-of-subst-prop	rejected	correct	0.011	0.020	58667008	0.015	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/quot-bad-type	rejected	correct	0.006	0.006	20668416	0.003	2026-11-22 11:42:55 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/rec-k-lie	rejected	correct	0.007	0.008	22855680	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/rec-missing-ih	rejected	correct	0.012	0.020	66580480	0.018	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/rec-of-subst-prop	rejected	correct	0.012	0.020	71323648	0.016	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/rec-rule-proof-irrel	rejected	correct	0.008	0.011	25137152	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/rec-rule-proof-irrel-nested	rejected	correct	0.009	0.010	33931264	0.009	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/rec-rule-wrong-arg	rejected	correct	0.031	0.018	29315072	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/rec-type-proof-irrel	rejected	correct	0.008	0.010	29155328	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/str-lit-utf8	accepted	correct	0.010	0.020	91869184	0.030	2026-11-22 11:42:55 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/str-lit-utf8-bad	rejected	correct	0.011	0.020	96002048	0.032	2026-11-22 11:42:55 UTC
+nano-lean	v0.4.2 (5cd4a25)	bugs/unit-rec-rule	rejected	correct	0.008	0.010	25067520	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	cedar	accepted	correct	5.455	18.334	1552363520	63.175	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	con-leche	accepted	correct	4.631	16.454	1906585600	61.897	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/alg-conv-trans-acc	rejected	either	0.010	0.013	39886848	0.007	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/alg-conv-trans-acc-left	accepted	either	0.009	0.011	33812480	0.006	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/alg-conv-trans-acc-right	accepted	either	0.009	0.015	39628800	0.007	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/alg-conv-trans-quot	rejected	either	0.008	0.009	18505728	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/alg-conv-trans-quot-left	rejected	either	0.008	0.008	20754432	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/alg-conv-trans-quot-left-def	accepted	either	0.009	0.010	25092096	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/alg-conv-trans-quot-right	accepted	either	0.009	0.008	20717568	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/eta-ctor	rejected	either	0.009	0.008	20824064	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/eta-rec-struct	rejected	either	0.009	0.011	24973312	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/eta-rule-k	rejected	either	0.008	0.009	20688896	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/eta-struct-major-and	rejected	either	0.009	0.009	24666112	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/eta-struct-major-and-no-whnf	declined	declined	3.118	3.085	3785359360	20.984	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/eta-struct-major-no-whnf	declined	declined	2.009	2.006	3787141120	20.985	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/eta-unit-like-nested	rejected	either	0.008	0.010	29077504	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/eta-unit-like-pi	rejected	either	0.007	0.007	20668416	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/eta-unit-like-proof-field	rejected	either	0.008	0.009	24936448	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/eta-unit-like-struct	rejected	either	0.007	0.008	22831104	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/imax-nested-absorption	accepted	either	0.007	0.005	10706944	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/imax-right-successor	accepted	either	0.007	0.006	10682368	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/large-elim-maybe-prop	rejected	either	0.007	0.007	18427904	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/let-value-type-mismatch	rejected	either	0.007	0.005	10752000	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/nested-nonuniform-param	accepted	either	0.008	0.009	25063424	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/nested-redex-aux	accepted	either	0.009	0.011	31395840	0.005	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/positivity-whnf	rejected	either	0.008	0.009	20639744	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/proj-maybe-prop	accepted	either	0.007	0.009	24920064	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/proj-maybe-prop-past	accepted	either	0.007	0.009	25296896	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/proof-param-ok	accepted	correct	0.007	0.006	14008320	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/proof-param-swap	rejected	either	0.007	0.006	14290944	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/subject-reduction-redex	accepted	either	0.010	0.013	39985152	0.007	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/subject-reduction-reduct	rejected	either	0.010	0.010	25214976	0.006	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	corner-cases/vanishing-occurrence	accepted	either	0.008	0.008	18497536	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	cslib	accepted	correct	13.509	44.018	2617319424	141.419	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	init	accepted	correct	1.791	6.297	954462208	24.318	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	init-prelude	accepted	correct	0.021	0.053	171225088	0.163	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	mathlib	accepted	correct	36.835	121.617	5368479744	394.885	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	navier-stokes-euler	accepted	correct	8.362	29.775	2121977856	103.476	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	other/extra-rec	rejected	correct	0.008	0.007	11845632	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	other/inductive-undeclared-universe	rejected	correct	0.007	0.007	12808192	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	other/level-index-out-of-order	accepted	correct	0.007	0.005	8704000	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	other/nat-lit-add	accepted	correct	0.010	0.012	29675520	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	other/nat-lit-add-bad	rejected	correct	0.009	0.011	29605888	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	other/nat-lit-ble	accepted	correct	0.010	0.012	31592448	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	other/nat-lit-sub	accepted	correct	0.009	0.012	31363072	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	other/orphan-ctor	rejected	correct	0.007	0.007	12124160	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	other/proj-of-prop	rejected	correct	0.006	0.007	16470016	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	other/sparse-name-index	accepted	correct	0.007	0.005	8658944	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/app-lam	accepted	correct	0.017	0.018	69136384	0.045	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/args-before-unfold	accepted	correct	0.007	0.008	31485952	0.009	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/beta-ladder	accepted	correct	0.012	0.014	48472064	0.023	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/church-numerals	accepted	correct	0.007	0.008	33333248	0.022	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/discarded-argument	accepted	correct	0.005	0.007	24920064	0.004	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/discarded-argument-match	accepted	correct	0.005	0.005	22913024	0.004	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/folded-constant-first	accepted	correct	0.007	0.009	37203968	0.011	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/folded-constant-last	accepted	correct	0.008	0.010	45527040	0.011	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/fueled-chain	accepted	correct	0.019	0.036	124764160	0.142	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/gf3-matrix-product	accepted	correct	0.814	0.809	3886759936	5.009	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/grind-ring-5	accepted	correct	0.170	0.287	345206784	1.293	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/identical-nesting	accepted	correct	0.006	0.006	22745088	0.003	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/irrelevance-before-evaluation	accepted	correct	0.006	0.007	28962816	0.004	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/irrelevance-refutes	accepted	correct	0.006	0.007	25219072	0.004	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/ite-taken-branch	accepted	correct	0.029	0.074	187580416	0.247	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/ite-taken-branch-bad	rejected	correct	0.200	0.243	339787776	1.636	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/let-fold	accepted	correct	0.009	0.017	72658944	0.019	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/let-ladder	accepted	correct	0.010	0.012	53821440	0.019	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/loop-unfolded-once	accepted	correct	0.027	0.073	191328256	0.227	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/loop-unfolded-once-bad	rejected	correct	0.028	0.069	174579712	0.258	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/magma-list-deep-n21	accepted	correct	0.036	0.054	151162880	0.299	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/magma-list-deep-n36	accepted	correct	0.345	0.359	464338944	2.544	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/magma-list-pair-n21	accepted	correct	2.995	3.002	1981353984	13.350	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/magma-list-pair-n7	accepted	correct	0.290	0.302	293654528	1.186	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/magma-string-n4	accepted	correct	0.167	0.469	391262208	1.404	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/magma-string-pair-n9	accepted	correct	0.328	0.569	518508544	2.923	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/proj-app-lazy-delta	accepted	correct	0.007	0.011	50208768	0.008	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/proj-applied-struct	accepted	correct	0.007	0.010	42504192	0.008	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/proj-applied-struct-arg-bad	rejected	correct	1.293	3.783	3448295424	15.919	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/proj-applied-struct-bad	rejected	correct	0.982	0.982	1206558720	5.308	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/proj-cheap-struct	accepted	correct	0.018	0.011	41578496	0.007	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/proj-lazy-struct	accepted	correct	0.006	0.009	33370112	0.006	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/proj-stuck-struct	accepted	correct	0.006	0.008	29704192	0.005	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/prop-struct-projections	accepted	correct	0.013	0.031	128684032	0.063	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/refute-cheap-first	rejected	correct	0.006	0.008	29286400	0.004	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/refute-cheap-last	rejected	correct	0.007	0.009	33529856	0.013	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/repeated-subproblem	accepted	correct	0.006	0.007	27127808	0.004	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/shared-subterm	accepted	correct	0.009	0.010	47628288	0.027	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/shift-cascade	accepted	correct	0.007	0.008	38195200	0.013	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/short-circuit-and	accepted	correct	0.027	0.071	194297856	0.241	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/short-circuit-and-bad	rejected	correct	0.157	0.197	310132736	1.051	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/unfold-before-literal	accepted	correct	1.311	3.850	3395448832	15.910	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/unfold-before-literal-bad	rejected	correct	0.994	0.993	1190998016	5.308	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/unfold-before-literal-fallback	accepted	correct	1.310	3.878	3368382464	15.913	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	perf/unroll-versus-evaluate	accepted	correct	0.006	0.007	27287552	0.005	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	reachability	accepted	correct	0.921	2.361	1373933568	11.504	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	std	accepted	correct	3.119	10.888	1186775040	40.259	2026-11-22 02:03:06 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/001_basicDef	accepted	correct	0.006	0.004	8675328	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/002_badDef	rejected	correct	0.006	0.005	8597504	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/003_arrowType	accepted	correct	0.006	0.005	11874304	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/004_dependentType	accepted	correct	0.007	0.006	10031104	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/005_constType	accepted	correct	0.006	0.005	12099584	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/006_betaReduction	accepted	correct	0.010	0.009	12050432	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/007_betaReduction2	accepted	correct	0.006	0.005	12005376	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/008_forallSortWhnf	accepted	correct	0.006	0.005	12079104	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/009_forallSortBad	rejected	correct	0.007	0.006	12222464	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/010_nonTypeType	rejected	correct	0.008	0.006	12963840	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/011_nonTypeAxiom	rejected	correct	0.007	0.006	12840960	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/012_nonPropThm	rejected	correct	0.006	0.005	8523776	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/013_thmProof	accepted	correct	0.007	0.006	12304384	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/014_selfProof	rejected	correct	0.007	0.005	9908224	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/015_levelComp1	accepted	correct	0.007	0.005	8691712	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/016_levelComp2	accepted	correct	0.007	0.005	8679424	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/017_levelComp3	accepted	correct	0.007	0.005	8622080	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/018_levelParams	accepted	correct	0.006	0.005	12058624	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/019_tut06_bad01	rejected	correct	0.006	0.005	8830976	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/020_levelComp4	accepted	correct	0.006	0.004	8728576	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/021_levelComp5	accepted	correct	0.006	0.005	8564736	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/022_imax1	accepted	correct	0.007	0.005	12079104	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/023_imax2	accepted	correct	0.007	0.005	12148736	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/024_levelMaxComm	accepted	correct	0.008	0.005	10854400	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/025_levelMaxAssoc	accepted	correct	0.006	0.005	10690560	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/026_levelMaxIdem	accepted	correct	0.043	0.011	8445952	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/027_levelMaxAbsorb	accepted	correct	0.007	0.005	10874880	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/028_inferVar	accepted	correct	0.007	0.006	11935744	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/029_defEqLambda	accepted	correct	0.008	0.006	11993088	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/030_peano1	accepted	correct	0.007	0.008	18296832	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/031_peano2	accepted	correct	0.008	0.008	18456576	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/032_peano3	accepted	correct	0.007	0.008	20602880	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/033_letType	accepted	correct	0.007	0.005	10121216	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/034_letTypeDep	accepted	correct	0.007	0.006	14450688	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/035_letRed	accepted	correct	0.007	0.006	12136448	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/036_empty	accepted	correct	0.007	0.006	12021760	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/037_boolType	accepted	correct	0.007	0.007	16306176	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/038_twoBool	accepted	correct	0.006	0.006	16617472	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/039_andType	accepted	correct	0.007	0.007	16535552	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/040_prodType	accepted	correct	0.006	0.006	16543744	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/041_pprodType	accepted	correct	0.008	0.009	16416768	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/042_pUnitType	accepted	correct	0.007	0.007	14258176	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/043_eqType	accepted	correct	0.007	0.008	16302080	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/044_natDef	accepted	correct	0.007	0.007	14508032	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/045_rbTreeDef	accepted	correct	0.009	0.008	22851584	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/046_inductBadNonSort	rejected	correct	0.006	0.005	14606336	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/047_inductBadNonSort2	rejected	correct	0.006	0.005	9895936	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/048_inductLevelParam	rejected	correct	0.007	0.005	8687616	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/049_inductTooFewParams	rejected	correct	0.006	0.005	12140544	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/050_inductWrongCtorParams	rejected	correct	0.007	0.006	14061568	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/051_inductWrongCtorResParams	rejected	correct	0.007	0.006	14069760	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/052_inductWrongCtorResLevel	rejected	correct	0.008	0.006	13938688	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/053_inductInIndex	rejected	correct	0.015	0.014	14405632	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/054_indNeg	rejected	correct	0.007	0.006	14020608	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/055_reduceCtorParam.mk	accepted	correct	0.007	0.007	16330752	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/056_reduceCtorType.mk	rejected	correct	0.007	0.007	14237696	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/057_indNegReducible	rejected	correct	0.007	0.007	13971456	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/058_predWithTypeField	accepted	correct	0.006	0.006	14196736	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/059_typeWithTypeField	accepted	correct	0.007	0.007	14209024	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/060_typeWithTypeFieldPoly	accepted	correct	0.007	0.006	14168064	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/061_typeWithTooHighTypeField.mk	rejected	correct	0.007	0.006	11948032	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/062_emptyRec	accepted	correct	0.005	0.005	14163968	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/063_boolRec	accepted	correct	0.007	0.007	18407424	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/064_twoBoolRec	accepted	correct	0.006	0.007	18468864	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/065_andRec	accepted	correct	0.005	0.005	16072704	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/066_prodRec	accepted	correct	0.006	0.006	18563072	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/067_pprodRec	accepted	correct	0.007	0.007	16478208	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/068_punitRec	accepted	correct	0.007	0.007	16338944	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/069_eqRec	accepted	correct	0.006	0.006	18743296	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/070_nRec	accepted	correct	0.006	0.006	18677760	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/071_rbTreeRef	accepted	correct	0.008	0.009	25088000	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/072_boolPropRec	accepted	correct	0.005	0.005	16199680	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/073_BogusRecursor	rejected	correct	0.007	0.007	14151680	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/074_existsRec	accepted	correct	0.007	0.007	18456576	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/075_typeSingletonRecReduction	accepted	correct	0.006	0.007	22704128	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/076_sortElimPropRec	accepted	correct	0.006	0.007	20742144	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/077_sortElimProp2Rec	accepted	correct	0.006	0.007	20516864	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/078_boolRecEqns	accepted	correct	0.007	0.009	24788992	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/079_prodRecEqns	accepted	correct	0.007	0.007	22933504	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/080_nRecReduction	accepted	correct	0.007	0.009	23158784	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/081_listRecReduction	accepted	correct	0.040	0.010	26923008	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/082_RBTree.id_spec	accepted	correct	0.007	0.010	28725248	0.005	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/083_And.right	accepted	correct	0.006	0.006	20856832	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/084_Prod.snd	accepted	correct	0.006	0.006	18300928	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/085_PProd.snd	accepted	correct	0.007	0.007	18415616	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/086_PSigma.snd	accepted	correct	0.006	0.007	18370560	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/087_projOutOfRange	rejected	correct	0.007	0.007	18673664	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/088_projNotStruct	rejected	correct	0.006	0.006	16515072	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/089_projProp1	accepted	correct	0.007	0.008	22708224	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/090_projProp2	rejected	correct	0.007	0.008	22884352	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/091_projProp3	accepted	correct	0.007	0.008	22654976	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/092_projProp4	rejected	correct	0.007	0.008	22704128	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/093_projProp5	rejected	correct	0.007	0.009	24739840	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/094_projProp6	rejected	correct	0.007	0.008	20811776	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/095_projDataIndexRec	accepted	correct	0.007	0.008	20504576	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/096_projIndexData	rejected	correct	0.007	0.009	29134848	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/097_projIndexData2	rejected	correct	0.008	0.010	27234304	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/098_projRed	accepted	correct	0.008	0.009	24961024	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/099_ruleK	accepted	correct	0.007	0.008	18468864	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/100_ruleKbad	rejected	correct	0.007	0.008	22695936	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/101_ruleKAcc	rejected	correct	0.008	0.009	23113728	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/102_aNatLit	accepted	correct	0.007	0.007	16183296	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/103_natLitEq	accepted	correct	0.008	0.008	22654976	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/104_proofIrrelevance	accepted	correct	0.008	0.008	20541440	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/105_proofIrrelevanceBad	rejected	correct	0.005	0.006	18440192	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/106_proofIrrelevanceWhnf	accepted	correct	0.005	0.006	18276352	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/107_proofIrrelevanceUnderBinder	accepted	correct	0.006	0.006	14352384	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/108_unitEta1	accepted	correct	0.006	0.006	16744448	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/109_unitEta2	accepted	correct	0.006	0.007	22888448	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/110_unitEta3	accepted	correct	0.006	0.007	24940544	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/111_indexedUnitEta	rejected	correct	0.027	0.013	23056384	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/112_structEta	accepted	correct	0.006	0.007	23138304	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/113_indexedStructEta	rejected	correct	0.007	0.008	22642688	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/114_funEta	accepted	correct	0.007	0.007	20574208	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/115_funEtaDep	accepted	correct	0.006	0.007	20733952	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/116_funEtaBad	rejected	correct	0.006	0.005	18296832	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/117_reflOccLeft	rejected	correct	0.006	0.006	18444288	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/118_reflOccInIndex	rejected	correct	0.006	0.006	18563072	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/119_reduceCtorParamRefl.mk	accepted	correct	0.007	0.007	16199680	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/120_reduceCtorParamRefl2.mk	accepted	correct	0.006	0.007	16338944	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/121_rTreeRec	accepted	correct	0.007	0.007	20647936	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/122_rtreeRecReduction	accepted	correct	0.007	0.008	24842240	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/123_accRecType	accepted	correct	0.007	0.006	18411520	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/124_accRecReduction	accepted	correct	0.008	0.009	21090304	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/125_accRecNoEta	rejected	correct	0.009	0.010	21295104	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/126_quotMkType	accepted	correct	0.008	0.009	18604032	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/127_quotIndType	accepted	correct	0.008	0.009	20402176	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/128_quotLiftType	accepted	correct	0.007	0.008	20406272	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/129_quotSoundType	accepted	correct	0.008	0.009	22884352	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/130_quotLiftReduction	accepted	correct	0.007	0.008	20754432	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/131_quotIndReduction	accepted	correct	0.008	0.008	22773760	0.004	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/132_dup_defs	rejected	correct	0.006	0.005	8835072	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/133_dup_ind_def	rejected	correct	0.006	0.005	10833920	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/134_dup_ctor_def	rejected	correct	0.005	0.004	10969088	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/135_dup_rec_def	rejected	correct	0.006	0.005	10719232	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/136_misnamed_rec_user	rejected	correct	0.008	0.008	14254080	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/137_dup_rec_def2	rejected	correct	0.006	0.006	12103680	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/138_dup_ctor_rec	rejected	correct	0.026	0.004	10780672	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/139_DupConCon	rejected	correct	0.006	0.004	12996608	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/140_falseFromUnsafe	rejected	correct	0.007	0.005	10784768	0.003	2026-11-20 09:50:42 UTC
+nano-lean	v0.4.2 (5cd4a25)	tutorial/141_falseFromPartial	rejected	correct	0.007	0.005	10842112	0.003	2026-11-20 09:50:42 UTC
+official	v4.35.0	bugs/closure-level-subst	rejected	correct	0.071	0.035	107384832	0.193	2026-11-16 12:54:35 UTC
+official	v4.35.0	bugs/constlevels	rejected	correct	0.043	0.039	106844160	0.198	2026-11-16 12:54:35 UTC
+official	v4.35.0	bugs/ctor-num-fields	rejected	correct	0.117	0.046	97812480	0.213	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/eta-ctor-alias	rejected	correct	0.042	0.038	97935360	0.196	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/k-rec-conv	rejected	correct	0.040	0.036	97890304	0.198	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/large-elim-param	rejected	correct	0.035	0.031	106881024	0.194	2026-11-16 12:54:35 UTC
+official	v4.35.0	bugs/large-elim-prop-bool	rejected	correct	0.041	0.037	97308672	0.199	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/level-imax-leq	rejected	correct	0.036	0.033	107069440	0.194	2026-11-16 12:54:35 UTC
+official	v4.35.0	bugs/level-imax-normalization	rejected	correct	0.039	0.035	107229184	0.194	2026-11-16 12:54:35 UTC
+official	v4.35.0	bugs/loose-bvar-value	rejected	correct	0.035	0.031	106610688	0.192	2026-11-16 12:54:35 UTC
+official	v4.35.0	bugs/nat-rec-k-lie	rejected	correct	0.036	0.033	107536384	0.195	2026-11-16 12:54:35 UTC
+official	v4.35.0	bugs/nat-rec-rules	rejected	correct	0.036	0.033	107925504	0.204	2026-11-16 12:54:35 UTC
+official	v4.35.0	bugs/nat-shift-huge	accepted	correct	0.092	0.054	98316288	0.376	2026-11-22 11:40:58 UTC
+official	v4.35.0	bugs/nested-name-capture	rejected	correct	0.038	0.034	107794432	0.205	2026-11-16 12:54:35 UTC
+official	v4.35.0	bugs/nested-rec-rule-nfields	rejected	correct	0.046	0.042	98029568	0.216	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/nested-unused-param	rejected	correct	0.038	0.035	97939456	0.214	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/open-term-cache-context	rejected	correct	0.041	0.037	97832960	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/orphan-rec	rejected	correct	0.038	0.034	106602496	0.191	2026-11-16 12:54:35 UTC
+official	v4.35.0	bugs/pi-closure-context	rejected	correct	0.036	0.032	107405312	0.192	2026-11-16 12:54:35 UTC
+official	v4.35.0	bugs/proj-non-structure	rejected	correct	0.042	0.037	97808384	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/proj-of-imax-prop	rejected	correct	0.041	0.037	97943552	0.200	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/proj-of-stuck-prop	rejected	correct	0.050	0.047	97972224	0.346	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/proj-of-subst-prop	rejected	correct	0.052	0.048	98115584	0.336	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/quot-bad-type	rejected	correct	0.037	0.031	97480704	0.194	2026-11-22 11:40:58 UTC
+official	v4.35.0	bugs/rec-k-lie	rejected	correct	0.039	0.035	98037760	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/rec-missing-ih	rejected	correct	0.057	0.051	108961792	0.348	2026-11-16 12:54:35 UTC
+official	v4.35.0	bugs/rec-of-subst-prop	rejected	correct	0.051	0.047	98058240	0.345	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/rec-rule-proof-irrel	rejected	correct	0.039	0.035	98181120	0.206	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/rec-rule-proof-irrel-nested	rejected	correct	0.042	0.037	98177024	0.210	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/rec-rule-wrong-arg	rejected	correct	0.042	0.037	98234368	0.204	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/rec-type-proof-irrel	rejected	correct	0.041	0.036	98263040	0.209	2026-11-19 15:53:52 UTC
+official	v4.35.0	bugs/str-lit-utf8	accepted	correct	0.058	0.055	100790272	0.529	2026-11-22 11:40:58 UTC
+official	v4.35.0	bugs/str-lit-utf8-bad	rejected	correct	0.065	0.062	102252544	0.612	2026-11-22 11:40:58 UTC
+official	v4.35.0	bugs/unit-rec-rule	rejected	correct	0.046	0.041	107667456	0.193	2026-11-16 12:54:35 UTC
+official	v4.35.0	cedar	accepted	correct	97.115	96.926	1497088000	883.047	2026-11-22 02:33:23 UTC
+official	v4.35.0	con-leche	accepted	correct	167.536	167.488	7516766208	1296.912	2026-11-22 02:33:23 UTC
+official	v4.35.0	corner-cases/alg-conv-trans-acc	rejected	either	0.046	0.039	98156544	0.232	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/alg-conv-trans-acc-left	accepted	either	0.039	0.035	96870400	0.228	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/alg-conv-trans-acc-right	accepted	either	0.042	0.038	96907264	0.229	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/alg-conv-trans-quot	rejected	either	0.042	0.038	98009088	0.205	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/alg-conv-trans-quot-left	rejected	either	0.040	0.036	97906688	0.205	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/alg-conv-trans-quot-left-def	accepted	either	0.041	0.036	96890880	0.196	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/alg-conv-trans-quot-right	accepted	either	0.039	0.034	96751616	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/eta-ctor	rejected	either	0.041	0.036	98058240	0.198	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/eta-rec-struct	rejected	either	0.041	0.036	98037760	0.199	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/eta-rule-k	rejected	either	0.040	0.036	98246656	0.197	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/eta-struct-major-and	rejected	either	0.043	0.039	98287616	0.201	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/eta-struct-major-and-no-whnf	timeout	error	60.019	0.000	0	0.000	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/eta-struct-major-no-whnf	timeout	error	60.019	0.000	0	0.000	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/eta-unit-like-nested	rejected	either	0.043	0.039	98025472	0.201	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/eta-unit-like-pi	rejected	either	0.043	0.039	98058240	0.196	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/eta-unit-like-proof-field	rejected	either	0.047	0.041	97869824	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/eta-unit-like-struct	rejected	either	0.040	0.037	97894400	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/imax-nested-absorption	rejected	either	0.040	0.036	97550336	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/imax-right-successor	rejected	either	0.040	0.036	97607680	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/large-elim-maybe-prop	rejected	either	0.033	0.029	106868736	0.193	2026-11-16 12:54:35 UTC
+official	v4.35.0	corner-cases/let-value-type-mismatch	rejected	either	0.032	0.029	106586112	0.191	2026-11-16 12:54:35 UTC
+official	v4.35.0	corner-cases/nested-nonuniform-param	rejected	either	0.040	0.035	97521664	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/nested-redex-aux	accepted	either	0.041	0.036	96911360	0.215	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/positivity-whnf	rejected	either	0.033	0.029	107008000	0.193	2026-11-16 12:54:35 UTC
+official	v4.35.0	corner-cases/proj-maybe-prop	accepted	either	0.041	0.037	96739328	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/proj-maybe-prop-past	accepted	either	0.041	0.037	96784384	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/proof-param-ok	accepted	correct	0.032	0.029	106192896	0.192	2026-11-16 12:54:35 UTC
+official	v4.35.0	corner-cases/proof-param-swap	rejected	either	0.032	0.028	106598400	0.192	2026-11-16 12:54:35 UTC
+official	v4.35.0	corner-cases/subject-reduction-redex	accepted	either	0.047	0.043	96911360	0.228	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/subject-reduction-reduct	rejected	either	0.044	0.039	98193408	0.229	2026-11-19 15:53:52 UTC
+official	v4.35.0	corner-cases/vanishing-occurrence	accepted	either	0.044	0.037	96739328	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	cslib	accepted	correct	485.505	485.434	3769131008	3396.513	2026-11-22 02:33:23 UTC
+official	v4.35.0	init	accepted	correct	46.685	46.672	620298240	401.488	2026-11-22 02:33:23 UTC
+official	v4.35.0	init-prelude	accepted	correct	0.204	0.199	104480768	2.282	2026-11-22 02:33:23 UTC
+official	v4.35.0	mathlib	accepted	correct	2234.369	2233.877	10634473472	12095.308	2026-11-22 02:33:23 UTC
+official	v4.35.0	navier-stokes-euler	accepted	correct	675.663	675.553	2664697856	4031.472	2026-11-22 02:33:23 UTC
+official	v4.35.0	other/extra-rec	rejected	correct	0.034	0.030	106737664	0.191	2026-11-16 12:54:35 UTC
+official	v4.35.0	other/inductive-undeclared-universe	rejected	correct	0.036	0.031	106647552	0.192	2026-11-16 12:54:35 UTC
+official	v4.35.0	other/level-index-out-of-order	accepted	correct	0.034	0.030	106053632	0.191	2026-11-16 12:54:35 UTC
+official	v4.35.0	other/nat-lit-add	accepted	correct	0.045	0.037	96829440	0.203	2026-11-19 15:53:52 UTC
+official	v4.35.0	other/nat-lit-add-bad	rejected	correct	0.040	0.036	98037760	0.205	2026-11-19 15:53:52 UTC
+official	v4.35.0	other/nat-lit-ble	accepted	correct	0.040	0.036	96624640	0.205	2026-11-19 15:53:52 UTC
+official	v4.35.0	other/nat-lit-sub	accepted	correct	0.043	0.038	96813056	0.205	2026-11-19 15:53:52 UTC
+official	v4.35.0	other/orphan-ctor	rejected	correct	0.034	0.030	106864640	0.191	2026-11-16 12:54:35 UTC
+official	v4.35.0	other/proj-of-prop	rejected	correct	0.040	0.036	98013184	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	other/sparse-name-index	accepted	correct	0.033	0.030	106020864	0.191	2026-11-16 12:54:35 UTC
+official	v4.35.0	perf/app-lam	accepted	correct	2.388	2.379	1527410688	29.195	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/args-before-unfold	accepted	correct	0.037	0.034	96657408	0.242	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/beta-ladder	accepted	correct	0.780	0.775	551313408	10.033	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/church-numerals	accepted	correct	0.047	0.044	109486080	0.308	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/discarded-argument	accepted	correct	0.128	0.088	96100352	1.015	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/discarded-argument-match	accepted	correct	0.071	0.067	98242560	0.876	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/folded-constant-first	accepted	correct	0.041	0.038	99336192	0.270	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/folded-constant-last	accepted	correct	0.041	0.037	99356672	0.270	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/fueled-chain	accepted	correct	0.081	0.076	106635264	0.802	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/gf3-matrix-product	accepted	correct	2.735	2.730	3810930688	10.907	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/grind-ring-5	accepted	correct	1.375	1.369	266108928	13.102	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/identical-nesting	accepted	correct	0.041	0.037	96124928	0.195	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/irrelevance-before-evaluation	accepted	correct	0.042	0.038	96059392	0.199	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/irrelevance-refutes	accepted	correct	0.039	0.034	96227328	0.197	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/ite-taken-branch	accepted	correct	16.368	16.355	1789927424	116.481	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/ite-taken-branch-bad	rejected	correct	5.978	5.965	1773953024	40.638	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/let-fold	accepted	correct	0.056	0.052	98709504	0.377	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/let-ladder	accepted	correct	0.493	0.487	346279936	6.055	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/loop-unfolded-once	accepted	correct	0.275	0.269	106815488	3.146	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/loop-unfolded-once-bad	rejected	correct	6.891	6.849	108609536	85.462	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/magma-list-deep-n21	accepted	correct	2.250	2.243	721752064	16.175	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/magma-list-deep-n36	accepted	correct	42.838	42.774	8362725376	212.726	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/magma-list-pair-n21	accepted	correct	20.762	20.742	4259831808	111.311	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/magma-list-pair-n7	accepted	correct	1.748	1.740	476590080	10.258	2026-11-19 15:53:52 UTC
+official	v4.35.0	perf/magma-string-n4	accepted	correct	2.550	2.543	156766208	21.472	2026-11-19 15:53:52 UTC
+official	v4.35.0	perf/magma-string-pair-n9	accepted	correct	6.554	6.544	1057366016	49.282	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/proj-app-lazy-delta	accepted	correct	2.530	2.524	641826816	12.490	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/proj-applied-struct	accepted	correct	21.301	21.291	1522757632	84.159	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/proj-applied-struct-arg-bad	rejected	correct	6.990	6.982	1523187712	28.151	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/proj-applied-struct-bad	rejected	correct	7.298	7.287	1523261440	29.260	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/proj-cheap-struct	accepted	correct	0.044	0.040	96591872	0.234	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/proj-lazy-struct	accepted	correct	0.045	0.039	96620544	0.213	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/proj-stuck-struct	accepted	correct	0.042	0.037	96608256	0.216	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/prop-struct-projections	accepted	correct	0.069	0.065	100904960	0.625	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/refute-cheap-first	rejected	correct	0.047	0.042	98021376	0.247	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/refute-cheap-last	rejected	correct	0.096	0.091	98021376	1.080	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/repeated-subproblem	accepted	correct	0.042	0.037	96698368	0.197	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/shared-subterm	accepted	correct	0.054	0.049	104116224	0.371	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/shift-cascade	accepted	correct	0.049	0.044	98979840	0.305	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/short-circuit-and	accepted	correct	18.060	18.046	1629618176	104.978	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/short-circuit-and-bad	rejected	correct	6.385	6.375	1629143040	37.062	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/unfold-before-literal	accepted	correct	21.344	21.332	1522642944	86.837	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/unfold-before-literal-bad	rejected	correct	7.308	7.300	1523314688	29.192	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/unfold-before-literal-fallback	accepted	correct	22.397	22.385	1522749440	87.092	2026-11-22 02:33:23 UTC
+official	v4.35.0	perf/unroll-versus-evaluate	accepted	correct	0.042	0.037	96837632	0.212	2026-11-22 02:33:23 UTC
+official	v4.35.0	reachability	accepted	correct	25.239	25.223	1749790720	141.266	2026-11-22 02:33:23 UTC
+official	v4.35.0	std	accepted	correct	87.869	87.846	985620480	665.615	2026-11-22 02:33:23 UTC
+official	v4.35.0	tutorial/001_basicDef	accepted	correct	0.047	0.042	96694272	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/002_badDef	rejected	correct	0.053	0.047	97574912	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/003_arrowType	accepted	correct	0.052	0.046	96755712	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/004_dependentType	accepted	correct	0.051	0.046	96755712	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/005_constType	accepted	correct	0.056	0.051	96755712	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/006_betaReduction	accepted	correct	0.049	0.042	96800768	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/007_betaReduction2	accepted	correct	0.049	0.044	96661504	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/008_forallSortWhnf	accepted	correct	0.053	0.047	96522240	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/009_forallSortBad	rejected	correct	0.041	0.037	98054144	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/010_nonTypeType	rejected	correct	0.047	0.042	97808384	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/011_nonTypeAxiom	rejected	correct	0.057	0.052	97808384	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/012_nonPropThm	rejected	correct	0.056	0.051	97677312	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/013_thmProof	accepted	correct	0.054	0.049	96624640	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/014_selfProof	rejected	correct	0.049	0.043	97357824	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/015_levelComp1	accepted	correct	0.049	0.045	96694272	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/016_levelComp2	accepted	correct	0.040	0.036	96714752	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/017_levelComp3	accepted	correct	0.039	0.035	96657408	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/018_levelParams	accepted	correct	0.044	0.039	96624640	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/019_tut06_bad01	rejected	correct	0.048	0.043	97304576	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/020_levelComp4	accepted	correct	0.050	0.045	96694272	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/021_levelComp5	accepted	correct	0.047	0.041	96567296	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/022_imax1	accepted	correct	0.055	0.050	96759808	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/023_imax2	accepted	correct	0.048	0.041	96759808	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/024_levelMaxComm	accepted	correct	0.049	0.043	96698368	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/025_levelMaxAssoc	accepted	correct	0.045	0.040	96559104	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/026_levelMaxIdem	accepted	correct	0.048	0.042	96567296	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/027_levelMaxAbsorb	accepted	correct	0.053	0.046	96731136	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/028_inferVar	accepted	correct	0.049	0.043	96628736	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/029_defEqLambda	accepted	correct	0.055	0.048	96800768	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/030_peano1	accepted	correct	0.049	0.044	96694272	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/031_peano2	accepted	correct	0.048	0.044	96526336	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/032_peano3	accepted	correct	0.044	0.039	96571392	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/033_letType	accepted	correct	0.050	0.045	96694272	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/034_letTypeDep	accepted	correct	0.048	0.043	96624640	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/035_letRed	accepted	correct	0.053	0.048	96526336	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/036_empty	accepted	correct	0.046	0.041	96681984	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/037_boolType	accepted	correct	0.046	0.041	96825344	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/038_twoBool	accepted	correct	0.064	0.043	96784384	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/039_andType	accepted	correct	0.050	0.045	96690176	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/040_prodType	accepted	correct	0.049	0.044	96747520	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/041_pprodType	accepted	correct	0.050	0.044	96591872	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/042_pUnitType	accepted	correct	0.050	0.045	96870400	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/043_eqType	accepted	correct	0.046	0.041	96927744	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/044_natDef	accepted	correct	0.052	0.046	96890880	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/045_rbTreeDef	accepted	correct	0.050	0.045	96747520	0.199	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/046_inductBadNonSort	rejected	correct	0.043	0.036	97845248	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/047_inductBadNonSort2	rejected	correct	0.047	0.041	97812480	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/048_inductLevelParam	rejected	correct	0.056	0.050	97366016	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/049_inductTooFewParams	rejected	correct	0.042	0.037	97431552	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/050_inductWrongCtorParams	rejected	correct	0.043	0.038	97366016	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/051_inductWrongCtorResParams	rejected	correct	0.060	0.054	97370112	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/052_inductWrongCtorResLevel	rejected	correct	0.048	0.043	97366016	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/053_inductInIndex	rejected	correct	0.056	0.049	97452032	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/054_indNeg	rejected	correct	0.053	0.047	97406976	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/055_reduceCtorParam.mk	accepted	correct	0.051	0.046	96829440	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/056_reduceCtorType.mk	rejected	correct	0.048	0.042	97333248	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/057_indNegReducible	rejected	correct	0.055	0.049	97546240	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/058_predWithTypeField	accepted	correct	0.048	0.043	96628736	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/059_typeWithTypeField	accepted	correct	0.045	0.040	96890880	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/060_typeWithTypeFieldPoly	accepted	correct	0.045	0.040	96825344	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/061_typeWithTooHighTypeField.mk	rejected	correct	0.060	0.053	97304576	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/062_emptyRec	accepted	correct	0.052	0.046	96759808	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/063_boolRec	accepted	correct	0.055	0.048	96698368	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/064_twoBoolRec	accepted	correct	0.051	0.045	96755712	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/065_andRec	accepted	correct	0.054	0.049	96694272	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/066_prodRec	accepted	correct	0.043	0.039	96665600	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/067_pprodRec	accepted	correct	0.045	0.040	96714752	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/068_punitRec	accepted	correct	0.050	0.046	96649216	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/069_eqRec	accepted	correct	0.050	0.044	96628736	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/070_nRec	accepted	correct	0.039	0.035	96755712	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/071_rbTreeRef	accepted	correct	0.040	0.035	96886784	0.200	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/072_boolPropRec	accepted	correct	0.041	0.037	96518144	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/073_BogusRecursor	rejected	correct	0.047	0.042	97320960	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/074_existsRec	accepted	correct	0.044	0.039	96821248	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/075_typeSingletonRecReduction	accepted	correct	0.048	0.043	96804864	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/076_sortElimPropRec	accepted	correct	0.043	0.039	96825344	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/077_sortElimProp2Rec	accepted	correct	0.063	0.040	96698368	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/078_boolRecEqns	accepted	correct	0.039	0.035	96755712	0.196	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/079_prodRecEqns	accepted	correct	0.044	0.040	96702464	0.196	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/080_nRecReduction	accepted	correct	0.042	0.038	96669696	0.197	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/081_listRecReduction	accepted	correct	0.048	0.043	96788480	0.200	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/082_RBTree.id_spec	accepted	correct	0.045	0.041	96698368	0.218	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/083_And.right	accepted	correct	0.043	0.039	96530432	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/084_Prod.snd	accepted	correct	0.041	0.036	96825344	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/085_PProd.snd	accepted	correct	0.039	0.035	96415744	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/086_PSigma.snd	accepted	correct	0.042	0.037	96825344	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/087_projOutOfRange	rejected	correct	0.043	0.039	97927168	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/088_projNotStruct	rejected	correct	0.042	0.038	97808384	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/089_projProp1	accepted	correct	0.043	0.039	96628736	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/090_projProp2	rejected	correct	0.043	0.038	98074624	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/091_projProp3	accepted	correct	0.043	0.038	96755712	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/092_projProp4	rejected	correct	0.045	0.041	98070528	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/093_projProp5	rejected	correct	0.045	0.041	98070528	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/094_projProp6	rejected	correct	0.043	0.038	97943552	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/095_projDataIndexRec	accepted	correct	0.044	0.039	96710656	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/096_projIndexData	rejected	correct	0.049	0.042	97910784	0.198	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/097_projIndexData2	rejected	correct	0.040	0.036	97964032	0.198	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/098_projRed	accepted	correct	0.044	0.040	96829440	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/099_ruleK	accepted	correct	0.041	0.037	96694272	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/100_ruleKbad	rejected	correct	0.045	0.040	98152448	0.197	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/101_ruleKAcc	rejected	correct	0.049	0.043	98070528	0.203	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/102_aNatLit	accepted	correct	0.044	0.039	96825344	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/103_natLitEq	accepted	correct	0.044	0.038	96886784	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/104_proofIrrelevance	accepted	correct	0.044	0.039	96677888	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/105_proofIrrelevanceBad	rejected	correct	0.048	0.043	97812480	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/106_proofIrrelevanceWhnf	accepted	correct	0.042	0.037	96616448	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/107_proofIrrelevanceUnderBinder	accepted	correct	0.046	0.041	96509952	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/108_unitEta1	accepted	correct	0.043	0.038	96858112	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/109_unitEta2	accepted	correct	0.041	0.037	96694272	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/110_unitEta3	accepted	correct	0.042	0.038	96763904	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/111_indexedUnitEta	rejected	correct	0.038	0.034	98205696	0.196	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/112_structEta	accepted	correct	0.040	0.036	96825344	0.197	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/113_indexedStructEta	rejected	correct	0.039	0.035	98185216	0.197	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/114_funEta	accepted	correct	0.042	0.038	96817152	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/115_funEtaDep	accepted	correct	0.044	0.040	96608256	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/116_funEtaBad	rejected	correct	0.050	0.045	98070528	0.197	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/117_reflOccLeft	rejected	correct	0.051	0.046	97513472	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/118_reflOccInIndex	rejected	correct	0.052	0.046	97804288	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/119_reduceCtorParamRefl.mk	accepted	correct	0.054	0.049	96755712	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/120_reduceCtorParamRefl2.mk	accepted	correct	0.090	0.050	96763904	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/121_rTreeRec	accepted	correct	0.048	0.042	96886784	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/122_rtreeRecReduction	accepted	correct	0.057	0.052	96784384	0.196	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/123_accRecType	accepted	correct	0.058	0.051	96518144	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/124_accRecReduction	accepted	correct	0.055	0.050	96890880	0.198	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/125_accRecNoEta	rejected	correct	0.053	0.047	98201600	0.203	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/126_quotMkType	accepted	correct	0.046	0.040	96567296	0.193	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/127_quotIndType	accepted	correct	0.053	0.048	96612352	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/128_quotLiftType	accepted	correct	0.056	0.050	96763904	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/129_quotSoundType	accepted	correct	0.053	0.048	96890880	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/130_quotLiftReduction	accepted	correct	0.049	0.043	96886784	0.195	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/131_quotIndReduction	accepted	correct	0.052	0.047	96694272	0.194	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/132_dup_defs	rejected	correct	0.056	0.051	96194560	0.189	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/133_dup_ind_def	rejected	correct	0.050	0.044	96329728	0.190	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/134_dup_ctor_def	rejected	correct	0.051	0.045	96387072	0.190	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/135_dup_rec_def	rejected	correct	0.048	0.042	96186368	0.190	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/136_misnamed_rec_user	rejected	correct	0.051	0.045	97329152	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/137_dup_rec_def2	rejected	correct	0.053	0.049	97574912	0.192	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/138_dup_ctor_rec	rejected	correct	0.044	0.039	96346112	0.190	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/139_DupConCon	rejected	correct	0.045	0.039	96206848	0.190	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/140_falseFromUnsafe	rejected	correct	0.048	0.042	97431552	0.191	2026-11-19 15:53:52 UTC
+official	v4.35.0	tutorial/141_falseFromPartial	rejected	correct	0.048	0.043	97431552	0.191	2026-11-19 15:53:52 UTC

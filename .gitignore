@@ -4,3 +4,6 @@
 /corpus/.cache/
 /corpus-results.tsv
 /corpus-parse.tsv
+/bench/arena/data/
+/bench/arena/results/
+__pycache__/
