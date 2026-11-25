@@ -352,21 +352,27 @@ impl Nbe<'_> {
         // A closed term of the environment checked in an earlier
         // declaration (under the same universe parameters, if it has any)
         // only needs its type.
-        let closed = !infer_only
-            && !d.has_loose_bvars()
-            && !d.has_fvar()
-            && ls == Ls::ID
-            && !self.st.is_local_expr(e);
-        let ck = if closed {
-            let k = (
-                e,
-                if d.has_level_param() {
-                    self.lparams_key()
-                } else {
-                    0
-                },
-            );
-            if self.checked_closed.contains_key(&k) {
+        // So is an open term checked under the same binders.
+        let ctx = if infer_only || d.has_fvar() || ls != Ls::ID || self.st.is_local_expr(e) {
+            None
+        } else if !d.has_loose_bvars() {
+            Some(0)
+        } else {
+            self.ctx(env)
+        };
+        let ck = if let Some(ctx) = ctx {
+            let lk = if d.has_level_param() {
+                self.lparams_key()
+            } else {
+                0
+            };
+            // One word: the term, its context and its universe parameters
+            // (past what fits, not remembered).
+            let k = (ctx < 1 << 20 && lk < 1 << 12)
+                .then_some(e.0 as u64 | (ctx as u64) << 32 | lk << 52);
+            if let Some(k) = k
+                && self.checked_closed.contains(&k)
+            {
                 let r = self.infer_term(e, env, ls, true)?;
                 self.a.set_checked(key);
                 if d.has_level_param() {
@@ -374,7 +380,7 @@ impl Nbe<'_> {
                 }
                 return Ok(r);
             }
-            Some(k)
+            k
         } else {
             None
         };
@@ -400,7 +406,7 @@ impl Nbe<'_> {
             }
         }
         if let Some(k) = ck {
-            self.checked_closed.insert(k, ());
+            self.checked_closed.insert(k);
         }
         Ok(if c == super::val::NONE { r } else { V(c) })
     }
@@ -578,6 +584,7 @@ impl Nbe<'_> {
                 }
                 let x = self.push_fvar(n, dv, None, bi);
                 let env2 = self.a.cons(env, x);
+                self.ctx_push(env, dom, ls, env2);
                 let ebody = self.instantiate(ex, x)?;
                 let r = self.check_against(body, env2, ls, ebody);
                 self.pop_fvar(x);
@@ -598,7 +605,9 @@ impl Nbe<'_> {
             let dv = self.thunk(dom, env2, ls);
             let x = self.push_fvar(n, dv, None, bi);
             opened.push(x);
-            env2 = self.a.cons(env2, x);
+            let env3 = self.a.cons(env2, x);
+            self.ctx_push(env2, dom, ls, env3);
+            env2 = env3;
             cur = body;
         }
         self.infer_term(cur, env2, ls, false)?;
@@ -622,7 +631,9 @@ impl Nbe<'_> {
             let dv = self.thunk(dom, env2, ls);
             let x = self.push_fvar(n, dv, None, bi);
             opened.push(x);
-            env2 = self.a.cons(env2, x);
+            let env3 = self.a.cons(env2, x);
+            self.ctx_push(env2, dom, ls, env3);
+            env2 = env3;
             cur = body;
         }
         let s = self.infer_term(cur, env2, ls, infer_only)?;
