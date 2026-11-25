@@ -332,9 +332,14 @@ impl Exprs {
 
     /// Index every node, on `threads` threads; if two are equal, a pair
     /// of their ids (the later, the earlier).
-    pub fn index(&mut self, threads: usize) -> Result<(), (ExprId, ExprId)> {
+    /// On one thread, `scratch` is working space (see [`Big::index`]).
+    pub fn index(
+        &mut self,
+        threads: usize,
+        scratch: &mut Vec<u32>,
+    ) -> Result<(), (ExprId, ExprId)> {
         self.arena
-            .index(threads)
+            .index(threads, scratch)
             .map_err(|(a, b)| (ExprId(a), ExprId(b)))
     }
 
