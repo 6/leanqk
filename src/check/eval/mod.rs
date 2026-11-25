@@ -243,6 +243,8 @@ enum Next {
 /// The head of an application term and how each argument's thunk is made.
 struct AppPlan {
     head: ExprId,
+    /// The head's `info`, if it is a constant.
+    info: Option<CInfo>,
     args: Box<[ArgPlan]>,
 }
 
@@ -693,6 +695,9 @@ impl<'a, 'e> Machine<'a, 'e> {
                     });
                 }
                 let f = plan.head;
+                if let Some(i) = &plan.info {
+                    return self.constant_with(f, i.clone(), args);
+                }
                 match self.tc.st.node(f) {
                     ExprNode::Const(..) => self.constant_n(f, args),
                     ExprNode::Lam(..) => self.beta_n(f, env.clone(), args),
@@ -725,7 +730,12 @@ impl<'a, 'e> Machine<'a, 'e> {
             g = h;
         }
         args.reverse();
+        let info = match self.tc.st.node(g) {
+            ExprNode::Const(..) => Some(self.info(g)),
+            _ => None,
+        };
         let p = Rc::new(AppPlan {
+            info,
             head: g,
             args: args.into_boxed_slice(),
         });
@@ -889,10 +899,16 @@ impl<'a, 'e> Machine<'a, 'e> {
     }
 
     fn constant_n(&mut self, c: ExprId, args: Vec<Th>) -> ER<Next> {
+        let i = self.info(c);
+        self.constant_with(c, i, args)
+    }
+
+    /// `constant_n` with the constant's `info` at hand.
+    fn constant_with(&mut self, c: ExprId, info: CInfo, args: Vec<Th>) -> ER<Next> {
         if let Some(p) = self.s.profile.as_mut() {
             *p.entry(c).or_default() += 1;
         }
-        match self.info(c) {
+        match info {
             CInfo::Unfold(v, k) => self.unfold_n(c, v, k, args),
             CInfo::Op(op, _) => self.saturate_n(c, Head::Op(op), args),
             CInfo::Succ => self.saturate_n(c, Head::Succ, args),
