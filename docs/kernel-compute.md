@@ -49,6 +49,11 @@ over the checker's hash-consed term DAG:
   the closed term `c t₁ … tₙ` (which the store hash-conses). This is the
   sharing that `whnf`'s cache gets after substitution. It is kept only for
   constants where it pays off.
+- How an application's argument thunks are made (a variable's thunk, a
+  closed term's shared one, a proof, or a delayed term) is worked out once
+  per application term and kept (`app_plan`), so a step does not look at
+  each argument's term again. On `nonsingular-128` and `prime_10007` that
+  is 10 to 20% of the evaluator's time.
 - Deep recursion (a long chain of thunks each needing the next) runs on extra
   stack segments allocated on demand (`stacker`), up to `MAX_DEPTH` nested
   evaluations.
