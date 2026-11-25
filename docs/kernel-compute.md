@@ -221,7 +221,11 @@ value whose term is what unfolding the definition and reducing the list
 operation gives. The vector stands for `Array.mk α [x₀, …]`, and for example
 `List.set [x₀, …, xₙ₋₁] i v` reduces to `[x₀, …, v, …, xₙ₋₁]` for `i < n`.
 An array value that is `Array.mk` of a list is turned into a vector only if
-its spine evaluates to the end (forcing its cells, not its elements). An
+its spine evaluates to the end (forcing its cells, not its elements). The
+vector then replaces the value in that thunk, so the list is walked once:
+before, every `clauses[i]!` on LRAT-Catcher's clause array (`List.toArray`
+of the formula's clauses) walked all of them again, and `keller7-full`
+(200 545 clauses) did not finish in 1200 s. It now takes 23 s. An
 index that is not a literal below the length, or an array that is not a
 value, makes the operation unfold to its definition. A vector meeting a
 projection or a recursor is turned back into the constructor application it
@@ -242,6 +246,20 @@ On the Keller cubes of `bench/famous-sat` (variables numbered up to
 3.4 GB to 1.2 s and 0.29 GB, cube 1178 from 21 s and 19.7 GB to 9.2 s and
 0.34 GB, and cube 17832, which ran out of 30 GB, takes 19.6 s and 0.51 GB.
 Memory no longer depends on how the variables are numbered.
+
+Versions can form a cycle with what they hold: the old version points to
+the new one it was changed into, and an element or a structure reachable
+from the new one can hold the old one. Reference counting never frees
+such a cycle. The machine's state therefore records every version it
+makes (forgetting those already freed whenever the record doubles), and
+when the state is dropped, after the declaration, it empties the ones still
+alive, which frees what the cycles kept. Nothing the machine computed
+outlives its state, since an answer is read back into a term first. On
+Keller cubes stated against the whole formula (`keller7-full` and the
+full bundle of `bench/famous-sat`), each theorem kept about 0.9 GB after
+it was checked: the 48 theorems of the full bundle reached 46 GB on one
+thread. Four copies of `keller7-full` in one export now peak at 3.1 GB,
+as one does, instead of 5.8 GB.
 
 ## Lists and decidable equality
 

@@ -152,6 +152,8 @@ pub fn fetch(d: &Dirs, opts: &Opts) -> Res<()> {
             log(format!("{set}: {label}, {problem} cube {cube}"));
             let how = if set.ends_with("-renumbered") {
                 "renumbered"
+            } else if set.ends_with("-full") {
+                "full"
             } else {
                 "sample"
             };
