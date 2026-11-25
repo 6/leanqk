@@ -294,6 +294,22 @@ impl IdTable {
         }
     }
 
+    /// Add `id` with hash `h` at the first slot from its line on that is
+    /// at or after slot `next`, and set `next` after it; for adding ids in
+    /// the order of their lines (then the slots from an id's line up to
+    /// it are used, as a probe needs). False if that is past the end.
+    #[inline]
+    pub fn push_in_order(&mut self, next: &mut usize, h: u64, id: u32) -> bool {
+        let at = (*next).max(self.line(h) * LINE);
+        let Some(s) = self.slots.get_mut(at) else {
+            return false;
+        };
+        *s.get_mut() = tag_of(h) | id as u64;
+        *self.len.get_mut() += 1;
+        *next = at + 1;
+        true
+    }
+
     /// Add `id` with hash `h` unless an id for which `eq` holds is
     /// present (then that id); there must be room. For a table only this
     /// thread sees.
@@ -477,14 +493,16 @@ impl<T: Node> Big<T> {
 
     /// Index every node anew, on `threads` threads. If two nodes are
     /// equal, the first such pair found (the later id, the earlier one).
-    pub fn index(&mut self, threads: usize) -> Result<(), (u32, u32)>
+    /// On one thread, `scratch` is used as working space (its contents
+    /// are overwritten).
+    pub fn index(&mut self, threads: usize, scratch: &mut Vec<u32>) -> Result<(), (u32, u32)>
     where
         T: Sync,
     {
         let n = self.nodes.len();
         let threads = threads.clamp(1, n.div_ceil(1 << 16).max(1));
         if threads == 1 {
-            return self.index_here();
+            return self.index_here(scratch);
         }
         let table = IdTable::with_capacity(n);
         let nodes = &self.nodes;
@@ -542,51 +560,105 @@ impl<T: Node> Big<T> {
     }
 
     /// [`Big::index`] on this thread.
-    fn index_here(&mut self) -> Result<(), (u32, u32)> {
+    fn index_here(&mut self, scratch: &mut Vec<u32>) -> Result<(), (u32, u32)> {
         let n = self.nodes.len();
         let mut table = IdTable::with_capacity(n);
         let nodes = &self.nodes;
-        // A table line is picked by the low half of the hash, scaled, so
-        // its top bits pick a range of lines. Hash the nodes into buckets
-        // by those bits, and then insert a bucket at a time: the lines a
-        // bucket fills are few enough to stay in the cache. A round does a
-        // part of the nodes, to bound the space the buckets take.
+        // A table line is picked by the low half of the hash (scaled), so
+        // in the order of that half, the ids fill the table from start to
+        // end, each at the first free slot from its line on: no probing,
+        // and equal keys (equal hashes) come one after the other. So hash
+        // the nodes into buckets by the top bits of that half, and sort
+        // each bucket by the rest (radix sort, as the table is filled a
+        // bucket at a time).
         const BITS: u32 = 10;
         const BUCKETS: usize = 1 << BITS;
-        const ROUNDS: usize = 4;
-        let round = n.div_ceil(ROUNDS).max(1);
-        let cap = round / BUCKETS + round / BUCKETS / 4 + 64;
+        // The rest, sorted on in two passes.
+        const DIGIT: u32 = 11;
+        const _: () = assert!(BITS + 2 * DIGIT == 32);
+        let cap = n / BUCKETS + n / BUCKETS / 8 + 64;
         let mut fill = vec![0usize; BUCKETS];
-        let mut hs = vec![0u64; BUCKETS * cap];
-        let mut ids = vec![0u32; BUCKETS * cap];
-        // Entries of a bucket that is full, inserted last.
+        // The buckets' hashes (low and high halves) and ids.
+        let size = BUCKETS * cap;
+        if scratch.len() < 3 * size {
+            scratch.resize(3 * size, 0);
+        }
+        let (lo, rest) = scratch.split_at_mut(size);
+        let (hi, rest) = rest.split_at_mut(size);
+        let ids = &mut rest[..size];
+        // Entries of a bucket that is full (and, below, those that would
+        // go past the end of the table), inserted last.
         let mut spill = Vec::new();
-        for start in (0..n).step_by(round) {
-            fill.fill(0);
-            spill.clear();
-            for id in start as u32..(start + round).min(n) as u32 {
-                let h = nodes.get(id).hash();
-                let b = (h as u32 >> (32 - BITS)) as usize;
-                let k = fill[b];
-                if k < cap {
-                    let at = b * cap + k;
-                    hs[at] = h;
-                    ids[at] = id;
-                    fill[b] = k + 1;
-                } else {
+        for id in 0..n as u32 {
+            let h = nodes.get(id).hash();
+            let b = (h as u32 >> (32 - BITS)) as usize;
+            let k = fill[b];
+            if k < cap {
+                let at = b * cap + k;
+                lo[at] = h as u32;
+                hi[at] = (h >> 32) as u32;
+                ids[at] = id;
+                fill[b] = k + 1;
+            } else {
+                spill.push((h, id));
+            }
+        }
+        let mut tmp: Vec<(u64, u32)> = Vec::with_capacity(cap);
+        let mut sorted: Vec<(u64, u32)> = Vec::with_capacity(cap);
+        let mut next = 0usize;
+        for (b, &k) in fill.iter().enumerate() {
+            let at = b * cap..b * cap + k;
+            let (bl, bh, bi) = (&lo[at.clone()], &hi[at.clone()], &ids[at]);
+            let digit = |h: u64, d: u32| (h as u32 >> (d * DIGIT)) as usize & ((1 << DIGIT) - 1);
+            let mut count = [[0usize; 1 << DIGIT]; 2];
+            for &l in bl {
+                count[0][digit(l as u64, 0)] += 1;
+                count[1][digit(l as u64, 1)] += 1;
+            }
+            for c in &mut count {
+                let mut sum = 0;
+                for x in c.iter_mut() {
+                    (*x, sum) = (sum, sum + *x);
+                }
+            }
+            tmp.clear();
+            tmp.resize(k, (0, 0));
+            for ((&l, &hh), &id) in bl.iter().zip(bh).zip(bi) {
+                let h = (hh as u64) << 32 | l as u64;
+                let c = &mut count[0][digit(h, 0)];
+                tmp[*c] = (h, id);
+                *c += 1;
+            }
+            sorted.clear();
+            sorted.resize(k, (0, 0));
+            for &(h, id) in &tmp {
+                let c = &mut count[1][digit(h, 1)];
+                sorted[*c] = (h, id);
+                *c += 1;
+            }
+            for (i, &(h, id)) in sorted.iter().enumerate() {
+                // An equal key has an equal hash, so it is among the ones
+                // just before with the same low half.
+                if i > 0 && sorted[i - 1].0 as u32 == h as u32 {
+                    let node = nodes.get(id);
+                    for &(g, other) in sorted[..i].iter().rev() {
+                        if g as u32 != h as u32 {
+                            break;
+                        }
+                        if g == h && nodes.get(other).same(node) {
+                            return Err((id.max(other), id.min(other)));
+                        }
+                    }
+                }
+                if !table.push_in_order(&mut next, h, id) {
                     spill.push((h, id));
                 }
             }
-            let bucketed = (0..BUCKETS).flat_map(|b| {
-                let at = b * cap;
-                let k = fill[b];
-                hs[at..at + k].iter().copied().zip(ids[at..at + k].iter().copied())
-            });
-            for (h, id) in bucketed.chain(spill.iter().copied()) {
-                let same = |o| nodes.get(o).same(nodes.get(id));
-                if let Some(old) = table.insert_unique(h, same, id) {
-                    return Err((id.max(old), id.min(old)));
-                }
+        }
+        for (h, id) in spill {
+            let same = |o| nodes.get(o).same(nodes.get(id));
+            if let Some(old) = table.insert_unique(h, same, id) {
+                return Err((id.max(old), id.min(old)));
             }
         }
         self.table = table;

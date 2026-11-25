@@ -178,34 +178,36 @@ fn read_open_file(f: File, opts: &Options) -> Result<(Env, ReadStats), ReadError
         n => n,
     };
     if size == 0 {
-        return run(
+        let r = run(
             state(opts, size, false),
             BufReader::with_capacity(1 << 20, f),
-        );
+        )?;
+        return Ok((r.env, r.stats));
     }
     // A regular file is read optimistically: names and expressions are
     // added without hash-consing (an export lists each once) and indexed
-    // at the end, on all threads. If two turn out equal after all, the
-    // file is read again with hash-consing.
+    // at the end. If two turn out equal after all, the file is read again
+    // with hash-consing.
     let t0 = std::time::Instant::now();
-    let (mut env, stats) = read_regular(&f, size, threads, state(opts, size, true))?;
-    let t1 = std::time::Instant::now();
-    let names = env.names.index(threads).map_err(|(a, b)| (a.0, b.0));
-    let ix = names.and_then(|()| env.exprs.index(threads).map_err(|(a, b)| (a.0, b.0)));
+    let mut st = state(opts, size, true);
+    st.index_threads = Some(threads);
+    let r = read_regular(&f, size, threads, st)?;
     if std::env::var_os("NITROLEAN_READ_PROFILE").is_some() {
+        let index = INDEX_NS.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
         eprintln!(
             "read {:.3} s (interning thread waited {:.3} s), index {:.3} s, duplicate {:?}",
-            (t1 - t0).as_secs_f64(),
+            t0.elapsed().as_secs_f64() - index,
             WAIT_NS.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9,
-            t1.elapsed().as_secs_f64(),
-            ix.err()
+            index,
+            r.dup
         );
     }
-    match ix {
-        Ok(()) => Ok((env, stats)),
-        Err(_) => {
-            drop(env);
-            read_regular(&f, size, threads, state(opts, size, false))
+    match r.dup {
+        None => Ok((r.env, r.stats)),
+        Some(_) => {
+            drop(r);
+            let r = read_regular(&f, size, threads, state(opts, size, false))?;
+            Ok((r.env, r.stats))
         }
     }
 }
@@ -231,12 +233,7 @@ fn state(opts: &Options, size: u64, append: bool) -> State {
     st
 }
 
-fn read_regular(
-    f: &File,
-    size: u64,
-    threads: usize,
-    st: State,
-) -> Result<(Env, ReadStats), ReadError> {
+fn read_regular(f: &File, size: u64, threads: usize, st: State) -> Result<Done, ReadError> {
     if threads > 1 {
         // The interning stage runs on this thread.
         let parsers = threads - 1;
@@ -281,7 +278,7 @@ pub fn read_str(s: &str) -> Result<Env, ReadError> {
 
 /// Read an export from a buffered stream, line by line.
 pub fn read_buffered<B: BufRead + Send>(r: B) -> Result<(Env, ReadStats), ReadError> {
-    run(State::new(), r)
+    run(State::new(), r).map(|r| (r.env, r.stats))
 }
 
 // The read is a two-stage pipeline. A parsing thread reads lines, parses
@@ -595,14 +592,14 @@ impl<'a> Src<'a> {
     }
 }
 
-fn run<B: BufRead + Send>(st: State, r: B) -> Result<(Env, ReadStats), ReadError> {
+fn run<B: BufRead + Send>(st: State, r: B) -> Result<Done, ReadError> {
     run_with(st, |full, empty| produce(r, full, empty))
 }
 
 fn run_with(
     st: State,
     produce: impl FnOnce(SyncSender<Batch>, Receiver<Batch>) + Send,
-) -> Result<(Env, ReadStats), ReadError> {
+) -> Result<Done, ReadError> {
     finish(st, |st| {
         let (full_tx, full_rx) = mpsc::sync_channel::<Batch>(4);
         let (empty_tx, empty_rx) = mpsc::sync_channel::<Batch>(8);
@@ -613,17 +610,29 @@ fn run_with(
     })
 }
 
-/// Run `read` on `st`, then complete the environment and the totals.
+/// What [`finish`] gives: the environment, the totals, and (when the
+/// read added names and expressions without hash-consing them) a pair of
+/// equal ones that indexing them found.
+struct Done {
+    env: Env,
+    stats: ReadStats,
+    dup: Option<(u32, u32)>,
+}
+
+/// Run `read` on `st`, then complete the environment and the totals (and
+/// index it, if `st` says so).
 fn finish(
     mut st: State,
     read: impl FnOnce(&mut State) -> Result<ReadStats, ReadError>,
-) -> Result<(Env, ReadStats), ReadError> {
+) -> Result<Done, ReadError> {
     let res = read(&mut st);
     let id_map_bytes =
         st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
     // The id maps are done with: free them before the lazy values are
-    // put together.
-    for m in [&mut st.name_ids, &mut st.level_ids, &mut st.expr_ids] {
+    // put together. The dense table of expression ids is working space
+    // for the index.
+    let mut scratch = std::mem::replace(&mut st.expr_ids, IdMap::new(0)).into_buffer();
+    for m in [&mut st.name_ids, &mut st.level_ids] {
         *m = IdMap::new(0);
     }
     if let Some(b) = st.lazy.take() {
@@ -632,12 +641,28 @@ fn finish(
     let mut stats = res?;
     stats.shared_exprs = st.shared_exprs;
     stats.id_map_bytes = id_map_bytes;
-    Ok((st.env, stats))
+    let mut dup = None;
+    if let Some(threads) = st.index_threads {
+        let t = std::time::Instant::now();
+        dup = match st.env.names.index(threads, &mut scratch) {
+            Err((a, b)) => Some((a.0, b.0)),
+            Ok(()) => st.env.exprs.index(threads, &mut scratch).err().map(|(a, b)| (a.0, b.0)),
+        };
+        INDEX_NS.store(
+            t.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+    Ok(Done {
+        env: st.env,
+        stats,
+        dup,
+    })
 }
 
 /// Read a regular file on this thread alone: blocks of whole lines are
 /// read into one buffer, and each line is scanned and applied at once.
-fn read_single(f: &File, st: State) -> Result<(Env, ReadStats), ReadError> {
+fn read_single(f: &File, st: State) -> Result<Done, ReadError> {
     use std::os::unix::fs::FileExt;
     const BLOCK: usize = 1 << 20;
     finish(st, |st| {
@@ -678,6 +703,10 @@ fn read_single(f: &File, st: State) -> Result<(Env, ReadStats), ReadError> {
         }
     })
 }
+
+/// Time the index at the end of a read took (for
+/// `NITROLEAN_READ_PROFILE`).
+static INDEX_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Time the interning stage waited for batches (for
 /// `NITROLEAN_READ_PROFILE`).
@@ -1231,6 +1260,9 @@ struct State {
     append: bool,
     /// The failure of a line [`scan::line`] gave to this state.
     failed: Option<Fail>,
+    /// With `append`: index the names and expressions at the end, on
+    /// this many threads.
+    index_threads: Option<usize>,
 }
 
 /// The state of [`State::lines`] between blocks of input.
@@ -1334,6 +1366,7 @@ impl State {
             lazy: None,
             append: false,
             failed: None,
+            index_threads: None,
         }
     }
 

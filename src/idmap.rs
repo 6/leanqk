@@ -125,6 +125,12 @@ impl IdMap {
         Ok(())
     }
 
+    /// The dense table's buffer (for reuse as working space), leaving the
+    /// map empty.
+    pub fn into_buffer(self) -> Vec<u32> {
+        self.dense
+    }
+
     /// Make room for ids up to `n` without copying the table as it grows.
     pub fn reserve(&mut self, n: usize) {
         self.dense.reserve(n.saturating_sub(self.dense.len()));

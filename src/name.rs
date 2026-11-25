@@ -95,9 +95,14 @@ impl Names {
 
     /// Index every name, on `threads` threads; if two are equal, a pair
     /// of their ids (the later, the earlier).
-    pub fn index(&mut self, threads: usize) -> Result<(), (NameId, NameId)> {
+    /// On one thread, `scratch` is working space (see [`Big::index`]).
+    pub fn index(
+        &mut self,
+        threads: usize,
+        scratch: &mut Vec<u32>,
+    ) -> Result<(), (NameId, NameId)> {
         self.arena
-            .index(threads)
+            .index(threads, scratch)
             .map_err(|(a, b)| (NameId(a), NameId(b)))
     }
 
