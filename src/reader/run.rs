@@ -138,6 +138,40 @@ fn nat(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(u64, usize)> {
     Some((d, p + (n8 / 8) as usize))
 }
 
+/// The number at `p` (of at most 8 digits) and where it ends.
+#[inline(always)]
+fn nat8(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(u64, usize)> {
+    let v = ld(w, p);
+    let x = v ^ 0x3030_3030_3030_3030;
+    let t = (x | x.wrapping_add(k.below_ten)) & 0x8080_8080_8080_8080;
+    let n8 = t.trailing_zeros() & !7;
+    if n8 == 0 || (n8 > 8 && v as u8 == b'0') {
+        return None;
+    }
+    let d = x << (64 - n8);
+    let d = d.wrapping_mul(k.ten).wrapping_add(d >> 8) & 0x00FF_00FF_00FF_00FF;
+    let d = d.wrapping_mul(k.hundred).wrapping_add(d >> 16) & 0x0000_FFFF_0000_FFFF;
+    let d = d.wrapping_mul(k.join) >> 32;
+    Some((d, p + (n8 / 8) as usize))
+}
+
+/// The number at `p` (of at most 9 digits), which the text `word`
+/// (under `mask`, starting with a non-digit) follows: the number and
+/// where the text starts. A ninth digit is only looked for if the text
+/// is not after the eighth, so most numbers cost no more than 8 digits.
+#[inline(always)]
+fn nat_to(w: &[u8; WIN], p: usize, k: &Consts, word: u64, mask: u64) -> Option<(u64, usize)> {
+    let (d, q) = nat8(w, p, k)?;
+    if ld(w, q) & mask == word {
+        return Some((d, q));
+    }
+    let c = w[q.min(WIN - 1)].wrapping_sub(b'0');
+    if q != p + 8 || c > 9 || ld(w, q + 1) & mask != word {
+        return None;
+    }
+    Some((d * 10 + c as u64, q + 1))
+}
+
 /// The number of digits of `e`, and the first number with more.
 pub(super) fn digits(e: u64) -> (u32, u64) {
     let (mut len, mut next) = (1, 10);
@@ -170,10 +204,16 @@ fn id_at(w: &[u8; WIN], p: usize, e: u64, len: u32, k: &Consts) -> Option<usize>
     (d == e).then_some(p + len as usize)
 }
 
-/// A binder's fields from `p` (its binder info's text): binder info,
-/// body, name, type, and where they end.
+/// A binder's fields from `p` (its binder info's text), which the text
+/// `word` (under `mask`) follows: binder info, body, name, type, and
+/// where they end.
 #[inline(always)]
-fn binder(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(BinderInfo, u64, u64, u64, usize)> {
+fn binder(
+    w: &[u8; WIN],
+    p: usize,
+    k: &Consts,
+    (word, mask): (u64, u64),
+) -> Option<(BinderInfo, u64, u64, u64, usize)> {
     let x = ld(w, p);
     // The binder info and its closing quote.
     let (bi, q) = if x == k.default {
@@ -190,15 +230,9 @@ fn binder(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(BinderInfo, u64, u64, 
     if ld(w, q) != k.body {
         return None;
     }
-    let (body, q) = nat(w, q + 8, k)?;
-    if ld(w, q) != k.name {
-        return None;
-    }
-    let (name, q) = nat(w, q + 8, k)?;
-    if ld(w, q) != k.ty {
-        return None;
-    }
-    let (ty, q) = nat(w, q + 8, k)?;
+    let (body, q) = nat_to(w, q + 8, k, k.name, u64::MAX)?;
+    let (name, q) = nat_to(w, q + 8, k, k.ty, u64::MAX)?;
+    let (ty, q) = nat_to(w, q + 8, k, word, mask)?;
     Some((bi, body, name, ty, q))
 }
 
@@ -223,16 +257,12 @@ pub(super) fn exprs(
             if ld(w, 8) & MASK6 != k.head1 {
                 break;
             }
-            let Some((a, q)) = nat(w, 14, k) else { break };
-            if ld(w, q) & MASK6 != k.fn_ {
-                break;
-            }
-            let Some((f, q)) = nat(w, q + 6, k) else {
+            let Some((a, q)) = nat_to(w, 14, k, k.fn_, MASK6) else {
                 break;
             };
-            if ld(w, q) & MASK7 != k.ie {
+            let Some((f, q)) = nat_to(w, q + 6, k, k.ie, MASK7) else {
                 break;
-            }
+            };
             let Some(q) = id_at(w, q + 7, e2, len, k) else {
                 break;
             };
@@ -247,12 +277,9 @@ pub(super) fn exprs(
             {
                 break;
             }
-            let Some((bi, body, name, ty, q)) = binder(w, 26, k) else {
+            let Some((bi, body, name, ty, q)) = binder(w, 26, k, (k.ie, MASK7)) else {
                 break;
             };
-            if ld(w, q) & MASK7 != k.ie {
-                break;
-            }
             let Some(q) = id_at(w, q + 7, e2, len, k) else {
                 break;
             };
@@ -269,10 +296,10 @@ pub(super) fn exprs(
             {
                 break;
             }
-            let Some((bi, body, name, ty, q)) = binder(w, q + 22, k) else {
+            let Some((bi, body, name, ty, q)) = binder(w, q + 22, k, (k.lam_end, MASK3)) else {
                 break;
             };
-            if ld(w, q) & MASK3 != k.lam_end || !out.binder(e2, false, bi, name, ty, body) {
+            if !out.binder(e2, false, bi, name, ty, body) {
                 break;
             }
             q + 3
@@ -386,7 +413,7 @@ mod tests {
     #[test]
     fn runs_of_records() {
         let text = "{\"app\":{\"arg\":3,\"fn\":7},\"ie\":8}\n\
-             {\"app\":{\"arg\":123456789,\"fn\":0},\"ie\":9}\n\
+             {\"app\":{\"arg\":123456789,\"fn\":12345678},\"ie\":9}\n\
              {\"forallE\":{\"binderInfo\":\"default\",\"body\":0,\"name\":2,\"type\":1},\"ie\":10}\n\
              {\"ie\":11,\"lam\":{\"binderInfo\":\"implicit\",\"body\":123456789,\"name\":20,\"type\":4}}\n\
              {\"ie\":12,\"lam\":{\"binderInfo\":\"instImplicit\",\"body\":5,\"name\":6,\"type\":7}}\n\
@@ -394,7 +421,7 @@ mod tests {
         let (got, n, k) = run(text, 8);
         let want = [
             (8, "app 7 3"),
-            (9, "app 0 123456789"),
+            (9, "app 12345678 123456789"),
             (10, "true Default 2 1 0"),
             (11, "false Implicit 20 4 123456789"),
             (12, "false InstImplicit 6 7 5"),
@@ -415,6 +442,8 @@ mod tests {
             ("{\"app\":{\"arg\":3,\"fn\":7},\"ie\":8 }\n", 8),
             ("{\"app\":{\"arg\":1234567890,\"fn\":7},\"ie\":8}\n", 8),
             ("{\"app\":{\"arg\":01,\"fn\":7},\"ie\":8}\n", 8),
+            ("{\"app\":{\"arg\":012345678,\"fn\":7},\"ie\":8}\n", 8),
+            ("{\"app\":{\"arg\":12345678,\"fn\":7}, \"ie\":8}\n", 8),
             ("{\"app\":{\"arg\":3,\"fn\":7},\"ie\":80}\n", 8),
             (
                 "{\"ie\":8,\"lam\":{\"binderInfo\":\"implicitx\",\"body\":5,\"name\":6,\"type\":7}}\n",
