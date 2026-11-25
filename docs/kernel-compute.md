@@ -222,6 +222,8 @@ definitions directly:
 | `List.foldl f a l` | the thunk `f (… (f a x₀) …) xₙ₋₁`, then forced |
 | `List.getLast l h` | the last element |
 | `List.eraseDupsBy.loop r l acc` | the elements kept, then reversed |
+| `List.map f l`, `List.zipWith f l₁ l₂`, `List.append l₁ l₂` | the first cell; its head and the rest are thunks of `f x` (or `f x y`) and of the same operation on the tails |
+| `List.length l` | the number of cells |
 | `instBEqProd α β bα bβ` | `BEq.mk` of a function that runs `a₁ == a₂ && b₁ == b₂` on pairs |
 | `Nat.decEq n m` | on two literals |
 | `Bool.decEq a b` | on two booleans |
@@ -234,6 +236,7 @@ version defines the same function, so the loop computes what the definition
 computes. Each loop forces the same thunks as the definition, in the same
 order, and stops where the definition reaches its weak head normal form:
 `any`, `all`, `elem` and `filter` stop at the first element that decides,
+`map`, `zipWith` and `append` at the first cell,
 while the others need the whole list, as their definitions do. So laziness
 and termination are as before. Where a value is not of the expected kind (a
 list that is not built from `List.cons` and `List.nil`, a pair that is not
@@ -273,6 +276,32 @@ already compute that field with `&&`.
 On the LRAT proof of 67 KB (lrat05), this takes the evaluator from 53.7
 million steps to 18.4 million, and the check from 3.8 s to 1.9 s.
 
+## Integers
+
+Lean's kernel has no built-in `Int` arithmetic: `Int.add`, `Int.mul` and
+the others are matches on `Int.ofNat n` and `Int.negSucc n` that end in
+`Nat` operations, reached through `HAdd.hAdd`, `Add.add` and the
+instances. The evaluator runs thirteen of them on values whose `Nat` field
+is a literal: `Int.add`, `sub`, `mul`, `neg`, `ediv` and `emod` (`/` and
+`%`), `tdiv`, `tmod`, `pow`, `subNatNat`, `negOfNat`, `natAbs` and `toNat`.
+It takes the case of the definition that the arguments select and computes
+its right-hand side with the kernel's `Nat` operations (`Tc::nat_op`, so
+with its size limits). The result is the `Int.ofNat` or `Int.negSucc` value
+that the right-hand side reduces to. For example, `Int.mul (ofNat m)
+(negSucc n)` is `negOfNat (m * succ n)`, which is `0` or
+`negSucc (m * (n + 1) - 1)`. The definitions are the same in Lean v4.30.0,
+v4.34.0 and v4.36.0, and each operation is enabled only if its definition
+matches one of them. Arguments that are not such values make the operation
+its definition. Each argument is forced, as the definitions' matches force
+them, with one exception: `Int.emod (ofNat m) n` is `ofNat (m % n.natAbs)`,
+whose `n` the definition leaves unevaluated under `Int.ofNat`. If that `n`
+is stuck, the evaluator gives up and `whnf` reduces the term itself.
+
+On the coefficients of a product of 300 linear polynomials over `Int`,
+computed as lists, the `Int` operations halve the evaluator's steps (8.4
+to 4.6 million). With the lazy `List.map`, `zipWith` and `append` the check
+goes from 0.55 s to 0.13 s.
+
 ## Built-in operations of several Lean versions
 
 The fingerprint table (`src/check/fingerprint_table.rs`, written by
@@ -290,7 +319,7 @@ out of memory.
 
 ## Tests
 
-`xtask/src/kernel_cases/cases.rs` has 65 `eval*` cases. Each is a claim proved by
+`xtask/src/kernel_cases/cases.rs` has 69 `eval*` cases. Each is a claim proved by
 `Eq.refl`, so only reduction decides it, and nearly every one has a false
 twin. The 23 `eval434-*` cases are exported from Lean v4.34.0, where the
 `DecidableEq` fast paths apply. They cover:
@@ -310,7 +339,9 @@ twin. The 23 `eval434-*` cases are exported from Lean v4.34.0, where the
   proof;
 - `List.any`, `all`, `elem`, `filter` (lazily: later tests would divide by
   zero), `getLast?`, `foldl`, `reverse` and `eraseDups`, in v4.36.0 and
-  v4.34.0;
+  v4.34.0, and `map`, `zipWith`, `append` and `length`;
+- the `Int` operations on every combination of signs, zero divisors and
+  values past 2^64;
 - `DecidableEq` and `==` on lists of (subtype, `Bool`) pairs, equal and not,
   `Nodup`, `eraseDups` and `elem` on them; a cast over a `DecidableEq` proof
   (the erased proof is a `K`-like major premise); a value that holds a

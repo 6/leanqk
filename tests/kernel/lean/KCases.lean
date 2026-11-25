@@ -190,6 +190,19 @@ theorem ev_lists_wrong : (List.range 50).foldl (· + ·) 0 = 1224 := sorry
 theorem ev_filter_lazy : ((List.range 10).filter (fun i => i == 0 || 10 / i > 2)).head? = some 0 := sorry
 theorem ev_filter_lazy_wrong : ((List.range 10).filter (fun i => i == 0 || 10 / i > 2)).head? = some 1 := sorry
 
+-- `Int` operations on every sign, zero divisors and big values, hashed,
+-- and lazy `List.map`, `zipWith`, `append` and `length`.
+def ev_xs : List Int := [-7, -1, 0, 1, 7, (1234567890 * 10 ^ 10 + 1234567890) * 1000 + 123, -(9876543210 * 10 ^ 10 + 9876543210)]
+def ev_ys : List Int := [-3, -1, 0, 1, 3, -12345678901, 98765432109]
+def ev_ints : List Int := ev_xs.flatMap fun x => ev_ys.flatMap fun y =>
+  [x + y, x - y, x * y, -x, x / y, x % y, x.tdiv y, x.tmod y, x ^ (y.natAbs % 5),
+   Int.subNatNat x.natAbs y.natAbs, Int.negOfNat y.natAbs, (x.natAbs : Int), (x.toNat : Int)]
+theorem ev_int : ev_ints.foldl (fun a b => (a * 31 + b) % 1000000007) 0 = 131563993 := sorry
+theorem ev_int_wrong : ev_ints.foldl (fun a b => (a * 31 + b) % 1000000007) 0 = 131563994 := sorry
+def ev_zip : List Nat := ((List.range 30).map (· * 3)).zipWith (· + ·) ((List.range 40) ++ [7, 8])
+theorem ev_lists2 : (ev_zip.length, ev_zip.foldl (· + ·) 0) = (30, 1740) := sorry
+theorem ev_lists2_wrong : ev_zip.length = 31 := sorry
+
 -- Erased proofs that are needed after all: a cast over a theorem applied to
 -- a variable (a `K`-like major premise), `And.rec` on a constructed proof,
 -- and an answer holding a proof.

@@ -212,6 +212,10 @@ eval-arr-fn	eval	accept	accept	an array of functions, elements applied
 eval-arr-fn-wrong	eval	reject	reject	the same, wrong sum
 eval-list	eval	accept	accept	List.any, all, filter, getLast?, foldl, reverse, elem and eraseDups on numbers
 eval-list-wrong	eval	reject	reject	the same fold, off by one
+eval-int	eval	accept	accept	Int +, -, *, neg, / and % (Euclidean and toward zero), ^, subNatNat, negOfNat, natAbs and toNat on every sign, zero and big values, hashed
+eval-int-wrong	eval	reject	reject	the same hash, off by one
+eval-list-lazy	eval	accept	accept	List.map, zipWith, append and length
+eval-list-lazy-wrong	eval	reject	reject	the length, off by one
 eval-list-filter-lazy	eval	accept	accept	the head of a filter, whose later tests would divide by zero
 eval-list-filter-lazy-wrong	eval	reject	reject	the same, the wrong head
 eval434-deceq	eval	accept	accept	DecidableEq on lists of (subtype, Bool) pairs, equal (v4.34.0)

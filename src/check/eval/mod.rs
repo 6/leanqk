@@ -30,7 +30,7 @@ use crate::expr::{ExprId, ExprNode};
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
-use super::ext::{ArrayOp, DecEqOp, ListOp, NatOp};
+use super::ext::{ArrayOp, DecEqOp, IntOp, ListOp, NatOp};
 use super::store::IdMap;
 use super::tc::Tc;
 
@@ -98,6 +98,8 @@ enum CInfo {
     DecEq(DecEqOp, ExprId),
     /// `instBEqProd`; its definition.
     BEqProd(ExprId),
+    /// An `Int` operation run on values; its definition.
+    Int(IntOp, ExprId),
     /// An inductive type, axiom, opaque constant, `Quot` or `Quot.mk`:
     /// it does not reduce.
     Neutral,
@@ -113,7 +115,7 @@ static BAILS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
 static NANOS: AtomicU64 = AtomicU64::new(0);
 /// Fast paths taken: `List` operations, `DecidableEq` decisions, `==` on
 /// pairs.
-static FAST: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+static FAST: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 
 /// Giving up on a stuck term; `NITROLEAN_EVAL_DEBUG=1` says where.
 #[cold]
@@ -135,7 +137,7 @@ pub fn enabled() -> bool {
 pub fn stats() -> String {
     let b = |i: usize| BAILS[i].load(Relaxed);
     format!(
-        "evaluator: {} calls, {} answered, {} steps, {:.3} s; gave up: {} stuck, {} deep, {} limit, {} loop; {} evaluated again keeping proofs; fast: {} list, {} decidable-eq, {} pair ==",
+        "evaluator: {} calls, {} answered, {} steps, {:.3} s; gave up: {} stuck, {} deep, {} limit, {} loop; {} evaluated again keeping proofs; fast: {} list, {} decidable-eq, {} pair ==, {} int",
         CALLS.load(Relaxed),
         HITS.load(Relaxed),
         STEPS.load(Relaxed),
@@ -147,7 +149,8 @@ pub fn stats() -> String {
         b(4),
         FAST[0].load(Relaxed),
         FAST[1].load(Relaxed),
-        FAST[2].load(Relaxed)
+        FAST[2].load(Relaxed),
+        FAST[3].load(Relaxed)
     )
 }
 
@@ -260,7 +263,8 @@ impl<'a, 'e> Machine<'a, 'e> {
                 | Head::List(..)
                 | Head::DecEq(..)
                 | Head::BEqProd(..)
-                | Head::BEqProdFn,
+                | Head::BEqProdFn
+                | Head::Int(..),
             ..
         } = &*v
         {
@@ -674,6 +678,9 @@ impl<'a, 'e> Machine<'a, 'e> {
                 if Some(n) == ext.beq_prod {
                     return CInfo::BEqProd(v);
                 }
+                if let Some(&op) = ext.int_ops.get(&n) {
+                    return CInfo::Int(op, v);
+                }
                 CInfo::Unfold(v)
             }
             DeclKind::Constructor {
@@ -775,6 +782,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             CInfo::List(op, v) => self.saturate(c, Head::List(op, v), args),
             CInfo::DecEq(op, v) => self.saturate(c, Head::DecEq(op, v), args),
             CInfo::BEqProd(v) => self.saturate(c, Head::BEqProd(v), args),
+            CInfo::Int(op, v) => self.saturate(c, Head::Int(op, v), args),
             CInfo::Ctor(info) if args.is_empty() => {
                 // One shared value per constructor constant.
                 if let Some(v) = self.s.nullary.get(&c) {
@@ -897,6 +905,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             Head::DecEq(op, def) => self.dec_eq_op(c, op, def, args),
             Head::BEqProd(def) => self.beq_prod(def, args),
             Head::BEqProdFn => self.beq_prod_fn(c, args),
+            Head::Int(op, def) => self.int_op(op, def, args),
             Head::QuotLift | Head::QuotInd => {
                 let (mk_pos, arg_pos) = if matches!(kind, Head::QuotLift) {
                     (5, 3)
@@ -1390,6 +1399,169 @@ impl<'a, 'e> Machine<'a, 'e> {
         Ok(Some(true))
     }
 
+    /// An `Int` operation applied to (at least) its arguments: on values
+    /// `Int.ofNat n` and `Int.negSucc n` with literal `n` (and on literals,
+    /// for the `Nat` arguments), by its definition's cases; else it is its
+    /// definition. It forces each argument, as the definitions' matches do,
+    /// except the divisor of `emod` on `Int.ofNat m`, which the definition
+    /// leaves under `Int.ofNat`; that one is forced here too.
+    fn int_op(&mut self, op: IntOp, def: ExprId, mut args: Vec<Th>) -> ER<V> {
+        let n = Head::Int(op, def).arity();
+        let rest = args.split_off(n);
+        let r = match self.int_fast(op, &args)? {
+            Some(v) => {
+                FAST[3].fetch_add(1, Relaxed);
+                v
+            }
+            None => self.unfold_def(def, args)?,
+        };
+        self.apply_rest(r, rest)
+    }
+
+    fn int_fast(&mut self, op: IntOp, args: &[Th]) -> ER<Option<V>> {
+        use IntOp as I;
+        // Arguments: an `Int` as (negative, n), standing for `n` or
+        // `-(n + 1)`; a `Nat` as a literal.
+        let nat_arg = |m: &mut Self, t: &Th| -> ER<Option<Nat>> {
+            let v = m.force(t)?;
+            Ok(m.nat_of(&v))
+        };
+        let x = match op {
+            I::SubNatNat | I::NegOfNat => match nat_arg(self, &args[0])? {
+                Some(n) => (false, n),
+                None => return Ok(None),
+            },
+            _ => match self.int_arg(&args[0])? {
+                Some(x) => x,
+                None => return Ok(None),
+            },
+        };
+        let y = match op {
+            I::Neg | I::NegOfNat | I::NatAbs | I::ToNat => (false, Nat::ZERO),
+            I::SubNatNat | I::Pow => match nat_arg(self, &args[1])? {
+                Some(n) => (false, n),
+                None => return Ok(None),
+            },
+            _ => match self.int_arg(&args[1])? {
+                Some(y) => y,
+                None => return Ok(None),
+            },
+        };
+        let ((xn, a), (yn, b)) = (x, y);
+        let one = Nat::Small(1);
+        let r = match op {
+            I::Add => self.int_add(xn, &a, yn, &b)?,
+            I::Sub => {
+                // `m + -n`.
+                let (yn, b) = int_neg(yn, &b)?;
+                self.int_add(xn, &a, yn, &b)?
+            }
+            I::Neg => {
+                let (n, v) = int_neg(xn, &a)?;
+                (n, v)
+            }
+            I::Mul => {
+                let (a1, b1) = (int_abs(xn, &a)?, int_abs(yn, &b)?);
+                let p = nat_bin(NatOp::Mul, &a1, &b1)?;
+                if xn == yn { (false, p) } else { neg_of_nat(&p) }
+            }
+            I::Ediv => match (xn, yn) {
+                (false, false) => (false, nat_bin(NatOp::Div, &a, &b)?),
+                (false, true) => neg_of_nat(&nat_bin(NatOp::Div, &a, &b.succ())?),
+                (true, false) if b == Nat::ZERO => (false, Nat::ZERO),
+                (true, false) => (true, nat_bin(NatOp::Div, &a, &b)?),
+                (true, true) => (false, nat_bin(NatOp::Div, &a, &b.succ())?.succ()),
+            },
+            I::Emod => {
+                let m = int_abs(yn, &b)?;
+                if xn {
+                    // `subNatNat |n| (m % |n|).succ`.
+                    let r = nat_bin(NatOp::Mod, &a, &m)?.succ();
+                    sub_nat_nat(&m, &r)?
+                } else {
+                    (false, nat_bin(NatOp::Mod, &a, &m)?)
+                }
+            }
+            I::Tdiv | I::Tmod => {
+                let (a1, b1) = (int_abs(xn, &a)?, int_abs(yn, &b)?);
+                if op == I::Tdiv {
+                    let q = nat_bin(NatOp::Div, &a1, &b1)?;
+                    if xn == yn { (false, q) } else { neg_of_nat(&q) }
+                } else {
+                    let r = nat_bin(NatOp::Mod, &a1, &b1)?;
+                    if xn { neg_of_nat(&r) } else { (false, r) }
+                }
+            }
+            I::Pow => {
+                // `ofNat (m ^ n)`, or for `negSucc`: `±ofNat (|m| ^ n)` by
+                // the parity of `n`.
+                let p = nat_bin(NatOp::Pow, &int_abs(xn, &a)?, &b)?;
+                let odd = nat_bin(NatOp::Mod, &b, &Nat::Small(2))? == one;
+                if xn && odd {
+                    neg_of_nat(&p)
+                } else {
+                    (false, p)
+                }
+            }
+            I::SubNatNat => sub_nat_nat(&a, &b)?,
+            I::NegOfNat => neg_of_nat(&a),
+            I::NatAbs | I::ToNat => {
+                let n = match (op, xn) {
+                    (I::NatAbs, true) => a.succ(),
+                    (I::ToNat, true) => Nat::ZERO,
+                    _ => a,
+                };
+                return Ok(Some(Rc::new(Val::Nat(n))));
+            }
+        };
+        self.mk_int(r.0, r.1).map(Some)
+    }
+
+    fn int_add(&mut self, xn: bool, a: &Nat, yn: bool, b: &Nat) -> ER<(bool, Nat)> {
+        Ok(match (xn, yn) {
+            (false, false) => (false, nat_bin(NatOp::Add, a, b)?),
+            (false, true) => sub_nat_nat(a, &b.succ())?,
+            (true, false) => sub_nat_nat(b, &a.succ())?,
+            (true, true) => (true, nat_bin(NatOp::Add, a, b)?.succ()),
+        })
+    }
+
+    /// The `Int` value `t` as (negative, n): `Int.ofNat n` is (false, n),
+    /// `Int.negSucc n` (true, n).
+    fn int_arg(&mut self, t: &Th) -> ER<Option<(bool, Nat)>> {
+        let Some(f) = self.tc.ext.fast else {
+            return Ok(None);
+        };
+        let (Some(int), Some(of_nat)) = (f.int, f.int_of_nat) else {
+            return Ok(None);
+        };
+        let v = self.force(t)?;
+        let (neg, a) = match &*v {
+            Val::Ctor { c, info, args } if info.induct == int && args.len() == 1 => {
+                let ExprNode::Const(n, _) = self.tc.st.node(*c) else {
+                    return Ok(None);
+                };
+                (n != of_nat, args[0].clone())
+            }
+            _ => return Ok(None),
+        };
+        let a = self.force(&a)?;
+        Ok(self.nat_of(&a).map(|a| (neg, a)))
+    }
+
+    /// `Int.ofNat n`, or `Int.negSucc n` if `neg`.
+    fn mk_int(&mut self, neg: bool, n: Nat) -> ER<V> {
+        let f = self.tc.ext.fast.ok_or(Bail::Stuck)?;
+        let k = if neg { f.int_neg_succ } else { f.int_of_nat };
+        let k = self.tc.st.cnst(k.ok_or(Bail::Stuck)?, LevelList::EMPTY);
+        let info = self.ctor_info(k)?;
+        Ok(Rc::new(Val::Ctor {
+            c: k,
+            info,
+            args: vec![Thunk::done(Rc::new(Val::Nat(n)))],
+        }))
+    }
+
     /// The definition `def` of an operation applied to `args`: what the
     /// operation is when the fast path does not apply.
     fn unfold_def(&mut self, def: ExprId, args: Vec<Th>) -> ER<V> {
@@ -1635,6 +1807,75 @@ impl<'a, 'e> Machine<'a, 'e> {
                 }
                 self.force(&r).map(Some)
             }
+            ListOp::Map => {
+                // `map f [] = []`, `map f (a :: l) = f a :: map f l`: the
+                // head and the rest, lazily.
+                let lv = self.force(&args[3])?;
+                let Ok(cell) = self.list_cell(&lv) else {
+                    return Ok(None);
+                };
+                let Some((a, t)) = cell else {
+                    return self.list_nil_at(c, 1, &args[1]).map(Some);
+                };
+                let body = self.apply1_body();
+                let x = Thunk::delayed(body, Env::EMPTY.push_all(vec![args[2].clone(), a]));
+                let rest =
+                    self.op_app_thunk(c, &[args[0].clone(), args[1].clone(), args[2].clone(), t]);
+                self.list_cons_at(c, 1, &args[1], x, rest).map(Some)
+            }
+            ListOp::ZipWith => {
+                // `zipWith f (x :: xs) (y :: ys) = f x y :: zipWith f xs ys`,
+                // else `[]`; the second list is forced only if the first
+                // is a cons.
+                let xv = self.force(&args[4])?;
+                let Ok(cell) = self.list_cell(&xv) else {
+                    return Ok(None);
+                };
+                let Some((x, xs)) = cell else {
+                    return self.list_nil_at(c, 2, &args[2]).map(Some);
+                };
+                let yv = self.force(&args[5])?;
+                let Ok(cell) = self.list_cell(&yv) else {
+                    return Ok(None);
+                };
+                let Some((y, ys)) = cell else {
+                    return self.list_nil_at(c, 2, &args[2]).map(Some);
+                };
+                let body = self.apply2_body();
+                let h = Thunk::delayed(body, Env::EMPTY.push_all(vec![args[3].clone(), x, y]));
+                let mut a: Vec<Th> = args[..4].to_vec();
+                a.extend([xs, ys]);
+                let rest = self.op_app_thunk(c, &a);
+                self.list_cons_at(c, 2, &args[2], h, rest).map(Some)
+            }
+            ListOp::Append => {
+                // `[] ++ bs = bs`, `(a :: as) ++ bs = a :: (as ++ bs)`.
+                let lv = self.force(&args[1])?;
+                let Ok(cell) = self.list_cell(&lv) else {
+                    return Ok(None);
+                };
+                let Some((a, t)) = cell else {
+                    return self.force(&args[2]).map(Some);
+                };
+                let rest = self.op_app_thunk(c, &[args[0].clone(), t, args[2].clone()]);
+                self.list_cons(c, &args[0], a, rest).map(Some)
+            }
+            ListOp::Length => {
+                // `length [] = 0`, `length (a :: l) = length l + 1`.
+                let mut l = args[1].clone();
+                let mut n: u64 = 0;
+                loop {
+                    let lv = self.force(&l)?;
+                    let Ok(cell) = self.list_cell(&lv) else {
+                        return Ok(None);
+                    };
+                    let Some((_, t)) = cell else {
+                        return Ok(Some(Rc::new(Val::Nat(Nat::Small(n)))));
+                    };
+                    n += 1;
+                    l = t;
+                }
+            }
             ListOp::GetLast => {
                 // `getLast [x] h = x`, `getLast (x :: y :: l) h = getLast (y :: l) _`.
                 let mut l = args[1].clone();
@@ -1659,6 +1900,26 @@ impl<'a, 'e> Machine<'a, 'e> {
                 }
             }
         }
+    }
+
+    /// The term `#1 #0` (a function applied to an argument).
+    fn apply1_body(&mut self) -> ExprId {
+        let st = &mut self.tc.st;
+        let (b0, b1) = (st.bvar(0), st.bvar(1));
+        st.app(b1, b0)
+    }
+
+    /// `List.nil α`, at the universe level `i` of the operation `c`.
+    fn list_nil_at(&mut self, c: ExprId, i: usize, ty: &Th) -> ER<V> {
+        let ls = self.list_level(c, i)?;
+        let nil = self.tc.ext.fast.as_ref().ok_or(Bail::Stuck)?.list_nil;
+        let k = self.tc.st.cnst(nil, ls);
+        let info = self.ctor_info(k)?;
+        Ok(Rc::new(Val::Ctor {
+            c: k,
+            info,
+            args: vec![ty.clone()],
+        }))
     }
 
     /// The term `#2 #1 #0` (a function applied to two arguments).
@@ -1700,9 +1961,7 @@ impl<'a, 'e> Machine<'a, 'e> {
 
     /// `List.nil α`, at the universe level of the list operation `c`.
     fn list_nil(&mut self, c: ExprId, ty: &Th) -> ER<V> {
-        let ExprNode::Const(_, ls) = self.tc.st.node(c) else {
-            return Err(stuck(0));
-        };
+        let ls = self.list_level(c, 0)?;
         let nil = self.tc.ext.fast.as_ref().ok_or(Bail::Stuck)?.list_nil;
         let k = self.tc.st.cnst(nil, ls);
         let info = self.ctor_info(k)?;
@@ -1713,11 +1972,23 @@ impl<'a, 'e> Machine<'a, 'e> {
         }))
     }
 
-    /// `List.cons α x l`, at the universe level of the list operation `c`.
-    fn list_cons(&mut self, c: ExprId, ty: &Th, x: Th, l: Th) -> ER<V> {
+    /// The universe level `i` of the operation `c`, as a list of one.
+    fn list_level(&mut self, c: ExprId, i: usize) -> ER<LevelList> {
         let ExprNode::Const(_, ls) = self.tc.st.node(c) else {
             return Err(stuck(0));
         };
+        let l = *self.tc.st.list(ls).get(i).ok_or(Bail::Stuck)?;
+        Ok(self.tc.st.mk_list(&[l]))
+    }
+
+    /// `List.cons α x l`, at the universe level of the list operation `c`.
+    fn list_cons(&mut self, c: ExprId, ty: &Th, x: Th, l: Th) -> ER<V> {
+        self.list_cons_at(c, 0, ty, x, l)
+    }
+
+    /// `List.cons α x l`, at the universe level `i` of the operation `c`.
+    fn list_cons_at(&mut self, c: ExprId, i: usize, ty: &Th, x: Th, l: Th) -> ER<V> {
+        let ls = self.list_level(c, i)?;
         let cons = self.tc.ext.fast.as_ref().ok_or(Bail::Stuck)?.list_cons;
         let k = self.tc.st.cnst(cons, ls);
         let info = self.ctor_info(k)?;
@@ -1928,6 +2199,46 @@ impl<'a, 'e> Machine<'a, 'e> {
     }
 }
 
+/// A `Nat` operation with a `Nat` result.
+fn nat_bin(op: NatOp, x: &Nat, y: &Nat) -> ER<Nat> {
+    match nat::op(op, x, y)? {
+        nat::OpResult::Nat(n) => Ok(n),
+        nat::OpResult::Bool(_) => Err(Bail::Stuck),
+    }
+}
+
+/// `Int.subNatNat m n`: `match n - m with | 0 => ofNat (m - n) | k+1 =>
+/// negSucc k`.
+fn sub_nat_nat(m: &Nat, n: &Nat) -> ER<(bool, Nat)> {
+    let k = nat_bin(NatOp::Sub, n, m)?;
+    Ok(match k.pred() {
+        None => (false, nat_bin(NatOp::Sub, m, n)?),
+        Some(k) => (true, k),
+    })
+}
+
+/// `Int.negOfNat n`: `0` or `negSucc (n - 1)`.
+fn neg_of_nat(n: &Nat) -> (bool, Nat) {
+    match n.pred() {
+        None => (false, Nat::ZERO),
+        Some(k) => (true, k),
+    }
+}
+
+/// `Int.neg`: `ofNat n` to `negOfNat n`, `negSucc n` to `ofNat (n + 1)`.
+fn int_neg(neg: bool, n: &Nat) -> ER<(bool, Nat)> {
+    Ok(if neg {
+        (false, n.succ())
+    } else {
+        neg_of_nat(n)
+    })
+}
+
+/// `Int.natAbs`.
+fn int_abs(neg: bool, n: &Nat) -> ER<Nat> {
+    Ok(if neg { n.succ() } else { n.clone() })
+}
+
 /// The fields of `v`, a constructor of the structure `ind` (whose
 /// constructor has two parameters and two fields).
 fn struct_fields(v: &V, ind: NameId) -> Option<[Th; 2]> {
@@ -1955,6 +2266,7 @@ pub enum Head {
     /// The `==` of `instBEqProd α β bα bβ`; the head is the closed term
     /// `fun α β bα bβ => beq-field` (see `beq_prod`).
     BEqProdFn,
+    Int(IntOp, ExprId),
 }
 
 impl Head {
@@ -1970,13 +2282,17 @@ impl Head {
             Head::Arr(ArrayOp::Get, _) => 4,
             Head::Arr(ArrayOp::Set, _) => 5,
             Head::List(ListOp::Foldl, _) => 5,
-            Head::List(ListOp::Elem | ListOp::EraseDupsLoop, _) => 4,
+            Head::List(ListOp::Elem | ListOp::EraseDupsLoop | ListOp::Map, _) => 4,
+            Head::List(ListOp::ZipWith, _) => 6,
+            Head::List(ListOp::Length, _) => 2,
             Head::List(_, _) => 3,
             Head::DecEq(DecEqOp::Nat | DecEqOp::Bool, _) => 2,
             Head::DecEq(DecEqOp::Prod, _) => 6,
             Head::DecEq(DecEqOp::Subtype, _) => 5,
             Head::BEqProd(_) => 4,
             Head::BEqProdFn => 6,
+            Head::Int(IntOp::Neg | IntOp::NegOfNat | IntOp::NatAbs | IntOp::ToNat, _) => 1,
+            Head::Int(_, _) => 2,
         }
     }
 }

@@ -4,7 +4,7 @@
 //!
 //! Each EXPORT is the closure of the operations in that version's `Init`
 //! (`lean4export Init -- Nat.add Nat.sub ...`, every name of `NAT_OPS`,
-//! `ARRAY_OPS`, `LIST_OPS`, `DEC_EQ_OPS` and `BEQ_PROD`):
+//! `ARRAY_OPS`, `LIST_OPS`, `DEC_EQ_OPS`, `INT_OPS` and `BEQ_PROD`):
 //!
 //! ```text
 //! cargo run --release --example fingerprints -- v4.36.0=init-4.36.ndjson \
@@ -13,7 +13,7 @@
 
 use std::collections::BTreeMap;
 
-use nitrolean::check::ext::{ARRAY_OPS, BEQ_PROD, DEC_EQ_OPS, LIST_OPS, NAT_OPS};
+use nitrolean::check::ext::{ARRAY_OPS, BEQ_PROD, DEC_EQ_OPS, INT_OPS, LIST_OPS, NAT_OPS};
 use nitrolean::check::{Fingerprints, fingerprint_key, hex_digest};
 use nitrolean::reader::read_file;
 
@@ -38,6 +38,7 @@ fn main() {
             .chain(ARRAY_OPS.iter().map(|x| x.0))
             .chain(LIST_OPS.iter().map(|x| x.0))
             .chain(DEC_EQ_OPS.iter().map(|x| x.0))
+            .chain(INT_OPS.iter().map(|x| x.0))
             .chain([BEQ_PROD]);
         for name in names {
             let n = env

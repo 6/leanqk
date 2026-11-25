@@ -2576,6 +2576,38 @@ fn eval_cases(v: &mut Cases) {
         "the same, the wrong head",
         &[],
     );
+    eval(
+        v,
+        "eval-int",
+        "K.ev_int",
+        "accept",
+        "Int +, -, *, neg, / and % (Euclidean and toward zero), ^, subNatNat, negOfNat, natAbs and toNat on every sign, zero and big values, hashed",
+        &[],
+    );
+    eval(
+        v,
+        "eval-int-wrong",
+        "K.ev_int_wrong",
+        "reject",
+        "the same hash, off by one",
+        &[],
+    );
+    eval(
+        v,
+        "eval-list-lazy",
+        "K.ev_lists2",
+        "accept",
+        "List.map, zipWith, append and length",
+        &[],
+    );
+    eval(
+        v,
+        "eval-list-lazy-wrong",
+        "K.ev_lists2_wrong",
+        "reject",
+        "the length, off by one",
+        &[],
+    );
 
     eval_old(
         v,
