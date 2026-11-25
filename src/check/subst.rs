@@ -307,7 +307,10 @@ impl Store<'_> {
 
     /// Replace the universe parameters `ps` with `ls` throughout `e`.
     pub fn instantiate_lparams(&mut self, e: ExprId, ps: &[NameId], ls: &[LevelId]) -> ExprId {
-        if ps.is_empty() || !self.data(e).has_level_param() {
+        if ps.is_empty()
+            || !self.data(e).has_level_param()
+            || super::univ::OWN_LEVELS && self.is_own_levels(ps, ls)
+        {
             return e;
         }
         let mut memo = self.take_memo();

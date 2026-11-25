@@ -59,6 +59,8 @@ pub struct Store<'e> {
     decl_rules: Vec<RecRule>,
     /// Scratch memo for the traversals in `subst.rs`.
     pub(crate) memo: IdMap<(ExprId, u32), ExprId>,
+    /// `univ::normalize`'s results (see `NORM_MEMO`).
+    pub(crate) norm_memo: IdMap<LevelId, LevelId>,
 }
 
 impl<'e> Store<'e> {
@@ -80,6 +82,7 @@ impl<'e> Store<'e> {
             decl_names: Vec::new(),
             decl_rules: Vec::new(),
             memo: IdMap::default(),
+            norm_memo: IdMap::default(),
         }
     }
 
@@ -532,6 +535,16 @@ impl<'e> Store<'e> {
     }
 
     // ---- declaration pools ----
+
+    /// Whether `ls` is the parameters `ps` themselves, in order: then
+    /// substituting `ls` for `ps` changes nothing (see `OWN_LEVELS`).
+    pub fn is_own_levels(&self, ps: &[NameId], ls: &[LevelId]) -> bool {
+        ps.len() == ls.len()
+            && ps
+                .iter()
+                .zip(ls)
+                .all(|(&p, &l)| self.level(l) == LevelNode::Param(p))
+    }
 
     pub fn name_list(&self, l: NameList) -> &[NameId] {
         if is_local(l.start) {

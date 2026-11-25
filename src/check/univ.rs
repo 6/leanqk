@@ -168,8 +168,33 @@ fn mk_max_list(st: &mut Store<'_>, args: &[LevelId]) -> LevelId {
     r
 }
 
+/// Whether `normalize` remembers its results, per store (levels are
+/// hash-consed, so a level's normal form is computed once).
+pub const NORM_MEMO: bool = true;
+
+/// Whether a constant used at its own universe parameters (`c.{u, v}` in a
+/// declaration whose parameters are `u, v`, where `c`'s are too) is taken
+/// as it is: substituting the parameters by themselves changes nothing.
+pub const OWN_LEVELS: bool = true;
+
 /// Lean's `normalize`.
 pub fn normalize(st: &mut Store<'_>, l: LevelId) -> LevelId {
+    let (r, _) = to_offset(st, l);
+    if matches!(st.level(r), LevelNode::Zero | LevelNode::Param(_)) {
+        return l;
+    }
+    if !NORM_MEMO {
+        return normalize_core(st, l);
+    }
+    if let Some(&n) = st.norm_memo.get(&l) {
+        return n;
+    }
+    let n = normalize_core(st, l);
+    st.norm_memo.insert(l, n);
+    n
+}
+
+fn normalize_core(st: &mut Store<'_>, l: LevelId) -> LevelId {
     let (r, k) = to_offset(st, l);
     match st.level(r) {
         LevelNode::Succ(_) => unreachable!(),

@@ -18,6 +18,7 @@ mod closed;
 mod conv;
 mod eval;
 mod infer;
+mod lsub;
 mod readback;
 pub mod val;
 mod whnf;
@@ -91,8 +92,8 @@ pub struct Nbe<'e> {
     pub fvars: Vec<FVarInfo>,
     bigs: Vec<BigUint>,
     big_table: HashTable<u32>,
-    level_cache: IdMap<(LevelId, Ls), LevelId>,
-    list_cache: IdMap<(LevelList, Ls), LevelList>,
+    level_cache: lsub::Lsub<(LevelId, Ls), LevelId>,
+    list_cache: lsub::Lsub<(LevelList, Ls), LevelList>,
     const_type: IdMap<(NameId, LevelList), V>,
     const_value: IdMap<(NameId, LevelList), V>,
     /// Values left in their `.olean` files, as built in the store.
@@ -242,8 +243,8 @@ impl<'e> Nbe<'e> {
             fvars: Vec::new(),
             bigs: Vec::new(),
             big_table: HashTable::new(),
-            level_cache: IdMap::default(),
-            list_cache: IdMap::default(),
+            level_cache: Default::default(),
+            list_cache: Default::default(),
             const_type: IdMap::default(),
             const_value: IdMap::default(),
             lazy_values: IdMap::default(),
@@ -496,7 +497,7 @@ impl<'e> Nbe<'e> {
         if ls == Ls::ID || !self.st.level_has_param(l) {
             return l;
         }
-        if let Some(&r) = self.level_cache.get(&(l, ls)) {
+        if let Some(r) = self.level_cache.get((l, ls)) {
             return r;
         }
         self.inst_level_new(l, ls)
@@ -518,7 +519,7 @@ impl<'e> Nbe<'e> {
         if ls == Ls::ID || !self.st.list_has_param(ll) {
             return ll;
         }
-        if let Some(&r) = self.list_cache.get(&(ll, ls)) {
+        if let Some(r) = self.list_cache.get((ll, ls)) {
             return r;
         }
         self.inst_list_new(ll, ls)
@@ -537,6 +538,13 @@ impl<'e> Nbe<'e> {
 
     /// The substitution of `d`'s universe parameters by `ls`.
     pub fn decl_ls(&mut self, d: &Decl, ls: LevelList) -> Ls {
+        if super::univ::OWN_LEVELS
+            && self
+                .st
+                .is_own_levels(self.st.name_list(d.level_params), self.st.list(ls))
+        {
+            return Ls::ID;
+        }
         self.a.mk_ls(d.level_params, ls)
     }
 
