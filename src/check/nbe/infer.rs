@@ -357,6 +357,9 @@ impl Nbe<'_> {
                 return Ok(self.a.mk(Val::Sort(l)));
             }
             ExprNode::Const(n, lv) => {
+                if !self.st.list_has_param(lv) {
+                    return self.infer_closed(e, node, infer_only);
+                }
                 let lv = self.inst_list(lv, ls);
                 return self.infer_constant(n, lv, infer_only);
             }
@@ -448,7 +451,9 @@ impl Nbe<'_> {
         if cached && (infer_only || checked != 0) {
             return Ok(V(ty));
         }
-        let shared = !infer_only && !self.st.is_local_expr(e);
+        // Constants have a cheap check on a miss and need no persistent fact.
+        let shared =
+            !infer_only && !matches!(node, ExprNode::Const(..)) && !self.st.is_local_expr(e);
         let checked_before = shared && self.checked_closed.contains(&(e.0 as u64));
         let ty = if cached && checked_before {
             V(ty)
@@ -471,6 +476,7 @@ impl Nbe<'_> {
         infer_only: bool,
     ) -> R<V> {
         match node {
+            ExprNode::Const(n, lv) => self.infer_constant(n, lv, infer_only),
             ExprNode::App(f, a) => self.infer_app(f, a, env, ls, infer_only),
             ExprNode::Lam(..) if infer_only => Ok(self.a.mk(Val::PiInfer(e, env, ls))),
             ExprNode::Lam(..) => self.check_lambda(e, env, ls),
