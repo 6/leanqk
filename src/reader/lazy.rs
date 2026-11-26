@@ -1276,9 +1276,15 @@ fn par_each<T: Send>(threads: usize, items: impl Iterator<Item = T> + Send, f: i
 /// [`TermSink::expr_owned`]); `keep` if the sink keeps shared names
 /// ([`TermSink::keeps_shared`]).
 #[inline(always)]
-fn make(sink: &mut dyn TermSink, n: Node, ids: [ExprId; 3], owned: bool, keep: bool) -> ExprId {
-    let shared_name = |sink: &mut dyn TermSink, n| if keep { n } else { sink.shared_name(n) };
-    let expr = |sink: &mut dyn TermSink, node| {
+fn make<S: TermSink + ?Sized>(
+    sink: &mut S,
+    n: Node,
+    ids: [ExprId; 3],
+    owned: bool,
+    keep: bool,
+) -> ExprId {
+    let shared_name = |sink: &mut S, n| if keep { n } else { sink.shared_name(n) };
+    let expr = |sink: &mut S, node| {
         if owned {
             sink.expr_owned(node)
         } else {
@@ -1450,16 +1456,16 @@ thread_local! {
 
 impl LazyValues for Stored {
     fn decode(&self, _env: &Env, k: u32, sink: &mut dyn TermSink) -> Result<ExprId, String> {
-        let (Some(&root), Some(&start)) = (self.roots.get(k as usize), self.starts.get(k as usize))
-        else {
-            return Err("internal: no such lazy value".into());
-        };
-        SCRATCH.with(|s| {
-            let s = &mut *s.borrow_mut();
-            s.memo.clear();
-            s.stack.clear();
-            self.build_own(root, start, sink, s)
-        })
+        self.decode_in(k, sink)
+    }
+
+    fn decode_store(
+        &self,
+        _env: &Env,
+        k: u32,
+        sink: &mut crate::check::store::Store<'_>,
+    ) -> Result<ExprId, String> {
+        self.decode_in(k, sink)
     }
 
     fn count(&self) -> usize {
@@ -1474,17 +1480,31 @@ impl LazyValues for Stored {
 }
 
 impl Stored {
+    /// Value `k`, built in `sink`.
+    fn decode_in<S: TermSink + ?Sized>(&self, k: u32, sink: &mut S) -> Result<ExprId, String> {
+        let (Some(&root), Some(&start)) = (self.roots.get(k as usize), self.starts.get(k as usize))
+        else {
+            return Err("internal: no such lazy value".into());
+        };
+        SCRATCH.with(|s| {
+            let s = &mut *s.borrow_mut();
+            s.memo.clear();
+            s.stack.clear();
+            self.build_own(root, start, sink, s)
+        })
+    }
+
     /// Value `root`, whose own records are those from `start` on: built
     /// in order (children first). Every one of them is part of the value:
     /// what else its declaration's lines held is interned or gone (see
     /// [`Builder::into_stored`]), and a declaration has one value. (Were
     /// one not, it would only be built for nothing.) Older records are
     /// built by [`Stored::build`].
-    fn build_own(
+    fn build_own<S: TermSink + ?Sized>(
         &self,
         root: u32,
         start: u32,
-        sink: &mut dyn TermSink,
+        sink: &mut S,
         s: &mut Scratch,
     ) -> Result<ExprId, String> {
         if root & ARENA != 0 {
@@ -1493,8 +1513,7 @@ impl Stored {
         let (recs, side) = (&self.recs, &self.side);
         let keep = sink.keeps_shared();
         s.own.clear();
-        let kid =
-            |c, sink: &mut dyn TermSink, s: &mut Scratch| self.own_kid(c, start, keep, sink, s);
+        let kid = |c, sink: &mut S, s: &mut Scratch| self.own_kid(c, start, keep, sink, s);
         // Records of the value's own declaration are taken as used by it
         // alone (one that a later value uses too is built there again, by
         // `build`, hash-consed).
@@ -1521,12 +1540,12 @@ impl Stored {
     /// The sink's id for child `c` of a record in [`Stored::build_own`]
     /// (its value's records being from `start` on).
     #[inline(always)]
-    fn own_kid(
+    fn own_kid<S: TermSink + ?Sized>(
         &self,
         c: u32,
         start: u32,
         keep: bool,
-        sink: &mut dyn TermSink,
+        sink: &mut S,
         s: &mut Scratch,
     ) -> Result<ExprId, String> {
         if c & ARENA != 0 {
@@ -1539,16 +1558,16 @@ impl Stored {
         }
     }
 
-    fn build(
+    fn build<S: TermSink + ?Sized>(
         &self,
         root: u32,
-        sink: &mut dyn TermSink,
+        sink: &mut S,
         memo: &mut HashMap<u32, ExprId>,
         stack: &mut Vec<u32>,
     ) -> Result<ExprId, String> {
         let (recs, side) = (&self.recs, &self.side);
         // The sink's id for child `c`, if known.
-        let done = |memo: &HashMap<u32, ExprId>, sink: &mut dyn TermSink, c: u32| {
+        let done = |memo: &HashMap<u32, ExprId>, sink: &mut S, c: u32| {
             if c & ARENA != 0 {
                 return Some(sink.shared_expr(ExprId(c & !ARENA)));
             }

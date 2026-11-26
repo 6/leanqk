@@ -639,7 +639,7 @@ impl<'e> Nbe<'e> {
     pub fn read_value(&mut self, d: &Decl) -> Result<Option<ExprId>, String> {
         let env = self.st.env;
         let before = self.st.local_exprs();
-        let r = env.value_into(d, &mut self.st);
+        let r = env.value_into_store(d, &mut self.st);
         self.read_exprs += self.st.local_exprs() - before;
         r
     }

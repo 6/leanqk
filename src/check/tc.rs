@@ -272,7 +272,7 @@ impl<'e> Tc<'e> {
             return Ok(Some(e));
         }
         let env = self.st.env;
-        let e = env.value_into(d, &mut self.st)?;
+        let e = env.value_into_store(d, &mut self.st)?;
         if let Some(e) = e {
             self.values.insert(v, e);
         }
