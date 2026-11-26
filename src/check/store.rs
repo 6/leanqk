@@ -322,13 +322,16 @@ impl<'e> Store<'e> {
     }
 
     pub fn mk_level(&mut self, node: LevelNode) -> LevelId {
-        let global = match node {
+        let from_env = match node {
             LevelNode::Zero => return LevelId::ZERO,
-            LevelNode::Succ(a) => !is_local(a.0),
-            LevelNode::Max(a, b) | LevelNode::IMax(a, b) => !is_local(a.0) && !is_local(b.0),
-            LevelNode::Param(n) => !is_local(n.0),
+            LevelNode::Succ(a) if !is_local(a.0) => self.env.levels.find_succ(a),
+            LevelNode::Max(a, b) | LevelNode::IMax(a, b) if !is_local(a.0) && !is_local(b.0) => {
+                self.env.levels.find(&node)
+            }
+            LevelNode::Param(n) if !is_local(n.0) => self.env.levels.find(&node),
+            _ => None,
         };
-        if global && let Some(l) = self.env.levels.find(&node) {
+        if let Some(l) = from_env {
             return l;
         }
         let (i, fresh) = self.levels.intern(node).expect("levels");
