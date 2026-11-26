@@ -784,7 +784,10 @@ fn map_lines_par(
     std::thread::scope(|sc| {
         let mut rxs = Vec::new();
         for t in 0..readers {
-            let (tx, rx) = mpsc::sync_channel::<Ahead>(2);
+            // No queue: a reader holds at most the chunk it has read, and
+            // starts its next one `readers - 1` chunks before it is
+            // needed. Each chunk held keeps its pages of the file mapped.
+            let (tx, rx) = mpsc::sync_channel::<Ahead>(0);
             rxs.push(rx);
             let pool = &pool;
             sc.spawn(move || {
