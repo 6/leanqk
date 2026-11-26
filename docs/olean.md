@@ -132,13 +132,15 @@ the default for `check`; `src/reader/lazy.rs`):
 - Runs of application and binder lines (nine lines in ten) are read in
   one loop (`src/reader/run.rs`) straight into the table: it matches
   their fixed text and reads their numbers, and stops at any line it does
-  not take, which the scanner then reads. The loop makes no calls, so
-  that its state stays in registers: records go to a batch of 128,
-  copied into the table after it; a line's own id is compared as text
-  with the expected one's, which is counted up in a word; numbers are
-  read 8 digits at a time, a ninth only where the text after the eighth
-  is not what follows a number. The scanner reads strings 8 bytes at a
-  time.
+  not take, which the scanner then reads. A constant line (the commonest
+  of those) does not end the run: the loop hands it to the scanner and
+  goes on. Otherwise the loop makes no calls, so that its state stays in
+  registers: records go to a batch of 512, copied into the table after
+  it; a line's own id is compared as text with the expected one's, which
+  is counted up in a word (and a ninth digit); numbers are read 8 digits
+  at a time, a ninth only where the text after the eighth is not what
+  follows a number; positions in a line's window are masked rather than
+  bounds-checked. The scanner reads strings 8 bytes at a time.
 - On one thread (`--threads 1`) the scanner hands each line straight to
   the reader's state, declarations included. The file is memory-mapped
   and read 16 MiB of whole lines at a time; the pages of each step are
