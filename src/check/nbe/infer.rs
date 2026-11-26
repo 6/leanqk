@@ -359,14 +359,7 @@ impl Nbe<'_> {
                 return Ok(self.a.mk(Val::Sort(l)));
             }
             ExprNode::Const(n, lv) => {
-                if !self.st.list_has_param(lv) {
-                    return self.infer_closed(e, node, infer_only);
-                }
-                if ls == Ls::ID && !infer_only {
-                    return self.infer_param_constant(e, n, lv);
-                }
-                let lv = self.inst_list(lv, ls);
-                return self.infer_constant(n, lv, infer_only);
+                return self.infer_const_expr(e, n, lv, ls, infer_only);
             }
             ExprNode::NatSmall(..) => return self.nat_type(),
             ExprNode::NatBig(b) => {
@@ -494,9 +487,7 @@ impl Nbe<'_> {
         if cached && (infer_only || checked != 0) {
             return Ok(V(ty));
         }
-        // Constants have a cheap check on a miss and need no persistent fact.
-        let shared =
-            !infer_only && !matches!(node, ExprNode::Const(..)) && !self.st.is_local_expr(e);
+        let shared = !infer_only && !self.st.is_local_expr(e);
         let checked_before = shared && self.checked_closed.contains(&(e.0 as u64));
         let ty = if cached && checked_before {
             V(ty)
@@ -519,7 +510,6 @@ impl Nbe<'_> {
         infer_only: bool,
     ) -> R<V> {
         match node {
-            ExprNode::Const(n, lv) => self.infer_constant(n, lv, infer_only),
             ExprNode::App(f, a) => self.infer_app(f, a, env, ls, infer_only),
             ExprNode::Lam(..) if infer_only => Ok(self.a.mk(Val::PiInfer(e, env, ls))),
             ExprNode::Lam(..) => self.check_lambda(e, env, ls),
@@ -598,18 +588,39 @@ impl Nbe<'_> {
         }
     }
 
-    /// A checked constant with an identity substitution keeps its type
-    /// under the same universe parameters as the environment grows.
-    fn infer_param_constant(&mut self, e: ExprId, n: NameId, levels: LevelList) -> R<V> {
+    /// A constant's cache entry records whether its levels are closed.
+    /// Read that entry before inspecting the levels.
+    fn infer_const_expr(
+        &mut self,
+        e: ExprId,
+        n: NameId,
+        levels: LevelList,
+        ls: Ls,
+        infer_only: bool,
+    ) -> R<V> {
         let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - EAGER_SLOTS.ilog2())) as usize;
-        let key = self.lparams_key();
-        // The expression id distinguishes this layout from other entries.
-        let [expr, limit, params, ty] = self.infer_slots[i];
-        if expr == e.0 && limit <= self.limit && u64::from(params) == key {
-            return Ok(V(ty));
+        let [expr, limit, checked, ty] = self.infer_slots[i];
+        let check_identity = ls == Ls::ID && !infer_only;
+        if expr == e.0 {
+            if limit == NONE {
+                if infer_only || checked != 0 {
+                    return Ok(V(ty));
+                }
+            } else if check_identity
+                && limit <= self.limit
+                && u64::from(checked) == self.lparams_key()
+            {
+                return Ok(V(ty));
+            }
         }
-        let ty = self.infer_constant(n, levels, false)?;
-        if let Ok(params) = u32::try_from(key) {
+        if !self.st.list_has_param(levels) {
+            let ty = self.infer_constant(n, levels, infer_only)?;
+            self.infer_slots[i] = [e.0, NONE, u32::from(!infer_only), ty.0];
+            return Ok(ty);
+        }
+        let levels = self.inst_list(levels, ls);
+        let ty = self.infer_constant(n, levels, infer_only)?;
+        if check_identity && let Ok(params) = u32::try_from(self.lparams_key()) {
             self.infer_slots[i] = [e.0, self.limit, params, ty.0];
         }
         Ok(ty)
