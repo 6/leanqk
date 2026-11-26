@@ -311,6 +311,16 @@ impl<T: Copy> Slab<T> {
         }
     }
 
+    /// Push `v`, unless the slab is full (then false).
+    #[inline]
+    pub fn try_push(&mut self, v: T) -> bool {
+        if self.len >= CAP {
+            return false;
+        }
+        self.push(v);
+        true
+    }
+
     #[inline]
     pub fn push(&mut self, v: T) {
         if self.len >= self.room {
@@ -344,9 +354,19 @@ impl<T: Copy> Slab<T> {
 
     /// Push copies of `v` until there are `n` elements.
     pub fn fill_to(&mut self, n: usize, v: T) {
-        while self.len < n {
-            self.push(v);
+        if self.len >= n {
+            return;
         }
+        if n > self.room {
+            self.grow(n);
+        }
+        let base = self.base.as_ptr();
+        for i in self.len..n {
+            // SAFETY: as in `push`: `i < n <= room <= cap` is inside the
+            // mapping.
+            unsafe { base.add(i).write(v) };
+        }
+        self.len = n;
     }
 
     pub fn as_slice(&self) -> &[T] {

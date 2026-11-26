@@ -4,25 +4,37 @@
 //! An application line is `{"app":{"arg":A,"fn":F},"ie":I}` and a
 //! newline; a binder line is `{"forallE":{"binderInfo":"default",`
 //! `"body":B,"name":N,"type":T},"ie":I}` or `{"ie":I,"lam":{...}}`. In an
-//! export with dense ids, `I` is the next expression id. A line of
-//! another shape, or that the loop cannot take for any other reason, ends
-//! the run, and the scanner reads it.
+//! export with dense ids, `I` is the next expression id. A constant line
+//! goes to [`Records::leaf`] (which hands it to the scanner) and the run
+//! goes on; a line of another shape, or that the loop cannot take for any
+//! other reason, ends the run, and the scanner reads it.
 
 use crate::expr::BinderInfo;
 
 /// The bytes the loop looks at from a line's start: the longest line it
-/// takes (a binder with five numbers of 9 digits) is 110 bytes.
-const WIN: usize = 128;
+/// takes (a binder with five numbers of 9 digits) is 110 bytes, and it
+/// reads no further than 8 bytes past a position below [`AT`].
+const WIN: usize = AT + 8;
 
-/// The eight bytes of `w` from `p` (at most `WIN - 8`).
+/// Positions in a window are taken modulo this (a mask rather than a
+/// bounds check; every position the loop reaches is below it anyway).
+const AT: usize = 128;
+
+/// The eight bytes of `w` from `p` (modulo [`AT`]).
 #[inline(always)]
 fn ld(w: &[u8; WIN], p: usize) -> u64 {
-    let p = p.min(WIN - 8);
+    let p = p % AT;
     u64::from_le_bytes(w[p..p + 8].try_into().expect("8 bytes"))
 }
 
+/// The byte of `w` at `p` (modulo [`AT`]).
+#[inline(always)]
+fn byte(w: &[u8; WIN], p: usize) -> u8 {
+    w[p % AT]
+}
+
 /// Lines [`exprs`] reads at most at a time.
-pub(super) const BATCH: u64 = 128;
+pub(super) const BATCH: u64 = 512;
 
 /// Where the records go: at most [`BATCH`] between flushes.
 pub(super) trait Records {
@@ -31,6 +43,13 @@ pub(super) trait Records {
 
     /// Binder `id`; as [`Records::app`].
     fn binder(&mut self, id: u64, pi: bool, bi: BinderInfo, name: u64, ty: u64, body: u64) -> bool;
+
+    /// The constant line at the start of `s`, expression `id`: how many
+    /// bytes it took (its newline too), or `None` to end the run there.
+    fn leaf(&mut self, id: u64, s: &[u8]) -> Option<usize> {
+        let _ = (id, s);
+        None
+    }
 
     /// After each [`exprs`] (which makes no calls, so that the loop keeps
     /// its state in registers), with the ids it took.
@@ -60,6 +79,7 @@ struct Consts {
     ty: u64,
     lam_end: u64,
     ie_head: u64,
+    konst: u64,
 }
 
 /// The eight bytes of `s` from `i` (zero past the end), as a word.
@@ -102,6 +122,7 @@ static CONSTS: Consts = Consts {
     ty: word(b",\"type\":", 0),
     lam_end: word(b"}}\n", 0),
     ie_head: word(b"{\"ie\":", 0),
+    konst: word(b"{\"const\"", 0),
 };
 
 const MASK2: u64 = (1 << 16) - 1;
@@ -119,7 +140,7 @@ fn nat(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(u64, usize)> {
     // As in the scanner: the high bit of each byte that is not a digit.
     let t = (x | x.wrapping_add(k.below_ten)) & 0x8080_8080_8080_8080;
     let n8 = t.trailing_zeros() & !7;
-    if n8 == 0 || (n8 > 8 && v as u8 == b'0') {
+    if n8 == 0 || (n8 > 8 && x as u8 == 0) {
         return None;
     }
     let d = x << (64 - n8);
@@ -127,9 +148,9 @@ fn nat(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(u64, usize)> {
     let d = d.wrapping_mul(k.hundred).wrapping_add(d >> 16) & 0x0000_FFFF_0000_FFFF;
     let d = d.wrapping_mul(k.join) >> 32;
     if n8 == 64 {
-        let c = w[(p + 8).min(WIN - 1)].wrapping_sub(b'0');
+        let c = byte(w, p + 8).wrapping_sub(b'0');
         if c <= 9 {
-            if w[(p + 9).min(WIN - 1)].is_ascii_digit() {
+            if byte(w, p + 9).is_ascii_digit() {
                 return None;
             }
             return Some((d * 10 + c as u64, p + 9));
@@ -145,7 +166,7 @@ fn nat8(w: &[u8; WIN], p: usize, k: &Consts) -> Option<(u64, usize)> {
     let x = v ^ 0x3030_3030_3030_3030;
     let t = (x | x.wrapping_add(k.below_ten)) & 0x8080_8080_8080_8080;
     let n8 = t.trailing_zeros() & !7;
-    if n8 == 0 || (n8 > 8 && v as u8 == b'0') {
+    if n8 == 0 || (n8 > 8 && x as u8 == 0) {
         return None;
     }
     let d = x << (64 - n8);
@@ -165,7 +186,7 @@ fn nat_to(w: &[u8; WIN], p: usize, k: &Consts, word: u64, mask: u64) -> Option<(
     if ld(w, q) & mask == word {
         return Some((d, q));
     }
-    let c = w[q.min(WIN - 1)].wrapping_sub(b'0');
+    let c = byte(w, q).wrapping_sub(b'0');
     if q != p + 8 || c > 9 || ld(w, q + 1) & mask != word {
         return None;
     }
@@ -297,7 +318,7 @@ fn binder(
     // The binder info and its closing quote.
     let (bi, q) = if x == k.default {
         (BinderInfo::Default, p + 8)
-    } else if x == k.implicit && w[(p + 8).min(WIN - 1)] == b'"' {
+    } else if x == k.implicit && byte(w, p + 8) == b'"' {
         (BinderInfo::Implicit, p + 9)
     } else if x == k.inst[0] && ld(w, p + 8) & MASK5 == k.inst[1] {
         (BinderInfo::InstImplicit, p + 13)
@@ -315,17 +336,21 @@ fn binder(
     Some((bi, body, name, ty, q))
 }
 
-/// Whether the id at `p` is `e` (of `len` digits, with text `txt` if
-/// they are at most 8, `shift` being `64 - 8 * len`): where it ends.
+/// Whether the id at `p` is `e` (of `len` digits): where it ends. Its
+/// text is `txt` if it has at most 8 digits (`shift` being
+/// `64 - 8 * len`); if 9, `txt` is that of the first 8 (as a word read
+/// from the text) and `last` the last digit.
 #[inline(always)]
 fn id_is(
     w: &[u8; WIN],
     p: usize,
-    (e, len, txt, shift): (u64, u32, u64, u32),
+    (e, len, txt, shift, last): (u64, u32, u64, u32, u8),
     k: &Consts,
 ) -> Option<usize> {
     if len <= 8 {
         (ld(w, p) << shift == txt).then_some(p + len as usize)
+    } else if len == 9 {
+        (ld(w, p) == txt && byte(w, p + 8) == last).then_some(p + 9)
     } else {
         id_at(w, p, e, len, k)
     }
@@ -334,8 +359,10 @@ fn id_is(
 /// The application and binder lines at the start of `s` while their ids
 /// are `e`, `e + 1`, ... (below `limit`, all of `len` digits): each goes
 /// to `out`, until it refuses one. How many bytes and lines it took.
+/// `SHORT` if the ids have at most 8 digits (`len`), which are then
+/// compared as text.
 #[inline(always)]
-pub(super) fn exprs(
+fn exprs<const SHORT: bool>(
     s: &[u8],
     e: u64,
     (len, limit): (u32, u64),
@@ -345,12 +372,26 @@ pub(super) fn exprs(
     let k = std::hint::black_box(&CONSTS);
     let (mut pos, mut e2) = (0, e);
     // Ids of up to 8 digits are compared as text; `txt` is `e2`'s.
+    // (So that the compiler knows which way `id_is` goes.)
+    let len = if SHORT { len.min(8) } else { len.max(9) };
     let shift = 64 - 8 * len.min(8);
+    // The last line start with a whole window.
+    let Some(stop) = s.len().checked_sub(WIN) else {
+        return (0, 0, txt);
+    };
+    // Ids of 9 digits are compared as text too (see `id_is`); this loop
+    // keeps their text, not `Ids`.
+    let mut last = 0u8;
+    let short_txt = txt;
+    if !SHORT && len == 9 {
+        txt = text(e / 10, 8);
+        last = b'0' + (e % 10) as u8;
+    }
 
-    while e2 < limit
-        && let Some(w) = s.get(pos..pos + WIN)
-    {
-        let w: &[u8; WIN] = w.try_into().expect("a window");
+    while e2 < limit && pos <= stop {
+        let Some(w) = s[pos..].first_chunk::<WIN>() else {
+            break;
+        };
         let head = ld(w, 0);
         let end = if head == k.head0 {
             if ld(w, 8) & MASK6 != k.head1 {
@@ -362,7 +403,7 @@ pub(super) fn exprs(
             let Some((f, q)) = nat_to(w, q + 6, k, k.ie, MASK7) else {
                 break;
             };
-            let Some(q) = id_is(w, q + 7, (e2, len, txt, shift), k) else {
+            let Some(q) = id_is(w, q + 7, (e2, len, txt, shift, last), k) else {
                 break;
             };
             if ld(w, q) & MASK2 != k.end || !out.app(e2, f, a) {
@@ -379,7 +420,7 @@ pub(super) fn exprs(
             let Some((bi, body, name, ty, q)) = binder(w, 26, k, (k.ie, MASK7)) else {
                 break;
             };
-            let Some(q) = id_is(w, q + 7, (e2, len, txt, shift), k) else {
+            let Some(q) = id_is(w, q + 7, (e2, len, txt, shift, last), k) else {
                 break;
             };
             if ld(w, q) & MASK2 != k.end || !out.binder(e2, true, bi, name, ty, body) {
@@ -388,7 +429,7 @@ pub(super) fn exprs(
             q + 2
         } else if head & MASK6 == k.ie_head {
             // `{"ie":`, an id, then (for a lambda) `,"lam":{"binderInfo":"`.
-            let Some(q) = id_is(w, 6, (e2, len, txt, shift), k) else {
+            let Some(q) = id_is(w, 6, (e2, len, txt, shift, last), k) else {
                 break;
             };
             if ld(w, q) != k.lam[0] || ld(w, q + 8) != k.lam[1] || ld(w, q + 16) & MASK6 != k.lam[2]
@@ -402,18 +443,43 @@ pub(super) fn exprs(
                 break;
             }
             q + 3
+        } else if head == k.konst
+            && let Some(n) = out.leaf(e2, &s[pos..])
+            && n > 0
+        {
+            n
         } else {
             break;
         };
         pos += end;
         e2 += 1;
-        // (Ids of more than 8 digits leave it unused.)
-        txt = txt.wrapping_add(1 << 56);
-        if (txt >> 56) as u8 == b':' {
-            txt = carry(txt, len);
+        if SHORT {
+            txt = txt.wrapping_add(1 << 56);
+            if (txt >> 56) as u8 == b':' {
+                txt = carry(txt, len);
+            }
+        } else if len == 9 {
+            last += 1;
+            if last == b':' {
+                last = b'0';
+                txt = next_text(txt, 8);
+            }
         }
     }
-    (pos, e2 - e, txt)
+    (pos, e2 - e, if SHORT { txt } else { short_txt })
+}
+
+/// [`exprs`] for ids of more than 8 digits (the last few lines of the
+/// largest exports), kept out of the loop of the others.
+#[inline(never)]
+fn long_exprs(
+    s: &[u8],
+    e: u64,
+    ids: (u32, u64),
+    txt: u64,
+    out: &mut impl Records,
+) -> (usize, u64, u64) {
+    exprs::<false>(s, e, ids, txt, out)
 }
 
 /// [`exprs`] for any ids, a batch at a time: from `e`, across their
@@ -424,7 +490,11 @@ pub(super) fn all_exprs(s: &[u8], e: u64, ids: &mut Ids, out: &mut impl Records)
     loop {
         ids.seek(e2);
         let limit = ids.next.min(e2 + BATCH);
-        let (n, m, txt) = exprs(&s[pos..], e2, (ids.len, limit), ids.txt, out);
+        let (n, m, txt) = if ids.len <= 8 {
+            exprs::<true>(&s[pos..], e2, (ids.len, limit), ids.txt, out)
+        } else {
+            long_exprs(&s[pos..], e2, (ids.len, limit), ids.txt, out)
+        };
         out.flush(e2..e2 + m);
         pos += n;
         e2 += m;

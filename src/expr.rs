@@ -262,8 +262,10 @@ pub struct Exprs {
     /// own terms (see `crate::slab`).
     pool: Pool,
     /// Compound nodes appended without hash-consing ([`Exprs::append`])
-    /// get their data at [`Exprs::index`]: from this id on, theirs is not
-    /// set yet (`u32::MAX`: all is).
+    /// get their data at [`Exprs::index`]. Until then the data stops
+    /// short of them, or (where a node with data came after them) holds
+    /// placeholders: this is the first of those (`u32::MAX`: none). See
+    /// [`Exprs::data_start`].
     data_from: u32,
     lets: Interner<LetBinder>,
     bigs: Vec<BigUint>,
@@ -347,7 +349,7 @@ impl Exprs {
 
     #[inline]
     pub fn data(&self, e: ExprId) -> ExprData {
-        debug_assert!(e.0 < self.data_from, "data not set yet");
+        debug_assert!(e.0 < self.data_start(), "data not set yet");
         *self.data.get(e.0)
     }
 
@@ -400,11 +402,9 @@ impl Exprs {
                 | ExprNode::Let(..)
                 | ExprNode::Proj(..)
         ));
-        let id = self.arena.push_unindexed(node)?;
-        // Set at `index`, from the children's (until then, the data
-        // stops short of it, or holds a placeholder).
-        self.data_from = self.data_from.min(id);
-        Ok(ExprId(id))
+        // Its data is set at `index`, from the children's (until then,
+        // the data stops short of it: see `data_from`).
+        Ok(ExprId(self.arena.push_unindexed(node)?))
     }
 
     fn compound(&self, node: ExprNode) -> bool {
@@ -418,13 +418,19 @@ impl Exprs {
         )
     }
 
+    /// The first node whose data may not be set yet.
+    #[inline]
+    fn data_start(&self) -> u32 {
+        self.data_from.min(self.data.len() as u32)
+    }
+
     /// Set the data [`Exprs::append`] left for later. Children come
     /// before their parents, so one pass in order does it (and, with
     /// little else in the loop, the processor can wait on several
     /// children's data at once).
     fn finish_data(&mut self) {
-        let from = self.data_from as usize;
-        if from == u32::MAX as usize {
+        let from = self.data_start() as usize;
+        if from >= self.arena.len() {
             return;
         }
         self.data.fill_to(self.arena.len(), ExprData(0));
@@ -487,6 +493,9 @@ impl Exprs {
                 ExprNode::FVar(_) => ExprData::FVAR,
             };
             // Placeholders for the compound nodes before it.
+            if self.data.len() < id as usize {
+                self.data_from = self.data_from.min(self.data.len() as u32);
+            }
             self.data.fill_to(id as usize, ExprData(0));
             self.data.push(d);
         }

@@ -411,12 +411,11 @@ impl<T: Node> Big<T> {
     /// Add `node` without looking it up or indexing it: until
     /// [`Big::index`], lookups do not see it.
     pub fn push_unindexed(&mut self, node: T) -> Result<u32, Overflow> {
-        let id = self.nodes.len();
-        if id >= crate::slab::CAP {
+        let id = self.nodes.len() as u32;
+        if !self.nodes.try_push(node) {
             return Err(Overflow(self.what));
         }
-        self.nodes.push(node);
-        Ok(id as u32)
+        Ok(id)
     }
 
     /// Index every node anew, on `threads` threads. If two nodes are

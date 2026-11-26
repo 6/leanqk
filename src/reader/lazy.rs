@@ -138,6 +138,13 @@ fn decode(side: &[u32], r: u64) -> Node {
     }
 }
 
+/// A binder record's side record: name, type and body.
+#[inline(always)]
+fn binder_side(side: &[u32], r: u64) -> [u32; 3] {
+    let o = r as u32 as usize;
+    *side[o..].first_chunk().expect("a binder's side record")
+}
+
 /// Intern record `n` in `env`, its children's arena ids being `ids` (in
 /// the order of [`Node::kids`]); its arena id.
 #[inline]
@@ -170,15 +177,13 @@ fn add(env: &mut Env, append: bool, n: Node, ids: [u32; 3]) -> R<u32> {
 /// its arena id.
 #[inline(always)]
 fn add_node(env: &mut Env, append: bool, node: ExprNode) -> R<u32> {
+    // (Arena ids are below `slab::CAP`, so a done record's low half holds
+    // one.)
     let id = if append {
         env.exprs.append_compound(node)?
     } else {
         env.exprs.intern(node, &env.levels)?.0
     };
-    // (Checkers' own ids start at 2^31.)
-    if id.0 >= 1 << 31 {
-        return Err(Fail::from(Overflow("too many expressions")));
-    }
     Ok(id.0)
 }
 
@@ -203,6 +208,28 @@ pub(super) struct Builder {
     /// Its batches of records and side records.
     batch: Vec<u64>,
     side_batch: Vec<u32>,
+    /// Records of earlier declarations that records use and that are not
+    /// interned (yet), as records are added: what
+    /// [`Builder::promote_shared`] interns. Unless `scan_at_end`, when it
+    /// finds them in one pass at the end instead (the records read ahead
+    /// on other threads are added without looking).
+    cands: Vec<u32>,
+    scan_at_end: bool,
+    /// Where [`Builder::exprs`] puts records before they join `recs`.
+    fresh: Vec<u64>,
+}
+
+/// If `c` (a child of a record from `from` on) is a record of an earlier
+/// declaration, not interned: push it to `cands` (an alias too; what it
+/// stands for is looked up when the candidates are promoted).
+#[inline(always)]
+fn note_old(recs: &[u64], from: usize, c: u64, cands: &mut Vec<u32>) {
+    if (c as usize) < from
+        && let Some(&r) = recs.get(c as usize)
+        && r & DONE == 0
+    {
+        cands.push(c as u32);
+    }
 }
 
 impl Builder {
@@ -215,6 +242,19 @@ impl Builder {
         b.recs.reserve((size / 56).min(MAX_IDS) as usize);
         b.side.reserve((size / 120).min(u32::MAX as u64) as usize);
         b
+    }
+
+    /// Have [`Builder::promote_shared`] scan all records at the end (for a
+    /// read that adds records without [`note_old`]).
+    pub(super) fn scan_at_end(&mut self) {
+        self.scan_at_end = true;
+    }
+
+    /// The first record of the current declaration, for [`note_old`] (0,
+    /// so that it notes nothing, when scanning at the end).
+    #[inline(always)]
+    fn note_from(&self) -> usize {
+        if self.scan_at_end { 0 } else { self.from }
     }
 
     /// Whether `id` is the next expression id.
@@ -236,15 +276,19 @@ impl Builder {
         if !self.next(id) || f >= id || a >= id {
             return false;
         }
+        let from = self.note_from();
+        note_old(&self.recs, from, f, &mut self.cands);
+        note_old(&self.recs, from, a, &mut self.cands);
         self.recs.push(T_APP << TAG | f << ID_BITS | a);
         true
     }
 
     /// The application and binder lines at the start of `s` (see `run`),
-    /// with the names' ids mapped by `names`: how many bytes and lines it
-    /// took.
+    /// the names below `names` mapping to themselves, and the constant
+    /// lines among them that `leaf` takes (giving how many bytes each took
+    /// and its arena id): how many bytes and lines it took.
     #[inline(never)]
-    pub(super) fn exprs(&mut self, s: &[u8], names: &IdMap) -> (usize, u64) {
+    pub(super) fn exprs(&mut self, s: &[u8], names: u64, leaf: &mut LeafLine<'_>) -> (usize, u64) {
         let e = self.recs.len() as u64;
         // Room for as many lines as fit in `s`, at 32 bytes or more each.
         if e + s.len() as u64 / 32 >= MAX_IDS {
@@ -254,17 +298,23 @@ impl Builder {
             self.batch = vec![0; BATCH];
             self.side_batch = vec![0; 3 * BATCH];
         }
+        let from = self.note_from();
         let mut out = Out {
             batch: (&mut self.batch[..]).try_into().expect("a batch"),
             side_batch: (&mut self.side_batch[..]).try_into().expect("a batch"),
             sn: 0,
             o: self.side.len(),
-            recs: &mut self.recs,
+            recs: &mut self.fresh,
             side: &mut self.side,
-            names: names.identity_len().unwrap_or(0).min(u32::MAX as u64),
-            max_name: 0,
+            names: names.min(u32::MAX as u64),
+            old: &self.recs[..from],
+            cands: &mut self.cands,
+            leaf: Some(leaf),
         };
-        super::run::all_exprs(s, e, &mut self.ids, &mut out)
+        let res = super::run::all_exprs(s, e, &mut self.ids, &mut out);
+        self.recs.extend_from_slice(&self.fresh);
+        self.fresh.clear();
+        res
     }
 
     /// The next expression id.
@@ -330,22 +380,36 @@ impl Runs {
             self.batch = vec![0; BATCH];
             self.side_batch = vec![0; 3 * BATCH];
         }
+        let side_from = self.side.len();
         let mut out = Out {
             batch: (&mut self.batch[..]).try_into().expect("a batch"),
             side_batch: (&mut self.side_batch[..]).try_into().expect("a batch"),
             sn: 0,
-            o: self.side.len(),
+            o: side_from,
             recs: &mut self.recs,
             side: &mut self.side,
             names: u32::MAX as u64,
-            max_name: 0,
+            old: &[],
+            cands: &mut Vec::new(),
+            leaf: None,
         };
         let (n, m) = super::run::all_exprs(s, e, &mut self.ids, &mut out);
-        (n, m, out.max_name)
+        // (Only binders, whose side records start with the name.)
+        let max_name = self.side[side_from..].iter().step_by(3).max();
+        (n, m, max_name.map_or(0, |&x| x as u64))
     }
 }
 
 impl Builder {
+    /// [`note_old`] for the children of the record about to be added.
+    #[inline(always)]
+    fn note_kids(&mut self, kids: &[u64]) {
+        let from = self.note_from();
+        for &c in kids {
+            note_old(&self.recs, from, c, &mut self.cands);
+        }
+    }
+
     /// Push a side record of `fields` with tag `t` and `flags`.
     #[inline(always)]
     fn with_side(&mut self, t: u64, flags: u64, fields: &[u32]) -> bool {
@@ -375,6 +439,7 @@ impl Builder {
             return false;
         }
         let t = if pi { T_PI } else { T_LAM };
+        self.note_kids(&[ty, body]);
         self.with_side(t, bi_bits(bi), &[name.0, ty as u32, body as u32])
     }
 
@@ -390,6 +455,7 @@ impl Builder {
             return false;
         }
         let f = [name.0, ty as u32, value as u32, body as u32];
+        self.note_kids(&[ty, value, body]);
         self.with_side(T_LET, nondep as u64, &f)
     }
 
@@ -398,6 +464,7 @@ impl Builder {
         if !self.next(id) || e >= id {
             return false;
         }
+        self.note_kids(&[e]);
         self.with_side(T_PROJ, 0, &[s.0, i, e as u32])
     }
 
@@ -489,6 +556,11 @@ impl Builder {
                         left += mark(recs, (r & ID_MASK) as u32);
                     }
                     T_ALIAS => left += mark(recs, (r & ID_MASK) as u32),
+                    T_LAM | T_PI => {
+                        let [_, ty, body] = binder_side(&self.side, r);
+                        left += mark(recs, ty);
+                        left += mark(recs, body);
+                    }
                     _ => {
                         let (kids, k) = decode(&self.side, r).kids();
                         for &c in &kids[..k] {
@@ -518,6 +590,21 @@ impl Builder {
                 T_ALIAS => {
                     self.recs[x] = r;
                     continue;
+                }
+                t @ (T_LAM | T_PI) => {
+                    let [name, ty, body] = binder_side(&self.side, r);
+                    let ty = ExprId(self.arena_id(env, append, ty)?);
+                    let body = ExprId(self.arena_id(env, append, body)?);
+                    let (bi, name) = (bits_bi(r >> 32), NameId(name));
+                    add_node(
+                        env,
+                        append,
+                        if t == T_PI {
+                            ExprNode::Pi(bi, name, ty, body)
+                        } else {
+                            ExprNode::Lam(bi, name, ty, body)
+                        },
+                    )?
                 }
                 _ => {
                     let n = decode(&self.side, r);
@@ -565,13 +652,27 @@ impl Builder {
                     stack.pop();
                     continue;
                 }
-                let n = decode(&self.side, r);
-                let (kids, k) = n.kids();
+                let t = tag(r);
+                let (kids, k) = match t {
+                    T_APP => (
+                        [(r >> ID_BITS & ID_MASK) as u32, (r & ID_MASK) as u32, 0],
+                        2,
+                    ),
+                    T_LAM | T_PI => {
+                        let [_, ty, body] = binder_side(&self.side, r);
+                        ([ty, body, 0], 2)
+                    }
+                    _ => decode(&self.side, r).kids(),
+                };
                 let mut ready = true;
                 let mut ids = [0u32; 3];
                 for (&c, id) in kids[..k].iter().zip(&mut ids) {
-                    let c = self.real(c);
-                    let r = self.recs[c as usize];
+                    let (mut c, mut r) = (c, self.recs[c as usize]);
+                    // (An alias is never marked done.)
+                    if r >> TAG == T_ALIAS {
+                        c = (r & ID_MASK) as u32;
+                        r = self.recs[c as usize];
+                    }
                     if r & DONE != 0 {
                         *id = r as u32;
                     } else {
@@ -582,7 +683,24 @@ impl Builder {
                 if !ready {
                     continue;
                 }
-                self.recs[top as usize] = DONE | add(env, append, n, ids)? as u64;
+                let e = |i: usize| ExprId(ids[i]);
+                let id = match t {
+                    T_APP => add_node(env, append, ExprNode::App(e(0), e(1)))?,
+                    T_LAM | T_PI => {
+                        let (bi, name) = (bits_bi(r >> 32), NameId(binder_side(&self.side, r)[0]));
+                        add_node(
+                            env,
+                            append,
+                            if t == T_PI {
+                                ExprNode::Pi(bi, name, e(0), e(1))
+                            } else {
+                                ExprNode::Lam(bi, name, e(0), e(1))
+                            },
+                        )?
+                    }
+                    _ => add(env, append, decode(&self.side, r), ids)?,
+                };
+                self.recs[top as usize] = DONE | id as u64;
                 stack.pop();
             }
             Ok(())
@@ -651,6 +769,16 @@ impl Builder {
     /// record left is used by its own declaration's value alone: built
     /// once here, not again for every value that uses it.
     fn promote_shared(&mut self, env: &mut Env, append: bool, threads: usize) -> R<()> {
+        if !self.scan_at_end {
+            // Noted as the records were added, in order.
+            for c in std::mem::take(&mut self.cands) {
+                let c = self.real(c);
+                if self.recs[c as usize] & DONE == 0 {
+                    self.promote_old(env, append, c)?;
+                }
+            }
+            return self.promote_old_roots(env, append);
+        }
         self.bounds.push(self.from as u32);
         let bounds = std::mem::take(&mut self.bounds);
         // The records to intern, found on `threads` threads (a group of
@@ -714,6 +842,10 @@ impl Builder {
                 }
             }
         }
+        self.promote_old_roots(env, append)
+    }
+
+    fn promote_old_roots(&mut self, env: &mut Env, append: bool) -> R<()> {
         for i in std::mem::take(&mut self.old_roots) {
             if self.recs[i as usize] & DONE == 0 {
                 self.promote_old(env, append, i)?;
@@ -788,6 +920,10 @@ fn make(sink: &mut dyn TermSink, n: Node, ids: [ExprId; 3], owned: bool) -> Expr
     }
 }
 
+/// What [`Builder::exprs`] hands a constant line to: given its expected
+/// id and the input from it, how many bytes it took and its arena id.
+pub(super) type LeafLine<'a> = dyn FnMut(u64, &[u8]) -> Option<(usize, u32)> + 'a;
+
 /// Lines in a batch of [`Builder::exprs`].
 const BATCH: usize = super::run::BATCH as usize;
 
@@ -806,8 +942,12 @@ struct Out<'a> {
     /// The names that map to themselves; binders with other names (in an
     /// export whose names are not so) take the slow way.
     names: u64,
-    /// The largest name a binder used.
-    max_name: u64,
+    /// The records of earlier declarations, for [`note_old`] (not in
+    /// `recs`, so that the compiler knows that they stay put).
+    old: &'a [u64],
+    cands: &'a mut Vec<u32>,
+    /// For constant lines (see [`Builder::exprs`]).
+    leaf: Option<&'a mut LeafLine<'a>>,
 }
 
 impl super::run::Records for Out<'_> {
@@ -816,6 +956,8 @@ impl super::run::Records for Out<'_> {
         if f >= id || a >= id {
             return false;
         }
+        note_old(self.old, self.old.len(), f, self.cands);
+        note_old(self.old, self.old.len(), a, self.cands);
         self.batch[id as usize % BATCH] = T_APP << TAG | f << ID_BITS | a;
         true
     }
@@ -826,7 +968,8 @@ impl super::run::Records for Out<'_> {
         if name >= self.names || ty >= id || body >= id || o > u32::MAX as usize - 4 {
             return false;
         }
-        self.max_name = self.max_name.max(name);
+        note_old(self.old, self.old.len(), ty, self.cands);
+        note_old(self.old, self.old.len(), body, self.cands);
         let side = &mut self.side_batch.as_chunks_mut::<3>().0[self.sn % BATCH];
         *side = [name as u32, ty as u32, body as u32];
         self.sn += 1;
@@ -834,6 +977,13 @@ impl super::run::Records for Out<'_> {
         let t = if pi { T_PI } else { T_LAM };
         self.batch[id as usize % BATCH] = t << TAG | bi_bits(bi) << 32 | o as u64;
         true
+    }
+
+    #[inline(always)]
+    fn leaf(&mut self, id: u64, s: &[u8]) -> Option<usize> {
+        let (n, e) = self.leaf.as_mut()?(id, s)?;
+        self.batch[id as usize % BATCH] = DONE | e as u64;
+        Some(n)
     }
 
     fn flush(&mut self, ids: std::ops::Range<u64>) {

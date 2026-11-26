@@ -521,6 +521,9 @@ impl scan::Sink for ToBatch<'_> {
 impl scan::Sink for State {
     #[inline(never)]
     fn app(&mut self, id: u64, f: u64, a: u64) -> R<()> {
+        if self.capture.is_some() {
+            return not_captured();
+        }
         if self.mdata.is_empty()
             && let Some(b) = self.lazy.as_deref_mut()
         {
@@ -543,6 +546,9 @@ impl scan::Sink for State {
         ty: u64,
         body: u64,
     ) -> R<()> {
+        if self.capture.is_some() {
+            return not_captured();
+        }
         if self.mdata.is_empty()
             && let Some(b) = self.lazy.as_deref_mut()
         {
@@ -565,10 +571,18 @@ impl scan::Sink for State {
     }
 
     fn item(&mut self, item: Item, line: &[u8], us: &[u64]) -> R<()> {
+        if let Some((want, _)) = self.capture
+            && !matches!(item, Item::Expr { id, node: RawExpr::Const(..) } if id == want)
+        {
+            return not_captured();
+        }
         self.apply(Src { text: line, us }, item)
     }
 
     fn decl(&mut self, d: &scan::Decl, us: &[u64]) -> Option<R<()>> {
+        if self.capture.is_some() {
+            return Some(not_captured());
+        }
         Some(self.scanned_decl(d, us))
     }
 
@@ -576,6 +590,12 @@ impl scan::Sink for State {
     fn fail(&mut self, f: Fail) {
         self.failed = Some(f);
     }
+}
+
+/// A line that [`State::leaf_line`] leaves to be read again.
+#[cold]
+fn not_captured() -> R<()> {
+    bad("internal: not a constant of the run")
 }
 
 /// Where the text and level ranges of an item point: a batch's buffers,
@@ -755,6 +775,9 @@ fn map_lines_par(
     threads: usize,
 ) -> Result<ReadStats, ReadError> {
     let b = m.bytes();
+    if let Some(l) = st.lazy.as_deref_mut() {
+        l.scan_at_end();
+    }
     let chunks = b.len().div_ceil(AHEAD).max(1);
     let readers = (threads - 1).clamp(1, chunks);
     // Chunks the applying thread is done with, for reuse.
@@ -1482,6 +1505,10 @@ struct State {
     append: bool,
     /// The failure of a line [`scan::line`] gave to this state.
     failed: Option<Fail>,
+    /// While a run of lines (see `lazy`) hands a constant line to
+    /// [`State::leaf_line`] (with the builder taken out of `lazy`): the
+    /// id the line must have, and then its arena id.
+    capture: Option<(u64, Option<u32>)>,
     /// With `append`: index the names and expressions at the end, on
     /// this many threads.
     index_threads: Option<usize>,
@@ -1596,6 +1623,7 @@ impl State {
             lazy: None,
             append: false,
             failed: None,
+            capture: None,
             index_threads: None,
         }
     }
@@ -1723,9 +1751,14 @@ impl State {
             if l.seen_first
                 && matches!(data.get(pos + 2..pos + 4), Some(b"ap" | b"fo" | b"ie"))
                 && self.mdata.is_empty()
-                && let Some(b) = self.lazy.as_deref_mut()
+                && let Some(mut b) = self.lazy.take()
             {
-                let (n, m) = b.exprs(&data[pos..], &self.name_ids);
+                let names = self.name_ids.identity_len().unwrap_or(0);
+                let us = &mut l.us;
+                let (n, m) = b.exprs(&data[pos..], names, &mut |id, line| {
+                    self.leaf_line(id, line, us)
+                });
+                self.lazy = Some(b);
                 pos += n;
                 k += m;
                 if pos == data.len() {
@@ -1756,6 +1789,26 @@ impl State {
         }
         l.lines = k;
         res
+    }
+
+    /// A constant line in a run of lines (the builder being out of
+    /// `lazy`): if the scanner takes it and it is expression `id`, how many
+    /// bytes it took and its arena id. Else nothing is changed (but what
+    /// interning a constant's levels may add), and the run ends there, so
+    /// that the line is read again as any other.
+    #[cold]
+    #[inline(never)]
+    fn leaf_line(&mut self, id: u64, line: &[u8], us: &mut Vec<u64>) -> Option<(usize, u32)> {
+        self.capture = Some((id, None));
+        let r = scan::line(line, us, self);
+        let got = self.capture.take().and_then(|(_, e)| e);
+        match r {
+            Some((n, true)) => got.map(|e| (n, e)),
+            _ => {
+                self.failed = None;
+                None
+            }
+        }
     }
 
     /// A run read ahead (see [`map_lines_par`]), if it can be taken as it
@@ -2102,6 +2155,10 @@ impl State {
         };
         if !fresh {
             self.shared_exprs += 1;
+        }
+        if let Some((_, got)) = &mut self.capture {
+            *got = Some(e.0);
+            return Ok(());
         }
         if let Some(b) = self.lazy.as_deref_mut() {
             if b.leaf(id, e.0) {
@@ -2971,6 +3028,80 @@ mod tests {
             for threads in [1, 3] {
                 let lazy = read(&p, true, threads).map(|_| ()).expect_err("fails");
                 assert_eq!((lazy.line, &lazy.msg), (eager.line, &eager.msg), "{tail:?}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Constant lines inside runs of application lines (which the run
+    /// hands to the scanner as it goes) read as without lazy proofs, and a
+    /// bad one fails at its own line.
+    #[test]
+    fn constants_in_runs_read_as_alone() {
+        let meta = r#"{"meta":{"exporter":{"name":"lean4export","version":"3.1.0"},"format":{"version":"3.1.0"}}}"#;
+        let head = [
+            r#"{"in":1,"str":{"pre":0,"str":"A"}}"#,
+            r#"{"in":2,"str":{"pre":0,"str":"u"}}"#,
+            r#"{"il":1,"param":2}"#,
+            r#"{"ie":0,"sort":1}"#,
+            r#"{"bvar":0,"ie":1}"#,
+            r#"{"axiom":{"isUnsafe":false,"levelParams":[2],"name":1,"type":0}}"#,
+        ];
+        let dir = std::env::temp_dir().join(format!("nitrolean-consts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        // Ids from 2: applications, with constant `c` at id 5 and 9.
+        let lines = |c: &str| {
+            let mut v: Vec<String> = Vec::new();
+            for id in 2..40u32 {
+                v.push(if id == 5 || id == 9 {
+                    c.replace("ID", &id.to_string())
+                } else {
+                    format!(r#"{{"app":{{"arg":1,"fn":{}}},"ie":{id}}}"#, id - 1)
+                });
+            }
+            v.push(r#"{"in":3,"str":{"pre":0,"str":"t"}}"#.into());
+            v.push(r#"{"thm":{"all":[3],"levelParams":[2],"name":3,"type":0,"value":39}}"#.into());
+            v
+        };
+        let read = |p: &std::path::Path, lazy_proofs| {
+            read_file_with(
+                p,
+                &Options {
+                    lazy_proofs,
+                    threads: 1,
+                },
+            )
+        };
+        for (i, c) in [
+            r#"{"const":{"name":1,"us":[1]},"ie":ID}"#,
+            // An undefined name, an undefined level, an id out of turn.
+            r#"{"const":{"name":7,"us":[1]},"ie":ID}"#,
+            r#"{"const":{"name":1,"us":[5]},"ie":ID}"#,
+            r#"{"const":{"name":1,"us":[1]},"ie":1ID}"#,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let mut text = format!("{meta}\n");
+            for l in head.iter().map(|s| s.to_string()).chain(lines(c)) {
+                text.push_str(&l);
+                text.push('\n');
+            }
+            let p = dir.join(format!("case{i}.ndjson"));
+            std::fs::write(&p, text).expect("write");
+            match (read(&p, false), read(&p, true)) {
+                (Ok((a, _)), Ok((b, _))) => {
+                    let d = crate::compare::compare(&a, &b);
+                    assert!(
+                        d.only_a.is_empty() && d.only_b.is_empty() && d.differ.is_empty(),
+                        "case {i}: the reads differ"
+                    );
+                    assert_eq!(i, 0, "case {i} reads");
+                }
+                (a, b) => {
+                    let err = |r: Result<_, ReadError>| r.map(|_| ()).map_err(|e| (e.line, e.msg));
+                    assert_eq!(err(a), err(b), "case {i}");
+                }
             }
         }
         let _ = std::fs::remove_dir_all(&dir);
