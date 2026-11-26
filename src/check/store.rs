@@ -369,6 +369,7 @@ impl<'e> Store<'e> {
         }
     }
 
+    #[inline(always)]
     pub fn list_has_param(&self, l: LevelList) -> bool {
         if is_local(l.0) {
             self.list_hp[(l.0 & !LOCAL) as usize]

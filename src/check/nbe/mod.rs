@@ -125,8 +125,8 @@ pub struct Nbe<'e> {
     /// Entries of `infer_memo` checked under the declaration's universe
     /// parameters, as `level_checked`.
     pub(super) level_checked_memo: Vec<usize>,
-    level_cache: lsub::Lsub<(LevelId, Ls), LevelId>,
-    list_cache: lsub::Lsub<(LevelList, Ls), LevelList>,
+    level_cache: lsub::Lsub<LevelId>,
+    list_cache: lsub::Lsub<LevelList>,
     /// Universe parameter lists by their names (see `lsub::ParamClasses`).
     param_classes: lsub::ParamClasses,
     const_type: IdMap<(NameId, LevelList), V>,
@@ -607,19 +607,21 @@ impl<'e> Nbe<'e> {
         if ls == Ls::ID || !self.st.level_has_param(l) {
             return l;
         }
-        if let Some(r) = self.level_cache.get((l, ls)) {
+        if let Some(r) = self.level_cache.get_direct((l, ls)) {
             return r;
         }
         self.inst_level_new(l, ls)
     }
 
-    /// `inst_level` not in its memo yet.
+    /// Fetch an evicted substitution result or instantiate the level.
     #[inline(never)]
     fn inst_level_new(&mut self, l: LevelId, ls: Ls) -> LevelId {
+        if let Some(r) = self.level_cache.get_evicted((l, ls)) {
+            return r;
+        }
         let node = self.a.ls(ls);
-        let r = univ::instantiate_level(&mut self.st, l, |st, n| lsub::replacement(st, node, n));
-        self.level_cache.insert((l, ls), r);
-        r
+        self.level_cache
+            .instantiate_uncached(&mut self.st, l, ls, node)
     }
 
     #[inline(always)]
@@ -627,17 +629,32 @@ impl<'e> Nbe<'e> {
         if ls == Ls::ID || !self.st.list_has_param(ll) {
             return ll;
         }
-        if let Some(r) = self.list_cache.get((ll, ls)) {
+        if let Some(r) = self.list_cache.get_direct((ll, ls)) {
             return r;
         }
         self.inst_list_new(ll, ls)
     }
 
-    /// `inst_list` not in its memo yet.
+    /// Fetch an evicted substitution result or instantiate the list.
     #[inline(never)]
     fn inst_list_new(&mut self, ll: LevelList, ls: Ls) -> LevelList {
+        if let Some(r) = self.list_cache.get_evicted((ll, ls)) {
+            return r;
+        }
         let node = self.a.ls(ls);
-        let r = univ::instantiate_list(&mut self.st, ll, |st, n| lsub::replacement(st, node, n));
+        let cache = &mut self.level_cache;
+        let r = univ::map_level_list(&mut self.st, ll, |st, l| {
+            if !st.level_has_param(l) {
+                return l;
+            }
+            if let Some(result) = cache
+                .get_direct((l, ls))
+                .or_else(|| cache.get_evicted((l, ls)))
+            {
+                return result;
+            }
+            cache.instantiate_uncached(st, l, ls, node)
+        });
         self.list_cache.insert((ll, ls), r);
         r
     }
