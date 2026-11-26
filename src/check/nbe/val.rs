@@ -272,6 +272,9 @@ pub struct Arena {
     /// Scratch words for building a spine.
     sp_buf: Vec<u32>,
     envs: Vec<EnvRec>,
+    /// The first cell made on each cell, or 0: such a cell is not in
+    /// `envtable`, and a cell with none is known to have no child.
+    env_first: Vec<u32>,
     envtable: Table32<{ LIMIT.ilog2() }>,
     lss: Vec<LsNode>,
     lstable: Table,
@@ -340,6 +343,7 @@ impl Arena {
             sps: vec![0],
             sptable: Table::new(),
             sp_buf: Vec::new(),
+            env_first: vec![0],
             envs: vec![EnvRec {
                 node: EnvNode {
                     prev: Env::NIL,
@@ -393,6 +397,8 @@ impl Arena {
         self.sp_buf.clear();
         self.sptable.clear();
         self.envs.truncate(1);
+        self.env_first.truncate(1);
+        self.env_first[0] = 0;
         self.envtable.clear();
         self.lss.truncate(1);
         self.lstable.clear();
@@ -419,6 +425,7 @@ impl Arena {
             + self.sps.capacity() * 4
             + self.sptable.capacity() * 8
             + self.envs.capacity() * 17
+            + self.env_first.capacity() * 4
             + self.thunks.len() * 16
             + self.nutable.capacity() * size_of::<u32>()
             + self.conses.len() * 12
@@ -935,29 +942,44 @@ impl Arena {
         let Self {
             envs,
             envtable,
+            env_first,
             recs,
             ..
         } = self;
-        let slot = match envtable.find_or_slot(h, |id| at(envs, id as usize).node == node) {
-            Ok(id) => return Env(id),
-            Err(slot) => slot,
+        let first = *at(env_first, env.0 as usize);
+        // A cell's first child is kept beside it, not in the table: a
+        // cell with none cannot have the child sought, and most cells
+        // have one child at most.
+        let slot = if first == 0 {
+            None
+        } else if at(envs, first as usize).node == node {
+            return Env(first);
+        } else {
+            match envtable.find_or_slot(h, |id| at(envs, id as usize).node == node) {
+                Ok(id) => return Env(id),
+                Err(slot) => Some(slot),
+            }
         };
         let id = envs.len() as u32;
         if id >= LIMIT {
             out_of_room();
         }
-        let p = envs[env.0 as usize];
-        let fv = p.len & HAS_FVAR_BIT != 0 || recs[v.0 as usize].flags & HAS_FVAR != 0;
+        let p = *at(envs, env.0 as usize);
+        let fv = p.len & HAS_FVAR_BIT != 0 || at(recs, v.0 as usize).flags & HAS_FVAR != 0;
         let len = ((p.len & LEN_BITS) + 1) | if fv { HAS_FVAR_BIT } else { 0 };
-        let j = envs[p.jump.0 as usize];
+        let j = *at(envs, p.jump.0 as usize);
         let (lp, lj) = (p.len & LEN_BITS, j.len & LEN_BITS);
-        let ljj = envs[j.jump.0 as usize].len & LEN_BITS;
+        let ljj = at(envs, j.jump.0 as usize).len & LEN_BITS;
         let jump = if lp - lj == lj - ljj { j.jump } else { env };
         envs.push(EnvRec { node, len, jump });
-        envtable.insert_at(slot, h, id, |id| {
-            let EnvNode { prev, v } = at(envs, id as usize).node;
-            h32(env_hash(prev, v))
-        });
+        env_first.push(0);
+        match slot {
+            None => *at_mut(env_first, env.0 as usize) = id,
+            Some(slot) => envtable.insert_at(slot, h, id, |id| {
+                let EnvNode { prev, v } = at(envs, id as usize).node;
+                h32(env_hash(prev, v))
+            }),
+        }
         Env(id)
     }
 
