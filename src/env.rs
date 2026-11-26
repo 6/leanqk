@@ -239,8 +239,27 @@ pub trait TermSink {
 pub(crate) trait LazyValues: Send + Sync {
     /// Decode value `k` into `sink`.
     fn decode(&self, env: &Env, k: u32, sink: &mut dyn TermSink) -> Result<ExprId, String>;
+    /// [`LazyValues::decode`] into a checker's store.
+    fn decode_store(
+        &self,
+        env: &Env,
+        k: u32,
+        sink: &mut crate::check::store::Store<'_>,
+    ) -> Result<ExprId, String> {
+        self.decode(env, k, sink)
+    }
     fn count(&self) -> usize;
     fn heap_bytes(&self) -> usize;
+}
+
+/// Where a declaration's value is (see [`Env::value_into`]).
+enum Lazy<'a> {
+    /// Read at load time (or none).
+    No(Option<ExprId>),
+    /// Value `k` of a source.
+    Yes(&'a dyn LazyValues, u32),
+    /// Left in a file, with no source.
+    Missing,
 }
 
 #[derive(Default)]
@@ -284,18 +303,40 @@ impl Env {
     /// this is called (nothing is cached, so the shared arena never
     /// changes). An error means the file is malformed.
     pub fn value_into(&self, d: &Decl, sink: &mut dyn TermSink) -> Result<Option<ExprId>, String> {
+        match self.lazy_value(d) {
+            Lazy::No(v) => Ok(v),
+            Lazy::Yes(l, k) => l.decode(self, k, sink).map(Some),
+            Lazy::Missing => Err("internal: a lazy value without its source".into()),
+        }
+    }
+
+    /// [`Env::value_into`] a checker's store.
+    pub(crate) fn value_into_store(
+        &self,
+        d: &Decl,
+        sink: &mut crate::check::store::Store<'_>,
+    ) -> Result<Option<ExprId>, String> {
+        match self.lazy_value(d) {
+            Lazy::No(v) => Ok(v),
+            Lazy::Yes(l, k) => l.decode_store(self, k, sink).map(Some),
+            Lazy::Missing => Err("internal: a lazy value without its source".into()),
+        }
+    }
+
+    /// Where the value of `d` is.
+    fn lazy_value(&self, d: &Decl) -> Lazy<'_> {
         let v = match d.kind {
             DeclKind::Definition { value, .. }
             | DeclKind::Theorem { value, .. }
             | DeclKind::Opaque { value, .. } => value,
-            _ => return Ok(None),
+            _ => return Lazy::No(None),
         };
         if !is_lazy(v) {
-            return Ok(Some(v));
+            return Lazy::No(Some(v));
         }
         match &self.lazy {
-            Some(l) => l.decode(self, v.0 - LAZY_BASE, sink).map(Some),
-            None => Err("internal: a lazy value without its source".into()),
+            Some(l) => Lazy::Yes(&**l, v.0 - LAZY_BASE),
+            None => Lazy::Missing,
         }
     }
 
