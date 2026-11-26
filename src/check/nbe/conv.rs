@@ -512,8 +512,16 @@ impl Nbe<'_> {
         if len == 0 || len != sl - si {
             return Ok(false);
         }
-        let tpre = self.a.sp_prefix(tsp, ti);
-        let spre = self.a.sp_prefix(ssp, si);
+        let tpre = if ti == 0 {
+            Sp::NIL
+        } else {
+            self.a.sp_prefix(tsp, ti)
+        };
+        let spre = if si == 0 {
+            Sp::NIL
+        } else {
+            self.a.sp_prefix(ssp, si)
+        };
         if th != sh || tpre != spre {
             let tf = self.with_spine(th, tpre);
             let sf = self.with_spine(sh, spre);
