@@ -1053,10 +1053,12 @@ impl Nbe<'_> {
                     self.ensure_sort(s)?;
                     self.thunk(dom, env, ls)
                 };
-                let ed = self.thunk(pi_dom, pi_env, pi_ls);
-                if dv != ed && !self.is_def_eq(dv, ed)? {
-                    // Lean compares the domains first and fails there.
-                    return Ok(false);
+                if !self.syn_eq_term(dv, pi_dom, pi_env, pi_ls) {
+                    let ed = self.thunk(pi_dom, pi_env, pi_ls);
+                    if dv != ed && !self.is_def_eq(dv, ed)? {
+                        // Lean compares the domains first and fails there.
+                        return Ok(false);
+                    }
                 }
                 let x = self.push_fvar(n, dv, None, bi);
                 let next = self.a.cons(env, x);
