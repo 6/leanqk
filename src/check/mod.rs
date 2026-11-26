@@ -588,7 +588,7 @@ fn check_single_nbe(tc: &mut Tc<'_>, nb: &mut Nbe<'_>, d: &Decl) -> R<()> {
     // A value left in its file is built in the store for this check only:
     // nothing else unfolds the declaration being checked.
     match nb.read_value(d) {
-        Ok(Some(value)) => nb.check_value(value, d.ty),
+        Ok(Some(value)) => nb.check_decl_value(value, d.ty),
         Ok(None) => Ok(()),
         Err(e) => err(format!("malformed value: {e}")),
     }

@@ -143,7 +143,11 @@ fn inference_checks_respect_declaration_scopes() {
     let bad_universe = check((1, 8), 2, (1, 8)).unwrap_err();
     assert_eq!(bad_universe.kind, FailKind::Rejected);
     assert_eq!(bad_universe.decl, "next");
-    assert!(bad_universe.msg.contains("undefined universe level parameter"));
+    assert!(
+        bad_universe
+            .msg
+            .contains("undefined universe level parameter")
+    );
 }
 
 /// Without a recognized arithmetic definition, reducing a large literal
@@ -195,5 +199,51 @@ fn large_nat_unary_reduction_declines() {
         );
         // A successor case that ignores the recursive result needs one step.
         assert!(check(large, 46).is_ok());
+    }
+}
+
+/// The last domain is A in the context A, B, x : A.
+#[test]
+fn declaration_lambda_domains_are_checked_in_scope() {
+    use nitrolean::check::{FailKind, check_env_jobs};
+    use nitrolean::reader::read_str;
+
+    let check = |domain, after_let| {
+        let x_body = if after_let { 10 } else { 9 };
+        let export = format!(
+            r#"{{"meta":{{"format":{{"version":"3.1.0"}}}}}}
+{{"in":1,"str":{{"pre":0,"str":"binderClaim"}}}}
+{{"il":1,"succ":0}}
+{{"ie":0,"sort":1}}
+{{"ie":1,"bvar":0}}
+{{"ie":2,"bvar":1}}
+{{"ie":3,"bvar":2}}
+{{"ie":4,"sort":0}}
+{{"ie":5,"forallE":{{"binderInfo":"default","body":0,"name":0,"type":3}}}}
+{{"ie":6,"forallE":{{"binderInfo":"default","body":5,"name":0,"type":2}}}}
+{{"ie":7,"forallE":{{"binderInfo":"default","body":6,"name":0,"type":0}}}}
+{{"ie":8,"forallE":{{"binderInfo":"default","body":7,"name":0,"type":0}}}}
+{{"ie":9,"lam":{{"binderInfo":"default","body":4,"name":0,"type":{domain}}}}}
+{{"ie":10,"letE":{{"name":0,"type":0,"value":3,"body":9,"nondep":false}}}}
+{{"ie":11,"lam":{{"binderInfo":"default","body":{x_body},"name":0,"type":2}}}}
+{{"ie":12,"lam":{{"binderInfo":"default","body":11,"name":0,"type":0}}}}
+{{"ie":13,"lam":{{"binderInfo":"default","body":12,"name":0,"type":0}}}}
+{{"def":{{"all":[1],"hints":{{"regular":1}},"levelParams":[],"name":1,"safety":"safe","type":8,"value":13}}}}
+"#,
+        );
+        check_env_jobs(&read_str(&export).unwrap(), 1)
+    };
+
+    assert!(check(3, false).is_ok());
+    // Inserting the let makes #2 refer to B instead of A. Without the
+    // let, #0 refers to x, which is not a type.
+    for (domain, after_let, message) in [
+        (3, true, "declaration type mismatch"),
+        (1, false, "type expected"),
+    ] {
+        let failure = check(domain, after_let).unwrap_err();
+        assert_eq!(failure.kind, FailKind::Rejected);
+        assert_eq!(failure.decl, "binderClaim");
+        assert!(failure.msg.contains(message), "{}", failure.msg);
     }
 }

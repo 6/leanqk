@@ -1148,14 +1148,53 @@ impl Nbe<'_> {
     pub fn check_value(&mut self, value: ExprId, ty: ExprId) -> R<()> {
         let tv = self.thunk(ty, Env::NIL, Ls::ID);
         if !self.check_against(value, Env::NIL, Ls::ID, tv)? {
-            let vt = self.infer_term(value, Env::NIL, Ls::ID, true)?;
-            return err(format!(
-                "declaration type mismatch, value has type {} but is expected to have type {}",
-                self.pp(vt),
-                self.pp(tv)
-            ));
+            return self.value_type_mismatch(value, tv);
         }
         Ok(())
+    }
+
+    /// Check a value against its already checked declaration type.
+    pub(in crate::check) fn check_decl_value(&mut self, value: ExprId, ty: ExprId) -> R<()> {
+        if !self.check_decl_value_type(value, ty)? {
+            let tv = self.thunk(ty, Env::NIL, Ls::ID);
+            return self.value_type_mismatch(value, tv);
+        }
+        Ok(())
+    }
+
+    fn value_type_mismatch(&mut self, value: ExprId, expected: V) -> R<()> {
+        let given = self.infer_term(value, Env::NIL, Ls::ID, true)?;
+        err(format!(
+            "declaration type mismatch, value has type {} but is expected to have type {}",
+            self.pp(given),
+            self.pp(expected)
+        ))
+    }
+
+    fn check_decl_value_type(&mut self, mut value: ExprId, mut ty: ExprId) -> R<bool> {
+        let mut env = Env::NIL;
+        let mut opened = Vec::new();
+        while let ExprNode::Lam(bi, n, dom, body) = self.st.node(value)
+            && let ExprNode::Pi(_, _, expected_dom, expected_body) = self.st.node(ty)
+            && dom == expected_dom
+        {
+            // Both annotations are the same term in the same environment.
+            // The declaration type check already verified the domain.
+            let dv = self.thunk(dom, env, Ls::ID);
+            let x = self.push_fvar(n, dv, None, bi);
+            let next = self.a.cons(env, x);
+            self.ctx_push(env, dom, Ls::ID, next);
+            opened.push(x);
+            env = next;
+            value = body;
+            ty = expected_body;
+        }
+        let expected = self.thunk(ty, env, Ls::ID);
+        let result = self.check_against(value, env, Ls::ID, expected);
+        for x in opened.into_iter().rev() {
+            self.pop_fvar(x);
+        }
+        result
     }
 
     /// The binder info of free variable `k`, for printing.
