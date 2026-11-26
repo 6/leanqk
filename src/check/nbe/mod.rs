@@ -107,6 +107,11 @@ pub struct Nbe<'e> {
     pub(super) eager_slots: Vec<[u32; 4]>,
     /// Values of terms evaluated by `thunk` at once (`eager`).
     pub(super) eager_memo: memo::EnvMemo<1>,
+    /// Lists of values read from environments (`read_tuple`).
+    pub(super) tuples: memo::EnvMemo<0>,
+    /// A direct-mapped front of `tuples`: (environment, range, holes (two
+    /// words), id).
+    pub(super) tuple_slots: Vec<[u32; 5]>,
     /// Types of terms (`infer_term`): the type, and whether checked.
     pub(super) infer_memo: memo::EnvMemo<2>,
     /// A direct-mapped front of `infer_memo`: (term, environment,
@@ -277,6 +282,8 @@ impl<'e> Nbe<'e> {
             big_table: HashTable::new(),
             eager_slots: vec![[val::NONE; 4]; EAGER_SLOTS],
             eager_memo: Default::default(),
+            tuples: Default::default(),
+            tuple_slots: vec![[val::NONE; 5]; memo::TUPLE_SLOTS],
             infer_memo: Default::default(),
             infer_slots: vec![[val::NONE; 4]; EAGER_SLOTS],
             level_checked_memo: Vec::new(),
@@ -479,6 +486,8 @@ impl<'e> Nbe<'e> {
         self.trim_holes_memo.fill([val::NONE; 4]);
         self.eager_slots.fill([val::NONE; 4]);
         self.eager_memo.clear();
+        self.tuples.clear();
+        self.tuple_slots.fill([val::NONE; 5]);
         self.infer_memo.clear();
         self.infer_slots.fill([val::NONE; 4]);
         self.level_checked_memo.clear();
