@@ -237,6 +237,12 @@ fn state(opts: &Options, size: u64, append: bool) -> State {
 }
 
 fn read_regular(f: &File, size: u64, threads: usize, st: State) -> Result<Done, ReadError> {
+    if threads > 1
+        && st.lazy.is_some()
+        && let Some(m) = crate::olean::Mapped::new(f)
+    {
+        return finish(st, |st| map_lines_par(st, &m, threads));
+    }
     if threads > 1 {
         // The interning stage runs on this thread.
         let parsers = threads - 1;
@@ -631,11 +637,13 @@ fn finish(
     }
     let mut stats = res?;
     if let Some(b) = st.lazy.take() {
-        st.env.lazy = b.finish(&mut st.env, st.append).map_err(|e| ReadError {
-            line: 0,
-            class: e.class,
-            msg: e.msg,
-        })?;
+        st.env.lazy = b
+            .finish(&mut st.env, st.append, st.index_threads.unwrap_or(1))
+            .map_err(|e| ReadError {
+                line: 0,
+                class: e.class,
+                msg: e.msg,
+            })?;
     }
     stats.shared_exprs = st.shared_exprs;
     stats.id_map_bytes = id_map_bytes;
@@ -728,6 +736,175 @@ fn map_lines(st: &mut State, m: &crate::olean::Mapped) -> Result<ReadStats, Read
     st.lines(&mut lines, &b[pos..])?;
     m.release(pos, b.len());
     st.end_lines(lines)
+}
+
+/// Bytes of a mapped file each reading-ahead thread takes at a time.
+const AHEAD: usize = 4 << 20;
+
+/// A mapped file with lazy proofs, on `threads` threads: the others read
+/// the runs of application and binder lines ahead, a chunk of [`AHEAD`]
+/// bytes at a time, into tables of their own (where they guess each
+/// run's first id from its first line); this one applies the chunks in
+/// order, adding each run read ahead if it starts at the next id (and
+/// its names are known), else reading its lines itself, as it does all
+/// the other lines.
+fn map_lines_par(
+    st: &mut State,
+    m: &crate::olean::Mapped,
+    threads: usize,
+) -> Result<ReadStats, ReadError> {
+    let b = m.bytes();
+    let chunks = b.len().div_ceil(AHEAD).max(1);
+    let readers = (threads - 1).clamp(1, chunks);
+    // Chunks the applying thread is done with, for reuse.
+    let pool = std::sync::Mutex::new(Vec::<Ahead>::new());
+    std::thread::scope(|sc| {
+        let mut rxs = Vec::new();
+        for t in 0..readers {
+            let (tx, rx) = mpsc::sync_channel::<Ahead>(2);
+            rxs.push(rx);
+            let pool = &pool;
+            sc.spawn(move || {
+                for c in (t..chunks).step_by(readers) {
+                    let reuse = pool.lock().unwrap_or_else(|e| e.into_inner()).pop();
+                    let a = read_ahead(b, c * AHEAD, (c + 1) * AHEAD, reuse.unwrap_or_default());
+                    if tx.send(a).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+        let mut lines = Lines::default();
+        let mut done = 0;
+        for c in 0..chunks {
+            let Ok(a) = rxs[c % readers].recv() else {
+                break;
+            };
+            for p in &a.pieces {
+                if let Some(r) = &p.run
+                    && st.add_run(&mut lines, r, &a.runs, p.bytes.len())
+                {
+                    continue;
+                }
+                st.lines(&mut lines, &b[p.bytes.clone()])?;
+            }
+            m.release(done, a.end);
+            done = a.end;
+            pool.lock().unwrap_or_else(|e| e.into_inner()).push(a);
+        }
+        drop(rxs);
+        st.end_lines(lines)
+    })
+}
+
+/// A chunk read ahead: its pieces in order, the runs' tables, and where
+/// its last line ends.
+#[derive(Default)]
+struct Ahead {
+    pieces: Vec<Piece>,
+    runs: lazy::Runs,
+    end: usize,
+}
+
+/// Lines of a chunk: a run read ahead, or lines left as they are.
+struct Piece {
+    bytes: std::ops::Range<usize>,
+    run: Option<RunAhead>,
+}
+
+/// A run read ahead: its first id, its lines, its records and side
+/// records (in [`Ahead::runs`]), and the largest name its binders use.
+struct RunAhead {
+    first: u64,
+    lines: u64,
+    recs: std::ops::Range<usize>,
+    side: std::ops::Range<usize>,
+    max_name: u64,
+}
+
+/// Read the runs of the lines that start in `b[lo..hi]`.
+fn read_ahead(b: &[u8], lo: usize, hi: usize, mut a: Ahead) -> Ahead {
+    let start_at = |p: usize| {
+        if p == 0 {
+            0
+        } else if p >= b.len() {
+            b.len()
+        } else {
+            memchr_from(b, p - 1).map_or(b.len(), |q| q + 1)
+        }
+    };
+    let (start, end) = (start_at(lo), start_at(hi));
+    a.pieces.clear();
+    a.runs.recs.clear();
+    a.runs.side.clear();
+    a.end = end;
+    let mut pos = start;
+    let mut other = start;
+    while pos < end {
+        let rest = &b[pos..end];
+        if matches!(rest.get(2..4), Some(b"ap" | b"fo" | b"ie"))
+            && let Some(e) = ie_of(rest)
+        {
+            let (r0, s0) = (a.runs.recs.len(), a.runs.side.len());
+            let (n, k, max_name) = a.runs.take(rest, e);
+            if k > 0 {
+                if other < pos {
+                    a.pieces.push(Piece {
+                        bytes: other..pos,
+                        run: None,
+                    });
+                }
+                a.pieces.push(Piece {
+                    bytes: pos..pos + n,
+                    run: Some(RunAhead {
+                        first: e,
+                        lines: k,
+                        recs: r0..a.runs.recs.len(),
+                        side: s0..a.runs.side.len(),
+                        max_name,
+                    }),
+                });
+                pos += n;
+                other = pos;
+                continue;
+            }
+        }
+        pos += line_len(rest);
+    }
+    if other < end {
+        a.pieces.push(Piece {
+            bytes: other..end,
+            run: None,
+        });
+    }
+    a
+}
+
+/// The `ie` of an application or binder line, guessed: after `{"ie":` at
+/// its start, or else before the `}` that ends it (as `"ie":I}`).
+fn ie_of(s: &[u8]) -> Option<u64> {
+    let digits = |d: &[u8]| -> Option<u64> {
+        if d.is_empty() || d.len() > 10 {
+            return None;
+        }
+        Some(d.iter().fold(0u64, |v, &c| v * 10 + (c - b'0') as u64))
+    };
+    if let Some(r) = s.strip_prefix(b"{\"ie\":") {
+        let n = r.iter().take(11).take_while(|c| c.is_ascii_digit()).count();
+        return digits(&r[..n]);
+    }
+    let w = &s[..s.len().min(160)];
+    let nl = w.iter().position(|&c| c == b'\n')?;
+    let line = w[..nl].strip_suffix(b"}")?;
+    let n = line
+        .iter()
+        .rev()
+        .take(11)
+        .take_while(|c| c.is_ascii_digit())
+        .count();
+    let (head, d) = line.split_at(line.len() - n);
+    head.ends_with(b"\"ie\":").then_some(())?;
+    digits(d)
 }
 
 /// The first newline at or after `from`.
@@ -1576,6 +1753,31 @@ impl State {
         }
         l.lines = k;
         res
+    }
+
+    /// A run read ahead (see [`map_lines_par`]), if it can be taken as it
+    /// is here: whether it was.
+    fn add_run(&mut self, l: &mut Lines, r: &RunAhead, runs: &lazy::Runs, bytes: usize) -> bool {
+        if !l.seen_first || !self.mdata.is_empty() {
+            return false;
+        }
+        let Some(b) = self.lazy.as_deref_mut() else {
+            return false;
+        };
+        if b.next_id() != r.first
+            || !b.append_run(
+                &runs.recs[r.recs.clone()],
+                &runs.side[r.side.clone()],
+                r.side.start,
+                r.max_name,
+                &self.name_ids,
+            )
+        {
+            return false;
+        }
+        l.lines += r.lines;
+        l.bytes += bytes as u64;
+        true
     }
 
     /// A line the scanner left: parsed once, with the general parser.
@@ -2558,6 +2760,71 @@ mod tests {
                 d.only_a.is_empty() && d.only_b.is_empty() && d.differ.is_empty(),
                 "lazy={lazy_proofs}, threads={threads}: the reads differ"
             );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Runs read ahead on other threads that cannot be taken as they are
+    /// (a name not yet defined, an id out of place, a child id too large)
+    /// read as on one thread: the same environment, or the same error at
+    /// the same line.
+    #[test]
+    fn runs_read_ahead_fail_as_on_one_thread() {
+        let meta = r#"{"meta":{"exporter":{"name":"lean4export","version":"3.1.0"},"format":{"version":"3.1.0"}}}"#;
+        let head = [
+            r#"{"in":1,"str":{"pre":0,"str":"A"}}"#,
+            r#"{"il":1,"succ":0}"#,
+            r#"{"ie":0,"sort":1}"#,
+            r#"{"bvar":0,"ie":1}"#,
+        ];
+        let cases: [&[&str]; 4] = [
+            // A binder's name defined only after it.
+            &[
+                r#"{"forallE":{"binderInfo":"default","body":0,"name":2,"type":0},"ie":2}"#,
+                r#"{"in":2,"str":{"pre":0,"str":"x"}}"#,
+            ],
+            // An id that skips one.
+            &[r#"{"app":{"arg":1,"fn":0},"ie":3}"#],
+            // A child after its parent.
+            &[
+                r#"{"app":{"arg":1,"fn":0},"ie":2}"#,
+                r#"{"app":{"arg":4,"fn":2},"ie":3}"#,
+            ],
+            // A run whose first id repeats one.
+            &[
+                r#"{"app":{"arg":1,"fn":0},"ie":2}"#,
+                r#"{"app":{"arg":1,"fn":0},"ie":2}"#,
+            ],
+        ];
+        let dir = std::env::temp_dir().join(format!("nitrolean-ahead-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        for (i, tail) in cases.iter().enumerate() {
+            let mut text = format!("{meta}\n");
+            for l in head.iter().chain(tail.iter()) {
+                text.push_str(l);
+                text.push('\n');
+            }
+            let p = dir.join(format!("case{i}.ndjson"));
+            std::fs::write(&p, text).expect("write");
+            let read = |threads| {
+                let opts = Options {
+                    lazy_proofs: true,
+                    threads,
+                };
+                read_file_with(&p, &opts).map_err(|e| (e.line, e.class, e.msg))
+            };
+            match (read(1), read(3)) {
+                (Ok((a, _)), Ok((b, _))) => {
+                    let d = crate::compare::compare(&a, &b);
+                    assert!(
+                        d.only_a.is_empty() && d.only_b.is_empty() && d.differ.is_empty(),
+                        "case {i}: the reads differ"
+                    );
+                }
+                (one, several) => {
+                    assert_eq!(one.err(), several.err(), "case {i}");
+                }
+            }
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

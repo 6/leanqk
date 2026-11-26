@@ -142,9 +142,15 @@ the default for `check`; `src/reader/lazy.rs`):
 - On one thread (`--threads 1`) the scanner hands each line straight to
   the reader's state, declarations included. The file is memory-mapped
   and read 16 MiB of whole lines at a time; the pages of each step are
-  dropped after it, so the map does not add to peak memory. On several, each thread
-  parses chunks of whole lines, and their batches are applied in file
-  order on one thread.
+  dropped after it, so the map does not add to peak memory. On several,
+  with lazy proofs (`src/reader.rs`, `map_lines_par`), the other threads
+  run the loop above on chunks of 4 MiB of the mapped file ahead of the
+  reader, into tables of their own, guessing each run's first id from
+  its first line; the reader takes each chunk in order, adds a run read
+  ahead if it starts at the next id and its names are known (on
+  Mathlib, 94% of the lines), and reads every other line itself, as on
+  one thread. Without lazy proofs, each thread parses chunks of whole
+  lines, and their batches are applied in file order on one thread.
 - The records since the last declaration line are added in two passes:
   one down marks the records a term needs, one up adds them in order, so
   no stack is needed. Older records are added from a stack.
