@@ -11,6 +11,12 @@
   only when a block starts, so blocks that start together before memory
   grows all run. On the corpus, three neighbouring declarations of about
   2.6 GB each reach 5.3 GB on two threads (2.7 GB on one).
+- With several checking threads, the caches each keeps between declarations
+  hold at most its share of 256 MiB (`NITROLEAN_CACHE_MIB`); past it, the
+  thread's next declaration starts from nothing. Memory the heap takes
+  after checking starts on several threads is in small pages. On Mathlib,
+  peak memory at 8 jobs is 2365 MiB (2417 before), at 12 jobs 2491 MiB
+  (2575 before); one job is unchanged.
 - A closed-term evaluator for proofs by kernel computation, with fast paths
   for `Nat`, `Int`, `Array` and `List` operations, the core `DecidableEq`
   instances, class methods such as `+` at a known instance and `casesOn`

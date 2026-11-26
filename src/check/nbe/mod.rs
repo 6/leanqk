@@ -215,6 +215,9 @@ pub struct Nbe<'e> {
     key_envs: IdMap<(val::Env, u64), val::Env>,
     /// Lazy delta steps in this declaration.
     pub(crate) decl_steps: u32,
+    /// Bytes this checker's caches may keep between declarations (see
+    /// [`Nbe::set_cache_share`]).
+    cache_share: usize,
 }
 
 /// The log of the number of slots in the table of declarations found by
@@ -341,9 +344,31 @@ impl<'e> Nbe<'e> {
             case_shapes: Default::default(),
             read_exprs: 0,
             bvar_use: IdMap::default(),
+            cache_share: usize::MAX,
             key_envs: IdMap::default(),
             decl_steps: 0,
         }
+    }
+
+    /// Let the caches kept between declarations hold about `bytes`: past
+    /// that, the next declaration starts from nothing, and the storage
+    /// goes. Checkers on many threads share the memory this way.
+    pub fn set_cache_share(&mut self, bytes: usize) {
+        self.cache_share = bytes;
+    }
+
+    /// Bytes of the caches kept between declarations, roughly.
+    fn kept_bytes(&self) -> usize {
+        fn map<K, W, S>(m: &hashbrown::HashMap<K, W, S>) -> usize {
+            m.capacity() * (size_of::<(K, W)>() + 1)
+        }
+        self.a.heap_bytes()
+            + self.tuples.heap_bytes()
+            + self.infer_memo.heap_bytes()
+            + self.eager_memo.heap_bytes()
+            + map(&self.bvar_use)
+            + self.checked_closed.capacity() * (size_of::<u64>() + 1)
+            + map(&self.ctxs)
     }
 
     /// Start on a declaration checked against the first `limit` blocks.
@@ -351,12 +376,13 @@ impl<'e> Nbe<'e> {
     /// every declaration (a free variable is identified by its type, value
     /// and depth), and the environment only grows. What depends on the
     /// declaration goes: its universe parameters, and so which terms with
-    /// universe parameters are known to be well-formed. Past a size, all
-    /// of it goes.
+    /// universe parameters are known to be well-formed. Past a size (or
+    /// this checker's share of memory), all of it goes.
     pub fn begin(&mut self, limit: u32) {
         self.end_scopes();
         self.st.reset_nat_unfold_work();
         if self.a.len() > KEEP_VALUES
+            || (self.cache_share != usize::MAX && self.kept_bytes() > self.cache_share)
             || self.st.local_exprs() > KEEP_VALUES + self.name_exprs + self.read_exprs
             || self.name_exprs > NAMES_KEEP
             || self.read_exprs > READ_KEEP
@@ -534,6 +560,21 @@ impl<'e> Nbe<'e> {
         self.syn_t.fill([val::NONE; 8]);
         shrink(&mut self.level_eq);
         shrink(&mut self.major_induct);
+        if self.kept_bytes() > self.cache_share {
+            // Over this checker's share: the storage kept for the next
+            // declarations goes, then what is known of the environment's
+            // terms.
+            self.a = Arena::new();
+            self.tuples = Default::default();
+            self.infer_memo = Default::default();
+            self.eager_memo = Default::default();
+            if self.kept_bytes() > self.cache_share {
+                self.bvar_use = IdMap::default();
+                self.checked_closed = IdSet::default();
+                self.ctxs = IdMap::default();
+                self.lparams_ids = Default::default();
+            }
+        }
         self.fresh = true;
     }
 

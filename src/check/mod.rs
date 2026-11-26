@@ -70,6 +70,22 @@ pub struct Report {
 /// Blocks a worker takes at a time.
 const CHUNK: usize = 32;
 
+/// Called before declarations are checked on several threads: the
+/// program's allocator settings for that (see `small_heap_pages` in
+/// `src/alloc.rs`).
+pub static BEFORE_PARALLEL: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Bytes the checkers' caches may keep between declarations when several
+/// check at once, shared equally (see `Nbe::set_cache_share`):
+/// `NITROLEAN_CACHE_MIB`, else 256 MiB. One checker alone keeps less than
+/// that on Mathlib.
+fn cache_bytes() -> usize {
+    std::env::var("NITROLEAN_CACHE_MIB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map_or(256 << 20, |mib| mib.saturating_mul(1 << 20))
+}
+
 /// Stack for each checker thread: the checker recurses on terms. Under a
 /// limit on address space, see [`thread_plan`].
 const STACK_BYTES: usize = 1 << 30;
@@ -238,7 +254,18 @@ fn check_decls(env: &Env, decls: &[Decl], jobs: usize) -> Result<Report, BlockPr
         times,
         busy: AtomicUsize::new(0),
         budget: mem_budget(crate::stats::rss_bytes().unwrap_or(0)),
+        // One checker has the memory to itself: no cap.
+        cache_share: if jobs == 1 {
+            usize::MAX
+        } else {
+            cache_bytes() / jobs
+        },
     };
+    if jobs > 1
+        && let Some(f) = BEFORE_PARALLEL.get()
+    {
+        f();
+    }
     std::thread::scope(|s| {
         let workers: Vec<_> = (0..jobs)
             .map(|i| {
@@ -287,6 +314,8 @@ struct Shared<'e> {
     /// Threads checking a block.
     busy: AtomicUsize,
     budget: u64,
+    /// What each thread's caches may keep between declarations.
+    cache_share: usize,
 }
 
 impl Shared<'_> {
@@ -344,7 +373,9 @@ fn worker(sh: &Shared<'_>, jobs: usize, worker: usize) {
     let env = sh.env;
     let store = || Store::with_decls(env, sh.decls, !sh.ext.nat_ops_complete);
     let mut tc = Tc::new(store(), sh.ext, 0);
+    let share = sh.cache_share;
     let mut nb = Nbe::new(store(), sh.ext);
+    nb.set_cache_share(share);
     let mut i = 0;
     let mut end = 0;
     let mut polls = 0;
@@ -357,6 +388,7 @@ fn worker(sh: &Shared<'_>, jobs: usize, worker: usize) {
             // The evaluator caches assume the visible export prefix grows.
             if range.start < end {
                 nb = Nbe::new(store(), sh.ext);
+                nb.set_cache_share(share);
             }
             i = range.start;
             end = range.end;
@@ -398,6 +430,7 @@ fn worker(sh: &Shared<'_>, jobs: usize, worker: usize) {
                 // Rebuild: the checker's state may be inconsistent.
                 tc = Tc::new(store(), sh.ext, 0);
                 nb = Nbe::new(store(), sh.ext);
+                nb.set_cache_share(share);
                 Err((FailKind::Resource, msg))
             }
         };
