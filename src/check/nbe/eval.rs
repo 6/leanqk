@@ -66,11 +66,31 @@ impl Nbe<'_> {
         self.ticks += 1;
         let base = self.terms.len();
         let mut f = e;
-        while let ExprNode::App(g, a) = self.st.node(f) {
-            self.terms.push(a);
-            f = g;
-        }
-        let h = self.eval(f, env, ls);
+        let head = loop {
+            match self.st.node(f) {
+                ExprNode::App(g, a) => {
+                    self.terms.push(a);
+                    f = g;
+                }
+                n => break n,
+            }
+        };
+        // The head as `eval` would, from its node read already.
+        let h = match head {
+            ExprNode::BVar(i) => match self.a.lookup(env, i) {
+                Some(v) => self.force(v),
+                None => self.bottom(Sp::NIL),
+            },
+            ExprNode::Const(n, lv) => {
+                let ls = if self.st.data(f).has_level_param() {
+                    ls
+                } else {
+                    Ls::ID
+                };
+                self.eval_const(n, lv, ls)
+            }
+            _ => self.eval(f, env, ls),
+        };
         let vbase = self.vargs.len();
         for k in (base..self.terms.len()).rev() {
             let a = *super::val::at(&self.terms, k);
