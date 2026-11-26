@@ -240,7 +240,7 @@ const EAGER_PROOF_TERMS: bool = false;
 
 /// A constant is memoized while at least one lookup in `MEMO_RATIO` hits,
 /// judged after `MEMO_TRIAL` lookups.
-const MEMO_TRIAL: u32 = 256;
+const MEMO_TRIAL: u32 = 32;
 const MEMO_RATIO: u32 = 32;
 
 /// What evaluation goes on with: a value, or a term to evaluate in place
