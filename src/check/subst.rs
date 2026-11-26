@@ -2,8 +2,9 @@
 //! lifting them, and instantiating universe parameters. These follow
 //! `instantiate.cpp` and `abstract.cpp` in Lean's kernel. Each traversal
 //! skips subterms that cannot change (by their cached loose-bvar range,
-//! free-variable flag or level-parameter flag) and memoizes on
-//! `(subterm, binder depth)`, so shared subterms are visited once.
+//! free-variable flag or level-parameter flag). Term traversals start
+//! memoizing at the eighth compound-node visit. The memo key is
+//! `(subterm, binder depth)`.
 
 use std::mem;
 
@@ -91,6 +92,39 @@ impl<const UP: bool> Rewrite for Shift<UP> {
     }
 }
 
+// Short walks avoid touching the table. Once the budget expires, clear any
+// entries from a previous walk before looking up or recording results.
+struct WalkMemo {
+    entries: IdMap<(ExprId, u32), ExprId>,
+    remaining: u8,
+}
+
+impl WalkMemo {
+    fn new(entries: IdMap<(ExprId, u32), ExprId>) -> Self {
+        Self {
+            entries,
+            remaining: 8,
+        }
+    }
+
+    fn get(&mut self, key: (ExprId, u32)) -> Option<ExprId> {
+        if self.remaining == 0 {
+            return self.entries.get(&key).copied();
+        }
+        self.remaining -= 1;
+        if self.remaining == 0 {
+            self.entries.clear();
+        }
+        None
+    }
+
+    fn insert(&mut self, key: (ExprId, u32), value: ExprId) {
+        if self.remaining == 0 {
+            self.entries.insert(key, value);
+        }
+    }
+}
+
 impl Store<'_> {
     fn take_memo(&mut self) -> IdMap<(ExprId, u32), ExprId> {
         let mut m = mem::take(&mut self.memo);
@@ -106,13 +140,7 @@ impl Store<'_> {
     }
 
     #[inline(always)]
-    fn walk(
-        &mut self,
-        e: ExprId,
-        off: u32,
-        op: impl Rewrite,
-        memo: &mut IdMap<(ExprId, u32), ExprId>,
-    ) -> ExprId {
+    fn walk(&mut self, e: ExprId, off: u32, op: impl Rewrite, memo: &mut WalkMemo) -> ExprId {
         if op.affects(self.data(e), off) {
             self.rewrite(e, off, op, memo)
         } else {
@@ -121,13 +149,7 @@ impl Store<'_> {
     }
 
     // The node's metadata has already passed the operation's subtree check.
-    fn rewrite(
-        &mut self,
-        e: ExprId,
-        off: u32,
-        op: impl Rewrite,
-        memo: &mut IdMap<(ExprId, u32), ExprId>,
-    ) -> ExprId {
+    fn rewrite(&mut self, e: ExprId, off: u32, op: impl Rewrite, memo: &mut WalkMemo) -> ExprId {
         let node = self.node(e);
         match node {
             ExprNode::BVar(i) => return op.bvar(self, e, i, off),
@@ -139,7 +161,7 @@ impl Store<'_> {
             | ExprNode::Str(_) => return e,
             _ => {}
         }
-        if let Some(&r) = memo.get(&(e, off)) {
+        if let Some(r) = memo.get((e, off)) {
             return r;
         }
         let r = match node {
@@ -179,9 +201,9 @@ impl Store<'_> {
         if !op.affects(self.data(e), 0) {
             return e;
         }
-        let mut memo = self.take_memo();
+        let mut memo = WalkMemo::new(mem::take(&mut self.memo));
         let r = self.rewrite(e, 0, op, &mut memo);
-        self.put_memo(memo);
+        self.put_memo(memo.entries);
         r
     }
 
@@ -237,7 +259,7 @@ impl Store<'_> {
         if !op.affects(self.data(e), 0) {
             return e;
         }
-        let mut memo = IdMap::default();
+        let mut memo = WalkMemo::new(IdMap::default());
         self.rewrite(e, 0, op, &mut memo)
     }
 
@@ -252,7 +274,7 @@ impl Store<'_> {
         if !op.affects(self.data(e), 0) {
             return e;
         }
-        let mut memo = IdMap::default();
+        let mut memo = WalkMemo::new(IdMap::default());
         self.rewrite(e, 0, op, &mut memo)
     }
 
@@ -370,5 +392,38 @@ impl Store<'_> {
         };
         memo.insert((e, 0), r);
         r
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::env::Env;
+    use crate::expr::BinderInfo;
+
+    #[test]
+    fn memo_distinguishes_substitutions_and_binder_depths() {
+        let env = Env::new();
+        let mut st = Store::new(&env);
+        let ty = st.sort(LevelId::ZERO);
+        let zero = st.bvar(0);
+        let one = st.bvar(1);
+        let two = st.bvar(2);
+        let shared = st.app(one, zero);
+        let binder = st.lam(BinderInfo::Default, NameId::ANON, ty, shared);
+        let term = st.apps(binder, &[shared; 12]);
+
+        let first_body = st.app(ty, zero);
+        let first_binder = st.lam(BinderInfo::Default, NameId::ANON, ty, first_body);
+        let first_arg = st.app(zero, ty);
+        let first = st.apps(first_binder, &[first_arg; 12]);
+        assert_eq!(st.instantiate1(term, ty), first);
+
+        let second_body = st.app(two, zero);
+        let second_binder = st.lam(BinderInfo::Default, NameId::ANON, ty, second_body);
+        let second_arg = st.app(zero, one);
+        let second = st.apps(second_binder, &[second_arg; 12]);
+        assert_eq!(st.instantiate1(shared, one), second_arg);
+        assert_eq!(st.instantiate1(term, one), second);
     }
 }
