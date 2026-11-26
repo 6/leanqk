@@ -20,11 +20,30 @@ const FAST_KEYS: bool = true;
 /// The id of no values read (`FAST_KEYS`).
 const EMPTY_TUPLE: u32 = val::NONE - 1;
 
-/// Whether `read_tuple` writes the values read straight into the memo.
-const TUPLES_IN_PLACE: bool = true;
-
 /// Slots of `Nbe::tuple_slots`.
 pub(super) const TUPLE_SLOTS: usize = 1 << 14;
+
+/// Interned tuples store the range, two hole words, and the values read.
+#[derive(Default)]
+pub(super) struct TupleMemo {
+    table: Table,
+    words: Vec<u32>,
+}
+
+impl TupleMemo {
+    pub(super) fn heap_bytes(&self) -> usize {
+        self.table.capacity() * size_of::<u64>() + self.words.capacity() * size_of::<u32>()
+    }
+
+    pub(super) fn clear(&mut self) {
+        if self.table.capacity() > 1 << 16 {
+            *self = Self::default();
+        } else {
+            self.table.clear();
+            self.words.clear();
+        }
+    }
+}
 
 /// A memo of `WORDS` words per key (see the module).
 pub struct EnvMemo<const WORDS: usize> {
@@ -230,36 +249,7 @@ impl Nbe<'_> {
         if s[0] == env.0 && s[1] == n && s[2] == holes as u32 && s[3] == (holes >> 32) as u32 {
             return s[4];
         }
-        if TUPLES_IN_PLACE {
-            let t = self.read_tuple_in_place(env, n, holes);
-            self.tuple_slots[si] = [env.0, n, holes as u32, (holes >> 32) as u32, t];
-            return t;
-        }
-        let base = self.vargs.len();
-        let mut cur = env;
-        let mut h = crate::hash::hash_front(n as u64, holes);
-        for j in 0..n {
-            if j >= 64 || holes >> j & 1 == 0 {
-                let v = self.a.env_head(cur);
-                h = (h.rotate_left(5) ^ v.0 as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
-                self.vargs.push(v);
-            }
-            cur = self.a.env_tail(cur);
-        }
-        let k = Key {
-            h: (h >> 32) as u32,
-            head: [
-                0,
-                0,
-                n,
-                holes as u32,
-                (holes >> 32) as u32,
-                (self.vargs.len() - base) as u32,
-            ],
-            base,
-        };
-        let (i, _) = Self::memo_find_or_add(&mut self.vargs, &mut self.tuples, k, []);
-        let t = i as u32;
+        let t = self.read_tuple_in_place(env, n, holes);
         self.tuple_slots[si] = [env.0, n, holes as u32, (holes >> 32) as u32, t];
         t
     }
@@ -267,40 +257,45 @@ impl Nbe<'_> {
     /// `read_tuple` past its front: the record is written at the end of
     /// `tuples` as it is read, and dropped if it is there already.
     fn read_tuple_in_place(&mut self, env: Env, n: u32, holes: u64) -> u32 {
-        let EnvMemo { table, keys } = &mut self.tuples;
-        let base = keys.len();
-        keys.extend_from_slice(&[0; 7]);
+        let TupleMemo { table, words } = &mut self.tuples;
+        let base = words.len();
+        let head = [n, holes as u32, (holes >> 32) as u32];
+        words.extend_from_slice(&head);
         let mut cur = env;
-        let mut h = crate::hash::hash_front(n as u64, holes);
-        for j in 0..n {
-            if j >= 64 || holes >> j & 1 == 0 {
+        let mut mask = holes;
+        let mut h = hash_front(n as u64, holes);
+        for _ in 0..n {
+            if mask & 1 == 0 {
                 let v = self.a.env_head(cur);
                 h = (h.rotate_left(5) ^ v.0 as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
-                keys.push(v.0);
+                words.push(v.0);
             }
+            mask >>= 1;
             cur = self.a.env_tail(cur);
         }
-        let cnt = keys.len() - base - 7;
-        let h = (h >> 32) as u32;
-        let head = [h, 0, 0, n, holes as u32, (holes >> 32) as u32, cnt as u32];
-        keys[base..base + 7].copy_from_slice(&head);
-        let len = 7 + cnt;
-        let found = table.find(spread(h), |&i| {
+        let end = words.len();
+        let len = end - base;
+        let h = fold32(h);
+        let slot = match table.find_or_slot(h, |i| {
             let i = i as usize;
-            (0..len).all(|j| *val::at(keys, i + j) == *val::at(keys, base + j))
-        });
-        // Ids as `memo_find_or_add` gives them: past the record's values.
-        if let Some(&i) = found {
-            keys.truncate(base);
-            return i + len as u32;
-        }
+            // Equal ranges and hole masks give equal numbers of values.
+            val::at_slice(words, i, i + head.len()) == head
+                && val::at_slice(words, i + head.len(), i + len)
+                    == val::at_slice(words, base + head.len(), end)
+        }) {
+            Ok(i) => {
+                words.truncate(base);
+                return i;
+            }
+            Err(slot) => slot,
+        };
         assert!(
-            base + len < val::NONE as usize,
+            end <= EMPTY_TUPLE as usize,
             "nitrolean: resource limit: memo too large"
         );
-        let keys = &*keys;
-        table.insert_unique(spread(h), base as u32, |&i| spread(keys[i as usize]));
-        (base + len) as u32
+        let id = base as u32;
+        table.insert_at(slot, h, id);
+        id
     }
 
     /// The words of `k` in `memo` (by index, for `EnvMemo::get` and `set`),
