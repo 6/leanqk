@@ -670,8 +670,43 @@ impl<'e> Nbe<'e> {
 
     fn unfold_delta(&mut self, v: V, d: &Decl, ls: LevelList, sp: Sp) -> Option<V> {
         let value = self.unfold_value(d)?;
-        let body = self.const_value(d, value, ls);
-        let r = self.apply_spine(body, sp);
+        let r = if sp == Sp::NIL {
+            self.const_value(d, value, ls)
+        } else {
+            let len = self.a.sp_len(sp);
+            let mut body = value;
+            let mut applied = 0;
+            while applied < len
+                && let ExprNode::Lam(_, _, _, rest) = self.st.node(body)
+            {
+                body = rest;
+                applied += 1;
+            }
+            if applied == 0 {
+                let f = self.const_value(d, value, ls);
+                self.apply_sp_args(f, sp, 0, len)
+            } else {
+                // The skipped binders are the only bindings in scope.
+                // Build the environment of the body from the arguments it can read.
+                let data = self.st.data(body);
+                let mut env = Env::NIL;
+                for j in applied - data.loose_bvar_range().min(applied)..applied {
+                    let arg = if data.may_use_bvar(applied - 1 - j) {
+                        self.a.sp_arg(sp, j)
+                    } else {
+                        self.hole()
+                    };
+                    env = self.a.cons(env, arg);
+                }
+                let ls = self.decl_ls(d, ls);
+                let f = self.eval(body, env, ls);
+                if applied == len {
+                    f
+                } else {
+                    self.apply_sp_args(f, sp, applied, len)
+                }
+            }
+        };
         self.a.rm(v).delta = r.0;
         Some(r)
     }
