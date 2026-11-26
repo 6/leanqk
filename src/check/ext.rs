@@ -252,7 +252,7 @@ pub const DEC_EQ_VERSIONS: [&str; 2] = ["v4.34.0", "v4.30.0"];
 
 /// The inductive types and constructors the `List` and `DecidableEq`
 /// operations look at. They are in the cones the fingerprints cover.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FastNames {
     pub list: NameId,
     pub list_nil: NameId,
@@ -268,7 +268,7 @@ pub struct FastNames {
     pub is_false: Option<NameId>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StrExt {
     pub string: NameId,
     pub of_list: NameId,
@@ -278,7 +278,7 @@ pub struct StrExt {
     pub list_nil: NameId,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QuotNames {
     pub quot: NameId,
     pub mk: NameId,
@@ -286,7 +286,7 @@ pub struct QuotNames {
     pub ind: NameId,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, PartialEq, Eq)]
 pub struct Ext {
     pub nat: Option<NameId>,
     pub nat_zero: Option<NameId>,

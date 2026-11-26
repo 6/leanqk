@@ -124,7 +124,7 @@ fn plan_for_room(jobs: usize, room: usize) -> (usize, usize) {
 }
 
 /// The soft limit on this process's address space, if any.
-fn address_space_limit() -> Option<u64> {
+pub(crate) fn address_space_limit() -> Option<u64> {
     let limits = std::fs::read_to_string("/proc/self/limits").ok()?;
     let soft = limits
         .lines()
@@ -190,23 +190,7 @@ pub fn default_jobs() -> usize {
 /// On failure, the checker reports the first failing block in export
 /// order after checking every block before it.
 pub fn check_env_jobs(env: &Env, jobs: usize) -> Result<Report, Failure> {
-    let fail = |msg: &str| Failure {
-        kind: FailKind::Resource,
-        decl: String::new(),
-        msg: msg.into(),
-    };
-    for (n, what) in [
-        (env.names.len(), "names"),
-        (env.levels.len(), "levels"),
-        (env.exprs.len(), "expressions"),
-        (env.decls.len(), "declarations"),
-    ] {
-        if n >= LOCAL as usize {
-            return Err(fail(&format!(
-                "too many {what} (at most 2^31 are supported)"
-            )));
-        }
-    }
+    check_env_size(env)?;
     // Usually every exported record already has its derived metadata. If it
     // differs, use the checked metadata before trusting any dependent block.
     let mut canonical = None;
@@ -225,6 +209,27 @@ pub fn check_env_jobs(env: &Env, jobs: usize) -> Result<Report, Failure> {
     }
 }
 
+fn check_env_size(env: &Env) -> Result<(), Failure> {
+    let fail = |msg: &str| Failure {
+        kind: FailKind::Resource,
+        decl: String::new(),
+        msg: msg.into(),
+    };
+    for (n, what) in [
+        (env.names.len(), "names"),
+        (env.levels.len(), "levels"),
+        (env.exprs.len(), "expressions"),
+        (env.decls.len(), "declarations"),
+    ] {
+        if n >= LOCAL as usize {
+            return Err(fail(&format!(
+                "too many {what} (at most 2^31 are supported)"
+            )));
+        }
+    }
+    Ok(())
+}
+
 enum BlockProblem {
     Failure(Failure),
     Metadata(Vec<(usize, DeclKind)>),
@@ -237,6 +242,92 @@ fn check_decls(env: &Env, decls: &[Decl], jobs: usize) -> Result<Report, BlockPr
     let times = std::env::var_os("NITROLEAN_DECL_TIMES")
         .and_then(|p| std::fs::File::create(p).ok())
         .map(|f| Mutex::new(std::io::LineWriter::new(f)));
+    check_decls_matching(
+        env,
+        decls,
+        &ext,
+        jobs,
+        times,
+        BEFORE_PARALLEL.get().copied(),
+        |_, _, _| true,
+    )
+}
+
+/// Safe singletons use the export cutoff for all declaration lookups.
+/// Inductives can choose auxiliary names using the whole environment.
+fn prefix_block(b: &Block, decls: &[Decl]) -> bool {
+    b.kind == BlockKind::Single && use_nbe(&decls[0])
+}
+
+pub(crate) struct CheckedPrefix {
+    blocks: Vec<Block>,
+    decls: Vec<Decl>,
+    ext: Ext,
+}
+
+impl CheckedPrefix {
+    pub(crate) fn blocks(&self) -> usize {
+        self.blocks.len()
+    }
+}
+
+pub(crate) fn check_prefix(mut env: Env, jobs: usize) -> Option<CheckedPrefix> {
+    const MAX_PREFIX_BLOCKS: usize = 90_000;
+    check_env_size(&env).ok()?;
+    let end = env.blocks.len().min(MAX_PREFIX_BLOCKS);
+    let last = env.blocks.get(end.checked_sub(1)?)?;
+    let decl_end = last.start as usize + last.len();
+    let ext = Ext::with_decls(&env, &env.decls);
+    // The full reader is still running. Keep its allocator settings until
+    // it has finished, as in the ordinary check.
+    check_decls_matching(&env, &env.decls, &ext, jobs, None, None, |i, b, ds| {
+        i < end && prefix_block(b, ds)
+    })
+    .ok()?;
+    env.blocks.truncate(end);
+    env.decls.truncate(decl_end);
+    Some(CheckedPrefix {
+        blocks: env.blocks,
+        decls: env.decls,
+        ext,
+    })
+}
+
+/// `prefix` must come from a successful read of the start of this same
+/// export. Resolve any failure with the ordinary check, which also
+/// applies corrected inductive metadata and reports the first failure.
+pub(crate) fn finish_after_prefix(env: &Env, jobs: usize, prefix: CheckedPrefix) -> Option<Report> {
+    check_env_size(env).ok()?;
+    if !env.blocks.starts_with(&prefix.blocks) || !env.decls.starts_with(&prefix.decls) {
+        return None;
+    }
+    let ext = Ext::with_decls(env, &env.decls);
+    if ext != prefix.ext {
+        return None;
+    }
+    let end = prefix.blocks.len();
+    drop(prefix);
+    check_decls_matching(
+        env,
+        &env.decls,
+        &ext,
+        jobs,
+        None,
+        BEFORE_PARALLEL.get().copied(),
+        |i, b, ds| i >= end || !prefix_block(b, ds),
+    )
+    .ok()
+}
+
+fn check_decls_matching(
+    env: &Env,
+    decls: &[Decl],
+    ext: &Ext,
+    jobs: usize,
+    times: Option<Mutex<std::io::LineWriter<std::fs::File>>>,
+    before_parallel: Option<fn()>,
+    select: impl Fn(usize, &Block, &[Decl]) -> bool + Sync,
+) -> Result<Report, BlockProblem> {
     let (jobs, stack) = thread_plan(jobs.clamp(1, env.blocks.len().max(1)));
     let per_worker = env.blocks.len() / jobs;
     let extra = env.blocks.len() % jobs;
@@ -247,7 +338,7 @@ fn check_decls(env: &Env, decls: &[Decl], jobs: usize) -> Result<Report, BlockPr
     let shared = Shared {
         env,
         decls,
-        ext: &ext,
+        ext,
         ranges: Mutex::new(ranges),
         first_fail: AtomicUsize::new(usize::MAX),
         failures: Mutex::new(Vec::new()),
@@ -262,7 +353,7 @@ fn check_decls(env: &Env, decls: &[Decl], jobs: usize) -> Result<Report, BlockPr
         },
     };
     if jobs > 1
-        && let Some(f) = BEFORE_PARALLEL.get()
+        && let Some(f) = before_parallel
     {
         f();
     }
@@ -270,10 +361,11 @@ fn check_decls(env: &Env, decls: &[Decl], jobs: usize) -> Result<Report, BlockPr
         let workers: Vec<_> = (0..jobs)
             .map(|i| {
                 let shared = &shared;
+                let select = &select;
                 std::thread::Builder::new()
                     .name(format!("nitrolean-check-{i}"))
                     .stack_size(stack)
-                    .spawn_scoped(s, move || worker(shared, jobs, i))
+                    .spawn_scoped(s, move || worker(shared, jobs, i, select))
                     .expect("spawn checker thread")
             })
             .collect();
@@ -369,7 +461,12 @@ impl Shared<'_> {
     }
 }
 
-fn worker(sh: &Shared<'_>, jobs: usize, worker: usize) {
+fn worker(
+    sh: &Shared<'_>,
+    jobs: usize,
+    worker: usize,
+    select: &impl Fn(usize, &Block, &[Decl]) -> bool,
+) {
     let env = sh.env;
     let store = || Store::with_decls(env, sh.decls, !sh.ext.nat_ops_complete);
     let mut tc = Tc::new(store(), sh.ext, 0);
@@ -396,8 +493,12 @@ fn worker(sh: &Shared<'_>, jobs: usize, worker: usize) {
             return;
         }
         let b = &env.blocks[i];
-        sh.enter(jobs, &mut polls);
         let decls = &sh.decls[b.start as usize..b.start as usize + b.len()];
+        if !select(i, b, decls) {
+            i += 1;
+            continue;
+        }
+        sh.enter(jobs, &mut polls);
         let first = decls.first().map(|d| d.name);
         let t0 = std::time::Instant::now();
         let mut corrections = Vec::new();

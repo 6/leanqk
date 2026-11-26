@@ -45,8 +45,11 @@ use crate::strings::Overflow;
 mod fast;
 mod lazy;
 mod mdata;
+mod overlap;
 mod run;
 mod scan;
+
+pub(crate) use overlap::read_with_prefix;
 
 /// The format major version this reader understands.
 pub const FORMAT_MAJOR: &str = "3";
