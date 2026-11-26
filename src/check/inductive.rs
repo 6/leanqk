@@ -128,14 +128,17 @@ impl Tc<'_> {
         let ExprNode::Pi(bi, n, d, b) = self.st.node(pi) else {
             unreachable!()
         };
-        let d = self.consume_type_annotations(d);
-        let fv = self.push_local(n, d, None, bi);
+        let fv = self.local_with_annotations(n, d, bi);
         (fv, self.st.instantiate1(b, fv))
     }
 
-    fn local_named(&mut self, n: NameId, ty: ExprId) -> ExprId {
+    fn local_with_annotations(&mut self, n: NameId, ty: ExprId, bi: BinderInfo) -> ExprId {
         let ty = self.consume_type_annotations(ty);
-        self.push_local(n, ty, None, BinderInfo::Default)
+        self.push_local(n, ty, None, bi)
+    }
+
+    fn local_named(&mut self, n: NameId, ty: ExprId) -> ExprId {
+        self.local_with_annotations(n, ty, BinderInfo::Default)
     }
 
     /// Generic top-down replacement with memo on (subterm, depth).
@@ -538,16 +541,17 @@ impl<'a, 'e> AddInd<'a, 'e> {
         false
     }
 
-    fn is_reflexive(&mut self) -> bool {
-        for ti in 0..self.types.len() {
-            for ci in 0..self.types[ti].ctors.len() {
-                let mut t = self.types[ti].ctors[ci].1;
-                while let ExprNode::Pi(_, _, d, _) = self.tc.st.node(t) {
-                    if matches!(self.tc.st.node(d), ExprNode::Pi(..)) && self.has_ind_occ(d) {
+    fn is_reflexive(&self) -> bool {
+        for ty in &self.types {
+            for &(_, mut t) in &ty.ctors {
+                // Opening the telescope only replaces bound variables with
+                // free variables. The domain's Pi shape and constant
+                // occurrences are already visible in the closed syntax.
+                while let ExprNode::Pi(_, _, dom, body) = self.tc.st.node(t) {
+                    if matches!(self.tc.st.node(dom), ExprNode::Pi(..)) && self.has_ind_occ(dom) {
                         return true;
                     }
-                    let (_, b) = self.tc.local_for(t);
-                    t = b;
+                    t = body;
                 }
             }
         }
@@ -649,9 +653,11 @@ impl<'a, 'e> AddInd<'a, 'e> {
                 found.push(n);
                 let k = self.types.len() as u32;
                 self.check_closed(t, k)?;
-                let mut i = 0;
-                while let ExprNode::Pi(_, _, dom, body) = self.tc.st.node(t) {
-                    if i < self.nparams {
+                let mut locals = Vec::new();
+                while let ExprNode::Pi(bi, name, dom, body) = self.tc.st.node(t) {
+                    let i = locals.len();
+                    let dom = self.tc.st.instantiate_rev(dom, &locals);
+                    let local = if i < self.nparams {
                         let pt = self.param_type(i);
                         if !self.tc.is_def_eq(dom, pt)? {
                             return err(format!(
@@ -660,7 +666,7 @@ impl<'a, 'e> AddInd<'a, 'e> {
                                 self.tc.show(n)
                             ));
                         }
-                        t = self.tc.st.instantiate1(body, self.params[i]);
+                        self.params[i]
                     } else {
                         let s = self.tc.ensure_type(dom)?;
                         if !(univ::geq(&mut self.tc.st, self.result_level, s)
@@ -675,12 +681,13 @@ impl<'a, 'e> AddInd<'a, 'e> {
                         if !self.is_unsafe {
                             self.check_positivity(dom, n, i)?;
                         }
-                        let (_, b) = self.tc.local_for(t);
-                        t = b;
-                    }
-                    i += 1;
+                        self.tc.local_with_annotations(name, dom, bi)
+                    };
+                    locals.push(local);
+                    t = body;
                 }
-                if !self.is_valid_ind_app_at(t, idx) {
+                let result = self.tc.st.instantiate_rev(t, &locals);
+                if !self.is_valid_ind_app_at(result, idx) {
                     return err(format!("invalid return type for '{}'", self.tc.show(n)));
                 }
             }
@@ -823,23 +830,26 @@ impl<'a, 'e> AddInd<'a, 'e> {
         mut t: ExprId,
         want_rec: bool,
     ) -> R<(Vec<ExprId>, Vec<ExprId>, ExprId)> {
-        let mut b_u = Vec::new();
+        let mut locals = Vec::new();
         let mut u = Vec::new();
-        let mut i = 0;
-        while let ExprNode::Pi(_, _, dom, body) = self.tc.st.node(t) {
-            if i < self.nparams {
-                t = self.tc.st.instantiate1(body, self.params[i]);
+        while let ExprNode::Pi(bi, name, dom, body) = self.tc.st.node(t) {
+            let i = locals.len();
+            let local = if i < self.nparams {
+                self.params[i]
             } else {
-                let (l, b) = self.tc.local_for(t);
-                b_u.push(l);
+                let dom = self.tc.st.instantiate_rev(dom, &locals);
+                let local = self.tc.local_with_annotations(name, dom, bi);
                 if want_rec && self.is_rec_argument(dom)?.is_some() {
-                    u.push(l);
+                    u.push(local);
                 }
-                t = b;
-            }
-            i += 1;
+                local
+            };
+            locals.push(local);
+            t = body;
         }
-        Ok((b_u, u, t))
+        let result = self.tc.st.instantiate_rev(t, &locals);
+        locals.drain(..self.nparams);
+        Ok((locals, u, result))
     }
 
     /// The telescope of a recursive field's type: its arguments and result.
