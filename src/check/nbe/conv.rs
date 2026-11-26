@@ -34,13 +34,16 @@ const SYN_FAIL: u8 = 16;
 
 /// Exact pair facts. Collisions replace the previous entry.
 pub(super) struct PairCache {
-    slots: Box<[(u64, u8)]>,
+    slots: Box<[(u64, u8); PairCache::SLOTS]>,
 }
 
 impl Default for PairCache {
     fn default() -> Self {
         Self {
-            slots: vec![(0, 0); Self::SLOTS].into_boxed_slice(),
+            slots: vec![(0, 0); Self::SLOTS]
+                .into_boxed_slice()
+                .try_into()
+                .unwrap(),
         }
     }
 }
@@ -50,7 +53,7 @@ impl PairCache {
 
     #[inline]
     fn index(key: u64) -> usize {
-        crate::hash::hash2(key, 0) as usize & (Self::SLOTS - 1)
+        crate::hash::hash_front(key, 0) as usize & (Self::SLOTS - 1)
     }
 
     #[inline]
@@ -1311,11 +1314,11 @@ impl Nbe<'_> {
             return false;
         }
         // Terms are DAGs: remember what was compared at the same depth.
-        let memo = k_l == d
+        if k_l == d
             && k_r == d
-            && matches!(self.st.node(t_l), ExprNode::App(..))
-            && matches!(self.st.node(t_r), ExprNode::App(..));
-        if memo {
+            && let ExprNode::App(f_l, a_l) = self.st.node(t_l)
+            && let ExprNode::App(f_r, a_r) = self.st.node(t_r)
+        {
             let key = [t_l.0, e_l.0, l_l.0, t_r.0, e_r.0, l_r.0, d];
             let h = crate::hash::hash2(
                 (t_l.0 as u64) << 32 | t_r.0 as u64,
@@ -1330,7 +1333,9 @@ impl Nbe<'_> {
             if s[..7] == key {
                 return s[7] != 0;
             }
-            let r = self.syn_eq_t_node(t_l, e_l, l_l, k_l, t_r, e_r, l_r, k_r, d, budget);
+            *budget -= 1;
+            let r = self.syn_eq_t(f_l, e_l, l_l, k_l, f_r, e_r, l_r, k_r, d, budget)
+                && self.syn_eq_t(a_l, e_l, l_l, k_l, a_r, e_r, l_r, k_r, d, budget);
             if r || *budget > 0 {
                 let mut e = [0; 8];
                 e[..7].copy_from_slice(&key);
@@ -1507,6 +1512,15 @@ impl Nbe<'_> {
         }
         *budget -= 1;
         let node = self.st.node(t);
+        if let ExprNode::BVar(j) = node {
+            if j < k {
+                return false;
+            }
+            return match self.a.lookup(e, j - k) {
+                Some(y) => self.syn_eq_v(x, y, budget),
+                None => false,
+            };
+        }
         if !matches!(node, ExprNode::App(..) | ExprNode::Proj(..)) {
             return self.syn_eq_vt_node(x, t, node, e, l, k, budget, flip);
         }
@@ -1546,15 +1560,6 @@ impl Nbe<'_> {
         budget: &mut u32,
         flip: bool,
     ) -> bool {
-        if let ExprNode::BVar(j) = node {
-            if j < k {
-                return false;
-            }
-            return match self.a.lookup(e, j - k) {
-                Some(y) => self.syn_eq_v(x, y, budget),
-                None => false,
-            };
-        }
         let head = self.a.get(x);
         let head = if matches!(head, Val::Thunk(..)) {
             let forced = self.forced_or(x);
