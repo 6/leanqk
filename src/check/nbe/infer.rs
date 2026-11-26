@@ -285,13 +285,12 @@ impl Nbe<'_> {
                 i += 1;
                 continue;
             };
+            let first = i;
             let mut binder = self.st.node(e);
-            loop {
+            let body = loop {
                 let ExprNode::Pi(_, _, _, body) = binder else {
                     unreachable!()
                 };
-                let arg = self.a.sp_arg(sp, i);
-                env = self.bind_value(body, env, arg);
                 i += 1;
                 if i < end {
                     binder = self.st.node(body);
@@ -299,9 +298,25 @@ impl Nbe<'_> {
                         continue;
                     }
                 }
-                ty = self.eval(body, env, ls);
-                break;
+                break body;
+            };
+            // Only the final codomain is evaluated. Its loose variables
+            // determine which arguments and outer bindings it can read.
+            let data = self.st.data(body);
+            let range = data.loose_bvar_range();
+            let applied = i - first;
+            if range <= applied {
+                env = Env::NIL;
             }
+            for j in i - range.min(applied)..i {
+                let arg = if data.may_use_bvar(i - 1 - j) {
+                    self.a.sp_arg(sp, j)
+                } else {
+                    self.hole()
+                };
+                env = self.a.cons(env, arg);
+            }
+            ty = self.eval(body, env, ls);
         }
         Ok(ty)
     }
