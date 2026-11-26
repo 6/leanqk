@@ -513,6 +513,11 @@ impl Nbe<'_> {
     /// The definition at the head of `v`, if `v` can be unfolded.
     pub fn is_delta(&mut self, v: V) -> Option<Decl> {
         let v = self.force(v);
+        self.delta_head(v).map(|(d, _, _)| d)
+    }
+
+    /// The definition, levels and spine of a forced delta redex.
+    fn delta_head(&self, v: V) -> Option<(Decl, LevelList, Sp)> {
         let Val::Const(n, ls, sp) = self.a.get(v) else {
             return None;
         };
@@ -521,21 +526,22 @@ impl Nbe<'_> {
         }
         let d = self.find(n)?;
         Self::decl_value(&d)?;
-        (self.st.list(ls).len() == d.level_params.len()).then_some(d)
+        (self.st.list(ls).len() == d.level_params.len()).then_some((d, ls, sp))
     }
 
     pub fn unfold_definition(&mut self, v: V) -> Option<V> {
         let v = self.force(v);
         let m = self.a.r(v).delta;
-        if m != super::val::NONE {
+        if m != NONE {
             return Some(V(m));
         }
-        let d = self.is_delta(v)?;
-        let value = self.unfold_value(&d)?;
-        let Val::Const(_, ls, sp) = self.a.get(v) else {
-            unreachable!()
-        };
-        let body = self.const_value(&d, value, ls);
+        let (d, ls, sp) = self.delta_head(v)?;
+        self.unfold_delta(v, &d, ls, sp)
+    }
+
+    fn unfold_delta(&mut self, v: V, d: &Decl, ls: LevelList, sp: Sp) -> Option<V> {
+        let value = self.unfold_value(d)?;
+        let body = self.const_value(d, value, ls);
         let r = self.apply_spine(body, sp);
         self.a.rm(v).delta = r.0;
         Some(r)
@@ -778,7 +784,7 @@ impl Nbe<'_> {
             return Ok(v);
         }
         let c = self.a.r(v).whnf;
-        if c != super::val::NONE {
+        if c != NONE {
             return Ok(V(c));
         }
         if let Val::FVar(k, _) = self.a.get(v)
@@ -794,19 +800,30 @@ impl Nbe<'_> {
     fn whnf_from(&mut self, v: V, eval: bool) -> R<V> {
         let mut t = v;
         let mut first = eval;
-        loop {
+        let n = loop {
             self.tick()?;
-            let t_l = self.whnf_core(t, false, false)?;
-            if let Some(n) = self.reduce_nat(t_l)? {
-                self.a.rm(v).whnf = n.0;
-                return Ok(n);
+            let rec = self.a.r(t);
+            if rec.whnf_normal() {
+                break t;
             }
-            if first && self.is_delta(t_l).is_some() {
+            if rec.whnf != NONE {
+                break V(rec.whnf);
+            }
+            let t_l = self.whnf_core(t, false, false)?;
+            if self.a.r(t_l).whnf_normal() {
+                break t_l;
+            }
+            if let Some(n) = self.reduce_nat(t_l)? {
+                break n;
+            }
+            let Some((d, ls, sp)) = self.delta_head(t_l) else {
+                break t_l;
+            };
+            if first {
                 first = false;
                 if let Some(n) = self.whnf_closed(t_l)? {
-                    self.a.rm(v).whnf = n.0;
                     self.a.rm(n).whnf = n.0;
-                    return Ok(n);
+                    break n;
                 }
             }
             if super::cases::CASES_DIRECT
@@ -815,13 +832,16 @@ impl Nbe<'_> {
                 t = n;
                 continue;
             }
-            match self.unfold_definition(t_l) {
-                Some(n) => t = n,
-                None => {
-                    self.a.rm(v).whnf = t_l.0;
-                    return Ok(t_l);
-                }
+            let m = self.a.r(t_l).delta;
+            if m != NONE {
+                t = V(m);
+            } else if let Some(n) = self.unfold_delta(t_l, &d, ls, sp) {
+                t = n;
+            } else {
+                break t_l;
             }
-        }
+        };
+        self.a.rm(v).whnf = n.0;
+        Ok(n)
     }
 }
