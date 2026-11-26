@@ -539,6 +539,19 @@ impl Nbe<'_> {
         self.unfold_delta(v, &d, ls, sp)
     }
 
+    /// Unfold with metadata already validated for this value by `is_delta`.
+    pub(super) fn unfold_known_definition(&mut self, v: V, d: &Decl) -> Option<V> {
+        let v = self.force(v);
+        let m = self.a.r(v).delta;
+        if m != NONE {
+            return Some(V(m));
+        }
+        let Val::Const(_, ls, sp) = self.a.get(v) else {
+            unreachable!()
+        };
+        self.unfold_delta(v, d, ls, sp)
+    }
+
     fn unfold_delta(&mut self, v: V, d: &Decl, ls: LevelList, sp: Sp) -> Option<V> {
         let value = self.unfold_value(d)?;
         let body = self.const_value(d, value, ls);

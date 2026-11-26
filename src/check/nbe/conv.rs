@@ -646,8 +646,8 @@ impl Nbe<'_> {
         Ok(None)
     }
 
-    fn unfold_cheap(&mut self, e: V) -> R<V> {
-        let u = self.unfold_definition(e).expect("delta");
+    fn unfold_cheap(&mut self, e: V, d: &crate::env::Decl) -> R<V> {
+        let u = self.unfold_known_definition(e, d).expect("delta");
         self.whnf_core(u, false, true)
     }
 
@@ -733,26 +733,26 @@ impl Nbe<'_> {
         let ds = self.is_delta(*s);
         match (dt, ds) {
             (None, None) => return Ok(Step::Unknown),
-            (Some(_), None) => {
+            (Some(dt), None) => {
                 if let Some(s_r) = self.try_unfold_proj_app(*s)? {
                     *s = s_r;
                 } else {
-                    *t = self.unfold_cheap(*t)?;
+                    *t = self.unfold_cheap(*t, &dt)?;
                 }
             }
-            (None, Some(_)) => {
+            (None, Some(ds)) => {
                 if let Some(t_r) = self.try_unfold_proj_app(*t)? {
                     *t = t_r;
                 } else {
-                    *s = self.unfold_cheap(*s)?;
+                    *s = self.unfold_cheap(*s, &ds)?;
                 }
             }
             (Some(dt), Some(ds)) => {
                 let c = compare_hints(decl_hints(&dt), decl_hints(&ds));
                 if c < 0 {
-                    *t = self.unfold_cheap(*t)?;
+                    *t = self.unfold_cheap(*t, &dt)?;
                 } else if c > 0 {
-                    *s = self.unfold_cheap(*s)?;
+                    *s = self.unfold_cheap(*s, &ds)?;
                 } else {
                     if let (Val::Const(_, lt, tsp), Val::Const(_, ls, ssp)) =
                         (self.a.get(*t), self.a.get(*s))
@@ -785,8 +785,8 @@ impl Nbe<'_> {
                         }
                         self.pset(*t, *s, EQ_FAIL);
                     }
-                    *t = self.unfold_cheap(*t)?;
-                    *s = self.unfold_cheap(*s)?;
+                    *t = self.unfold_cheap(*t, &dt)?;
+                    *s = self.unfold_cheap(*s, &ds)?;
                 }
             }
         }
