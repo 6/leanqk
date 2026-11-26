@@ -118,7 +118,7 @@ pub struct Nbe<'e> {
     /// words), id).
     pub(super) tuple_slots: Box<[[u32; 5]; memo::TUPLE_SLOTS]>,
     /// Types of terms (`infer_term`): the type, and whether checked.
-    pub(super) infer_memo: memo::EnvMemo<2>,
+    infer_memo: memo::InferMemo,
     /// A direct-mapped front of `infer_memo`: (term, environment,
     /// substitution, entry).
     pub(super) infer_slots: Box<[[u32; 4]; EAGER_SLOTS]>,
