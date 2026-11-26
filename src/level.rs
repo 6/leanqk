@@ -175,6 +175,7 @@ impl Levels {
         list_at(&self.list_data, &self.list_offs, l.0 as usize)
     }
 
+    #[inline(always)]
     pub fn list_has_param(&self, l: LevelList) -> bool {
         self.list_has_param[l.0 as usize]
     }
