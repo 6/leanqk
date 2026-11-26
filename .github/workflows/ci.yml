@@ -45,3 +45,51 @@ jobs:
         run: cargo clippy --all-targets --workspace -- -D warnings
       - name: Test
         run: cargo test --workspace
+
+  # The Lean Kernel Arena's small test groups (tutorial, corner cases, bugs,
+  # other), built at the arena's pinned commit and run the way the arena runs
+  # a checker (bench/arena/README.md). Every verdict must be one the arena
+  # scores as right.
+  arena-small:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ELAN_VERSION: v4.4.0
+      ELAN_SHA256: 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2
+      LEAN_TOOLCHAIN: leanprover/lean4:v4.36.0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'mise.toml') }}
+      - name: Cache elan and Lean
+        uses: actions/cache@v6
+        with:
+          path: ~/.elan
+          key: elan-${{ env.ELAN_VERSION }}-${{ env.LEAN_TOOLCHAIN }}-${{ runner.os }}-${{ runner.arch }}
+      - name: Install elan and Lean
+        run: cargo xtask install-elan --toolchain "$LEAN_TOOLCHAIN"
+      - name: Install GNU time
+        run: test -x /usr/bin/time || { sudo apt-get update -q && sudo apt-get install -yq time; }
+      # Every export is checked against the SHA-256 the arena published.
+      - name: Build the exports
+        run: cargo xtask arena fetch tutorial 'bugs/*' 'corner-cases/*' 'other/*'
+      - name: Build nitrolean
+        run: cargo build --release --locked
+      - name: Run the tests
+        run: >-
+          cargo xtask arena run --check --quiet --out "$RUNNER_TEMP/arena.tsv"
+          --test 'tutorial/*' --test 'bugs/*' --test 'corner-cases/*' --test 'other/*'
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: arena-small-results
+          path: ${{ runner.temp }}/arena.tsv
+          if-no-files-found: ignore
