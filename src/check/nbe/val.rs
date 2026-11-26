@@ -664,7 +664,9 @@ impl Arena {
                     };
                     let i = sp.0 as usize;
                     same && (*at(sps, i) & LEN_BITS) as usize == n + xs.len()
-                        && at_slice(sps, i + 1, i + 1 + 2 * n) == at_slice(sps, k, k + 2 * n)
+                        // Word by word: spines are short, and a call to
+                        // compare memory costs more than the loop.
+                        && (0..2 * n).all(|j| *at(sps, i + 1 + j) == *at(sps, k + j))
                         // Both words: an argument's second is `NONE`, a
                         // projection's is its index.
                         && xs.iter().enumerate().all(|(j, x)| {
