@@ -17,6 +17,10 @@ fn err<T>(msg: impl Into<String>) -> R<T> {
     Err(KErr::new(msg.into()))
 }
 
+/// Whether an argument's type is compared with the domain as a term
+/// (`syn_eq_term`) before the domain's value is made.
+const SYN_DOM: bool = true;
+
 /// Whether `infer_term` remembers types by the environment entries a term
 /// reads (`memo`), not through a thunk.
 const INFER_MEMO: bool = true;
@@ -582,8 +586,24 @@ impl Nbe<'_> {
                 };
                 let a = self.terms[k];
                 if !infer_only {
-                    let dom = self.thunk(d, pi_env, pi_ls);
-                    self.check_arg(a, env, ls, dom)?;
+                    if SYN_DOM
+                        && !matches!(self.st.node(a), ExprNode::Lam(..))
+                        && !self.is_eager_reduce(a)
+                    {
+                        // The argument's type against the domain as a term
+                        // first: when they are alike, no value of the
+                        // domain is made.
+                        let at = self.infer_term(a, env, ls, false)?;
+                        if !self.syn_eq_term(at, d, pi_env, pi_ls) {
+                            let dom = self.thunk(d, pi_env, pi_ls);
+                            if !self.is_def_eq(at, dom)? {
+                                return Err(self.arg_mismatch(a, env, ls, dom)?);
+                            }
+                        }
+                    } else {
+                        let dom = self.thunk(d, pi_env, pi_ls);
+                        self.check_arg(a, env, ls, dom)?;
+                    }
                 }
                 // The argument's value only if the codomain may read it.
                 let av = if self.st.data(b).may_use_bvar(0) {
@@ -615,16 +635,21 @@ impl Nbe<'_> {
             self.check_against(a, env, ls, dom)?
         };
         if !ok {
-            let av = self.thunk(a, env, ls);
-            let at = self.infer_term(a, env, ls, true)?;
-            return err(format!(
-                "application type mismatch: argument {} has type {} but is expected to have type {}",
-                self.pp(av),
-                self.pp(at),
-                self.pp(dom)
-            ));
+            return Err(self.arg_mismatch(a, env, ls, dom)?);
         }
         Ok(())
+    }
+
+    /// The error of an argument `a` whose type is not `dom`.
+    fn arg_mismatch(&mut self, a: ExprId, env: Env, ls: Ls, dom: V) -> R<KErr> {
+        let av = self.thunk(a, env, ls);
+        let at = self.infer_term(a, env, ls, true)?;
+        Ok(KErr::new(format!(
+            "application type mismatch: argument {} has type {} but is expected to have type {}",
+            self.pp(av),
+            self.pp(at),
+            self.pp(dom)
+        )))
     }
 
     /// Check `e` in `env` and whether its type is `expected`. A λ is
