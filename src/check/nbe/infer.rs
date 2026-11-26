@@ -941,7 +941,14 @@ impl Nbe<'_> {
         };
         if syn_dom && !matches!(node, ExprNode::Lam(..)) && !eager {
             let at = self.infer_node(a, node, env, ls, false)?;
-            if self.syn_eq_term(at, d, pi_env, pi_ls) {
+            let same = if let ExprNode::Sort(level) = self.st.node(d)
+                && let Val::Sort(actual) = self.a.get(at)
+            {
+                self.inst_level(level, pi_ls) == actual
+            } else {
+                self.syn_eq_term(at, d, pi_env, pi_ls)
+            };
+            if same {
                 return Ok(());
             }
             return self.check_arg_def_eq(a, node, (env, ls), (d, pi_env, pi_ls), at);

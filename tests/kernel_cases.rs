@@ -247,3 +247,36 @@ fn declaration_lambda_domains_are_checked_in_scope() {
         assert!(failure.msg.contains(message), "{}", failure.msg);
     }
 }
+
+/// An application's inferred argument type and its domain have distinct
+/// universe expressions that become equal after normalization.
+#[test]
+fn sort_arguments_allow_equal_normalized_levels() {
+    use nitrolean::check::check_env_jobs;
+    use nitrolean::reader::read_str;
+
+    // P : Sort (max u v), f : Sort (max v u) → Prop, claim := f P.
+    let export = r#"{"meta":{"format":{"version":"3.1.0"}}}
+{"in":1,"str":{"pre":0,"str":"u"}}
+{"in":2,"str":{"pre":0,"str":"v"}}
+{"in":3,"str":{"pre":0,"str":"P"}}
+{"in":4,"str":{"pre":0,"str":"f"}}
+{"in":5,"str":{"pre":0,"str":"claim"}}
+{"il":1,"param":1}
+{"il":2,"param":2}
+{"il":3,"max":[1,2]}
+{"il":4,"max":[2,1]}
+{"ie":0,"sort":0}
+{"ie":1,"sort":3}
+{"ie":2,"sort":4}
+{"ie":3,"forallE":{"binderInfo":"default","body":0,"name":0,"type":2}}
+{"ie":4,"const":{"name":3,"us":[1,2]}}
+{"ie":5,"const":{"name":4,"us":[1,2]}}
+{"ie":6,"app":{"fn":5,"arg":4}}
+{"axiom":{"name":3,"type":1,"levelParams":[1,2],"isUnsafe":false}}
+{"axiom":{"name":4,"type":3,"levelParams":[1,2],"isUnsafe":false}}
+{"def":{"all":[5],"hints":{"regular":1},"levelParams":[1,2],"name":5,"safety":"safe","type":0,"value":6}}
+"#;
+    let env = read_str(export).unwrap();
+    assert_eq!(check_env_jobs(&env, 1).unwrap().declarations, 3);
+}
