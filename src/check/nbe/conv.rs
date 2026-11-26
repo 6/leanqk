@@ -1119,15 +1119,7 @@ impl Nbe<'_> {
             None
         };
         let start = self.ticks;
-        let key = if self.stable_queries.is_some() {
-            self.stable_query(t)
-                .and_then(|a| self.stable_query(s).map(|b| (a.min(b), a.max(b))))
-        } else {
-            None
-        };
-        if let Some(key) = key
-            && self.stable_eq_hit(key)
-        {
+        if self.stable_queries.is_some() && self.stable_eq_hit(t, s) {
             self.pset(t, s, EQ);
             return Ok(true);
         }
@@ -1153,8 +1145,8 @@ impl Nbe<'_> {
         if let Some(k) = named {
             self.name_eq.insert(k, r);
         }
-        if r && let Some(key) = key {
-            self.record_stable_eq(key, start);
+        if r && self.stable_queries.is_some() {
+            self.record_stable_eq(t, s, start);
         }
         self.pset(t, s, if r { EQ } else { NEQ });
         Ok(r)

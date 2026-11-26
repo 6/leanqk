@@ -373,9 +373,8 @@ fn worker(sh: &Shared<'_>, jobs: usize, worker: usize) {
     let env = sh.env;
     let store = || Store::with_decls(env, sh.decls, !sh.ext.nat_ops_complete);
     let mut tc = Tc::new(store(), sh.ext, 0);
-    let share = sh.cache_share;
-    let mut nb = Nbe::new(store(), sh.ext);
-    nb.set_cache_share(share);
+    let make_nbe = || Nbe::for_worker(store(), sh.ext, jobs, sh.cache_share);
+    let mut nb = make_nbe();
     let mut i = 0;
     let mut end = 0;
     let mut polls = 0;
@@ -387,8 +386,7 @@ fn worker(sh: &Shared<'_>, jobs: usize, worker: usize) {
             }
             // The evaluator caches assume the visible export prefix grows.
             if range.start < end {
-                nb = Nbe::new(store(), sh.ext);
-                nb.set_cache_share(share);
+                nb = make_nbe();
             }
             i = range.start;
             end = range.end;
@@ -429,8 +427,7 @@ fn worker(sh: &Shared<'_>, jobs: usize, worker: usize) {
                 };
                 // Rebuild: the checker's state may be inconsistent.
                 tc = Tc::new(store(), sh.ext, 0);
-                nb = Nbe::new(store(), sh.ext);
-                nb.set_cache_share(share);
+                nb = make_nbe();
                 Err((FailKind::Resource, msg))
             }
         };
