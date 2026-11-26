@@ -281,6 +281,8 @@ pub struct Arena {
     /// Environments by their last entry and the rest (direct-mapped, in
     /// front of `envtable`): (rest, entry, environment).
     conses: Box<[[u32; 3]; CONSES]>,
+    /// Far variables found (`lookup`): (environment, index, value).
+    fars: Box<[std::cell::Cell<[u32; 3]>; FARS]>,
 }
 
 /// Slots of `Arena::heads`.
@@ -288,6 +290,9 @@ const HEADS: usize = 1 << 12;
 
 /// Slots of `Arena::conses`.
 const CONSES: usize = 1 << 14;
+
+/// Slots of `Arena::fars`.
+const FARS: usize = 1 << 12;
 
 /// Slots of `Arena::thunks`.
 const THUNKS: usize = 1 << 14;
@@ -328,6 +333,11 @@ impl Arena {
             thunks: table(NONE),
             nutable: HashTable::new(),
             conses: table(NONE),
+            fars: (0..FARS)
+                .map(|_| std::cell::Cell::new([NONE; 3]))
+                .collect::<Box<[_]>>()
+                .try_into()
+                .unwrap_or_else(|_| unreachable!()),
         }
     }
 
@@ -360,6 +370,9 @@ impl Arena {
         self.thunks.fill([NONE; 4]);
         self.nutable.clear();
         self.conses.fill([NONE; 3]);
+        for f in self.fars.iter() {
+            f.set([NONE; 3]);
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -898,6 +911,11 @@ impl Arena {
             return Some(r.node.v);
         }
         let target = len - i;
+        let fi = (crate::hash::hash_front(env.0 as u64, i as u64) >> 52) as usize & (FARS - 1);
+        let f = self.fars[fi].get();
+        if f[0] == env.0 && f[1] == i {
+            return Some(V(f[2]));
+        }
         while r.len & LEN_BITS != target {
             let j = *at(&self.envs, r.jump.0 as usize);
             r = if j.len & LEN_BITS >= target {
@@ -906,6 +924,7 @@ impl Arena {
                 *at(&self.envs, r.node.prev.0 as usize)
             };
         }
+        self.fars[fi].set([env.0, i, r.node.v.0]);
         Some(r.node.v)
     }
 
