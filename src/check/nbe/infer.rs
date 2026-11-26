@@ -1016,7 +1016,7 @@ impl Nbe<'_> {
         ls: Ls,
         mut expected: V,
     ) -> R<bool> {
-        let base = self.infer_opened.len();
+        let base = env;
         let result = (|| {
             let mut pending = None;
             while let ExprNode::Lam(bi, n, dom, body) = node {
@@ -1059,12 +1059,11 @@ impl Nbe<'_> {
                     return Ok(false);
                 }
                 let x = self.push_fvar(n, dv, None, bi);
-                self.infer_opened.push(x);
                 let next = self.a.cons(env, x);
                 self.ctx_push(env, dom, ls, next);
+                env = next;
                 e = body;
                 node = self.st.node(body);
-                env = next;
                 let pi_env = self.bind_value(pi_body, pi_env, x);
                 if matches!(pi_node, ExprNode::Lam(..)) {
                     expected = self.infer_term(pi_body, pi_env, pi_ls, true)?;
@@ -1081,7 +1080,12 @@ impl Nbe<'_> {
             let t = self.infer_node(e, node, env, ls, false)?;
             self.is_def_eq(t, expected)
         })();
-        self.close_inferred_binders(base);
+        // Each step prepends one free variable. The environment records
+        // the whole scope, including the binders opened before an error.
+        while env != base {
+            self.pop_fvar(self.a.env_head(env));
+            env = self.a.env_tail(env);
+        }
         result
     }
 
