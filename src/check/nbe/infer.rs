@@ -816,6 +816,7 @@ impl Nbe<'_> {
 
     /// Check the argument `a` against its domain, trying syntax first for
     /// ordinary Π binders when that comparison is enabled.
+    #[inline(always)]
     fn check_arg(
         &mut self,
         a: ExprId,
@@ -837,12 +838,36 @@ impl Nbe<'_> {
             if self.syn_eq_term(at, d, pi_env, pi_ls) {
                 return Ok(());
             }
-            let dom = self.thunk(d, pi_env, pi_ls);
-            if !self.is_def_eq(at, dom)? {
-                return Err(self.arg_mismatch(a, node, env, ls, dom)?);
-            }
-            return Ok(());
+            return self.check_arg_def_eq(a, node, (env, ls), (d, pi_env, pi_ls), at);
         }
+        self.check_arg_against(a, node, (env, ls), (d, pi_env, pi_ls), eager)
+    }
+
+    #[inline(never)]
+    fn check_arg_def_eq(
+        &mut self,
+        a: ExprId,
+        node: ExprNode,
+        (env, ls): (Env, Ls),
+        (d, pi_env, pi_ls): (ExprId, Env, Ls),
+        at: V,
+    ) -> R<()> {
+        let dom = self.thunk(d, pi_env, pi_ls);
+        if !self.is_def_eq(at, dom)? {
+            return Err(self.arg_mismatch(a, node, env, ls, dom)?);
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn check_arg_against(
+        &mut self,
+        a: ExprId,
+        node: ExprNode,
+        (env, ls): (Env, Ls),
+        (d, pi_env, pi_ls): (ExprId, Env, Ls),
+        eager: bool,
+    ) -> R<()> {
         let dom = self.thunk(d, pi_env, pi_ls);
         let ok = if eager {
             let saved = std::mem::replace(&mut self.eager, true);
