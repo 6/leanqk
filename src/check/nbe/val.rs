@@ -493,6 +493,25 @@ impl Arena {
         }
     }
 
+    /// Argument `i` of a spine, at a position known to be an application.
+    #[inline]
+    pub(super) fn sp_arg(&self, sp: Sp, i: u32) -> V {
+        let k = sp.0 as usize + 1 + 2 * i as usize;
+        debug_assert!(i < self.sp_len(sp) && self.sps[k + 1] == NONE);
+        V(self.sps[k])
+    }
+
+    /// Append an application-only range of a spine.
+    pub(super) fn extend_sp_args(&self, sp: Sp, start: u32, end: u32, out: &mut Vec<V>) {
+        debug_assert!(start <= end && end <= self.sp_len(sp));
+        let k = sp.0 as usize + 1;
+        let words = &self.sps[k + 2 * start as usize..k + 2 * end as usize];
+        out.extend(words.as_chunks::<2>().0.iter().map(|&[a, tag]| {
+            debug_assert_eq!(tag, NONE);
+            V(a)
+        }));
+    }
+
     /// The last elimination of a non-empty spine.
     #[inline]
     pub fn sp_last_elim(&self, sp: Sp) -> Elim {
