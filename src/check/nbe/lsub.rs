@@ -34,14 +34,17 @@ impl Key for (crate::level::LevelList, super::val::Ls) {
 
 pub struct Lsub<K, V> {
     /// Slot `i` holds a key whose hash is `i` and its value; `None` empty.
-    slots: Vec<Option<(K, V)>>,
+    slots: Box<[Option<(K, V)>; SLOTS]>,
     map: IdMap<K, V>,
 }
 
-impl<K, V> Default for Lsub<K, V> {
+impl<K: Copy, V: Copy> Default for Lsub<K, V> {
     fn default() -> Self {
         Lsub {
-            slots: Vec::new(),
+            slots: vec![None; SLOTS]
+                .into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| unreachable!()),
             map: IdMap::default(),
         }
     }
@@ -56,7 +59,7 @@ impl<K: Key, V: Copy> Lsub<K, V> {
     #[inline]
     pub fn get(&mut self, k: K) -> Option<V> {
         if LSUB_DIRECT
-            && let Some(Some((k2, v))) = self.slots.get(slot(k.bits()))
+            && let Some((k2, v)) = &self.slots[slot(k.bits())]
             && *k2 == k
         {
             return Some(*v);
@@ -76,23 +79,18 @@ impl<K: Key, V: Copy> Lsub<K, V> {
         if !LSUB_DIRECT {
             return;
         }
-        if self.slots.is_empty() {
-            self.slots.resize_with(SLOTS, || None);
-        }
         self.slots[slot(k.bits())] = Some((k, v));
     }
 }
 
-impl<K, V> Cap for Lsub<K, V> {
+impl<K: Copy, V: Copy> Cap for Lsub<K, V> {
     fn cap(&self) -> usize {
         self.map.cap()
     }
 
     fn clear_keep(&mut self) {
         self.map.clear_keep();
-        for s in &mut self.slots {
-            *s = None;
-        }
+        self.slots.fill(None);
     }
 }
 
