@@ -531,11 +531,13 @@ impl<'e> Nbe<'e> {
 
     /// The definition at the head of `v`, if `v` can be unfolded.
     pub fn is_delta(&mut self, v: V) -> Option<Decl> {
-        self.delta_definition(v).copied()
+        let v = self.force(v);
+        self.delta_definition_forced(v).copied()
     }
 
-    pub(super) fn delta_definition(&mut self, v: V) -> Option<&'e Decl> {
-        let v = self.force(v);
+    /// The definition at the head of a value already forced by core reduction.
+    pub(super) fn delta_definition_forced(&self, v: V) -> Option<&'e Decl> {
+        debug_assert!(!self.a.r(v).is_thunk());
         self.delta_head(v).map(|(d, _, _)| d)
     }
 
@@ -566,9 +568,9 @@ impl<'e> Nbe<'e> {
         self.unfold_delta(v, d, ls, sp)
     }
 
-    /// Take the chosen lazy delta step using metadata validated by `delta_definition`.
+    /// Take the chosen lazy delta step on a forced value with validated metadata.
     pub(super) fn unfold_cheap(&mut self, v: V, d: &Decl) -> R<V> {
-        let v = self.force(v);
+        debug_assert!(!self.a.r(v).is_thunk());
         let m = self.a.r(v).delta;
         let r = if m != NONE {
             V(m)

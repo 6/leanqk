@@ -777,11 +777,12 @@ impl Nbe<'_> {
         k
     }
 
+    /// Both sides come from core reduction or are prefixes of neutral values.
     fn lazy_delta_reduction_step(&mut self, t: &mut V, s: &mut V) -> R<Step> {
         self.tick()?;
         self.decl_steps = self.decl_steps.saturating_add(1);
-        let dt = self.delta_definition(*t);
-        let ds = self.delta_definition(*s);
+        let dt = self.delta_definition_forced(*t);
+        let ds = self.delta_definition_forced(*s);
         match (dt, ds) {
             (None, None) => return Ok(Step::Unknown),
             (Some(dt), None) => {
