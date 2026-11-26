@@ -75,6 +75,9 @@ const SYN_T: usize = 1 << 12;
 /// Slots of `Nbe::eager_slots`.
 pub(super) const EAGER_SLOTS: usize = 1 << 14;
 
+/// Slots of `Nbe::binder_slots`.
+pub(super) const BINDER_SLOTS: usize = 1 << 14;
+
 /// Slots of `Nbe::eager_direct`.
 pub(super) const EAGER_DIRECT_SLOTS: usize = 1 << 16;
 
@@ -112,6 +115,8 @@ pub struct Nbe<'e> {
     /// `eager`'s direct-mapped memo: (term, substitution, values read,
     /// value).
     pub(super) eager_direct: Box<[[u32; 4]; EAGER_DIRECT_SLOTS]>,
+    /// λ and Π values by term, environment and substitution (`eval_binder`).
+    pub(super) binder_slots: Box<[[u32; 4]; BINDER_SLOTS]>,
     /// Lists of values read from environments (`read_tuple`).
     pub(super) tuples: memo::EnvMemo<0>,
     /// A direct-mapped front of `tuples`: (environment, range, holes (two
@@ -292,6 +297,7 @@ impl<'e> Nbe<'e> {
             eager_slots: val::table(val::NONE),
             eager_memo: Default::default(),
             eager_direct: val::table(val::NONE),
+            binder_slots: val::table(val::NONE),
             tuples: Default::default(),
             tuple_slots: val::table(val::NONE),
             infer_memo: Default::default(),
@@ -536,6 +542,7 @@ impl<'e> Nbe<'e> {
         self.eager_slots.fill([val::NONE; 4]);
         self.eager_memo.clear();
         self.eager_direct.fill([val::NONE; 4]);
+        self.binder_slots.fill([val::NONE; 4]);
         self.tuples.clear();
         self.tuple_slots.fill([val::NONE; 5]);
         self.infer_memo.clear();

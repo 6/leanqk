@@ -81,6 +81,20 @@ impl Nbe<'_> {
 
     #[inline(never)]
     fn eval_binder(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        // A front by the environment as given, before it is cut.
+        let si = (crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64) >> 50)
+            as usize
+            & (super::BINDER_SLOTS - 1);
+        let s = self.binder_slots[si];
+        if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
+            return V(s[3]);
+        }
+        let v = self.eval_binder_new(e, env, ls);
+        self.binder_slots[si] = [e.0, env.0, ls.0, v.0];
+        v
+    }
+
+    fn eval_binder_new(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let d = self.st.data(e);
         let env = self.trim_prune(env, d);
         match self.st.node(e) {
