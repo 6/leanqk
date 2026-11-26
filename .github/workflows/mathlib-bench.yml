@@ -1,24 +1,39 @@
-name: Mathlib benchmark (x86_64)
+name: Mathlib benchmark
 
-# Checks the NDJSON export of Mathlib v4.36.0 (`cargo xtask mathlib fetch`)
-# on an x86_64 runner with nitrolean (-j1 and -j4) and with gruszka, built at
-# the commit the Lean Kernel Arena pins and run as the arena runs it (`susz
-# pack --no-index`, then 4 workers), and with gruszka alone on the packed
-# file. Each run is measured as the arena measures it (bench/mathlib-x86/):
-# instructions, wall time, user and system CPU time, peak RSS. Every run
-# must accept. The table goes into the job summary, the raw numbers into
-# the artifact mathlib-x86-results.
+# Checks the NDJSON export of Mathlib v4.36.0 (`cargo xtask mathlib fetch`),
+# or its rep25s slice (bench/mathlib/rep25s/), with nitrolean and with
+# gruszka, built at the commit the Lean Kernel Arena pins and run as the
+# arena runs it (`susz pack --no-index`, then its workers), on a GitHub
+# runner: x86_64 (ubuntu-24.04) or aarch64 (ubuntu-24.04-arm), chosen with
+# the `runner` input. The runs are nitrolean -j1 and -j4, gruszka with 1 and
+# 4 workers, and gruszka alone (4 workers) on the packed file, in rounds:
+# within a round the two checkers alternate, so that the runner's noise
+# falls on both alike. Each run is measured as the arena measures it
+# (bench/mathlib-ci/measure.sh): instructions, wall time, user and system
+# CPU time, peak RSS. Every run must accept. The job summary gives the
+# medians over the rounds and the ratios nitrolean / gruszka
+# (bench/mathlib-ci/report.sh); the artifact holds every row.
 #
-# The `probe` job reports which instruction counters the runner offers
-# (hosted runners are VMs; hardware counters may be missing). cachegrind is
-# the fallback; gruszka reserves 128 GiB of address space, which valgrind may
-# refuse it, and a run that ends differently under valgrind gets no count.
+# Each job reports which instruction counters its machine offers (the
+# `probe` job on a machine of its own). GitHub's hosted runners are VMs of
+# several kinds: some expose hardware counters (an Intel Xeon 6975P-C on
+# KVM did) and some do not (an AMD EPYC 9V74 on Hyper-V did not). With
+# them, perf stat counts every run; without them, counts come from
+# valgrind's cachegrind: an extra, untimed run in the first round, some 30
+# to 70 times slower, taken in auto mode only for a slice. gruszka reserves 128 GiB of
+# address space, which valgrind may refuse it; a run that ends differently
+# under valgrind gets no count.
 
 on:
   workflow_dispatch:
     inputs:
+      slice:
+        description: All of Mathlib, or the rep25s slice
+        type: choice
+        options: [full, rep25s]
+        default: full
       lines:
-        description: Check only the first N lines of the export (a valid export too); empty for all of it
+        description: Check only the first N lines of it (a valid export too); empty for all
         default: ""
       counter:
         description: How instructions are counted
@@ -26,15 +41,20 @@ on:
         options: [auto, perf, perf-u, cachegrind, none]
         default: auto
       runner:
-        description: Runner label for the benchmark job
+        description: Runner label (ubuntu-24.04 for x86_64, ubuntu-24.04-arm for aarch64)
         default: ubuntu-24.04
+      rounds:
+        description: Rounds of runs (medians are taken over them)
+        default: "5"
+  # On a pull request that changes the benchmark: the rep25s slice.
   pull_request:
     paths:
-      - .github/workflows/mathlib-x86.yml
-      - bench/mathlib-x86/**
+      - .github/workflows/mathlib-bench.yml
+      - bench/mathlib-ci/**
+      - bench/mathlib/rep25s/**
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.runner || 'ubuntu-24.04' }}
   cancel-in-progress: true
 
 permissions:
@@ -43,6 +63,7 @@ permissions:
 env:
   ELAN_VERSION: v4.4.0
   ELAN_SHA256: 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2
+  ELAN_SHA256_AARCH64: 45cde3006f82f98804c94cf2ca4949d117060a5f3cc8afa62f523759947ee21f
   LEAN_TOOLCHAIN: leanprover/lean4:v4.36.0
   # gruszka as the arena's checkers/gruszka.yaml builds it (arena commit
   # 8a7d0dceea76dfe6fd7bd7f3a6ea216f6347c6aa).
@@ -55,12 +76,12 @@ env:
 
 jobs:
   probe:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner || 'ubuntu-24.04' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Try the counters
-        run: bench/mathlib-x86/probe.sh "$RUNNER_TEMP/counter" | tee -a "$GITHUB_STEP_SUMMARY"
+        run: bench/mathlib-ci/probe.sh "$RUNNER_TEMP/counter" | tee -a "$GITHUB_STEP_SUMMARY"
 
   bench:
     runs-on: ${{ inputs.runner || 'ubuntu-24.04' }}
@@ -86,18 +107,25 @@ jobs:
       - name: Pick the instruction counter
         env:
           WANTED: ${{ inputs.counter || 'auto' }}
+          SLICE: ${{ inputs.slice || 'rep25s' }}
           LINES_WANTED: ${{ inputs.lines }}
         run: |
-          bench/mathlib-x86/probe.sh "$RUNNER_TEMP/counter" > "$RUNNER_TEMP/probe.md"
+          bench/mathlib-ci/probe.sh "$RUNNER_TEMP/counter" > "$RUNNER_TEMP/probe.md"
           cat "$RUNNER_TEMP/probe.md"
           counter=$(cat "$RUNNER_TEMP/counter")
           [ "$WANTED" = auto ] || counter=$WANTED
-          # valgrind does not run AVX-512 code: under cachegrind, build for
-          # x86-64-v3 instead of the machine's own instruction set.
           # Under cachegrind a full Mathlib run would not end within the
           # job's time limit: auto takes it only for a slice.
-          if [ "$WANTED" = auto ] && [ "$counter" = cachegrind ] && [ -z "$LINES_WANTED" ]; then counter=none; fi
-          if [ "$counter" = cachegrind ]; then flags="-C target-cpu=x86-64-v3"; else flags="-C target-cpu=native"; fi
+          if [ "$WANTED" = auto ] && [ "$counter" = cachegrind ] && [ "$SLICE" = full ] && [ -z "$LINES_WANTED" ]; then
+            counter=none
+          fi
+          # valgrind runs neither AVX-512 nor SVE code: under cachegrind,
+          # build for x86-64-v3 or generic aarch64 instead of the machine's
+          # own instruction set.
+          flags="-C target-cpu=native"
+          if [ "$counter" = cachegrind ]; then
+            case $(uname -m) in x86_64) flags="-C target-cpu=x86-64-v3" ;; *) flags= ;; esac
+          fi
           echo "COUNTER=$counter" >> "$GITHUB_ENV"
           echo "FLAGS=$flags" >> "$GITHUB_ENV"
           echo "counter: $counter; rustc flags: $flags"
@@ -134,13 +162,20 @@ jobs:
       # Checked against the export's SHA-256; Mathlib's checkout and build
       # cache are removed afterwards for disk space.
       - name: Fetch the Mathlib export
+        env:
+          SLICE: ${{ inputs.slice || 'rep25s' }}
         run: |
-          time cargo xtask mathlib fetch "$W/mathlib.ndjson"
+          if [ "$SLICE" = rep25s ]; then
+            time bench/mathlib/rep25s/build.sh "$W/mathlib4" "$W/mathlib.ndjson"
+          else
+            time cargo xtask mathlib fetch "$W/mathlib.ndjson"
+          fi
           rm -rf "$W/mathlib4" ~/.cache/mathlib
           df -h / | tail -1
 
       - name: Take the slice
         env:
+          SLICE: ${{ inputs.slice || 'rep25s' }}
           LINES_WANTED: ${{ inputs.lines }}
         run: |
           in=$W/mathlib.ndjson
@@ -151,7 +186,7 @@ jobs:
           fi
           echo "IN=$in" >> "$GITHUB_ENV"
           {
-            echo "export: \`$(basename "$in")\`, ${LINES_WANTED:-all} lines"
+            echo "export: Mathlib v4.36.0, $([ "$SLICE" = full ] && echo all of it || echo "the $SLICE slice"), ${LINES_WANTED:-all} lines"
             echo "($(wc -l < "$in") lines, $(stat -c %s "$in") bytes, SHA-256 \`$(sha256sum "$in" | cut -d' ' -f1)\`)"
           } | tee "$RUNNER_TEMP/input.md"
 
@@ -160,45 +195,60 @@ jobs:
           time "$W/gruszka/.susz/bin/susz" pack --no-index "$IN" "$W/in.susz"
           ls -l "$W/in.susz"
 
+      # Round by round, nitrolean and gruszka alternate. Under cachegrind
+      # only the first round counts (an extra run each); perf counts every
+      # run.
       - name: Run
+        env:
+          ROUNDS: ${{ inputs.rounds || '5' }}
         run: |
-          out=$RUNNER_TEMP/mathlib-x86.tsv
-          m=$PWD/bench/mathlib-x86/measure.sh
+          out=$RUNNER_TEMP/mathlib-bench.tsv
+          m=$PWD/bench/mathlib-ci/measure.sh
           nl=$PWD/target/release/nitrolean
+          gr() { (cd "$W/gruszka" && TMPDIR=$W "$m" "$@"); }
           warm() { cat "$IN" "$W/in.susz" > /dev/null; }
-          warm; $m "nitrolean -j1" "$out" "$nl check -j 1 '$IN'"
-          warm; $m "nitrolean -j4" "$out" "$nl check -j 4 '$IN'"
-          warm; (cd "$W/gruszka" && TMPDIR=$W $m "gruszka (susz pack + 4 workers)" "$out" "scripts/arena-run '$IN' 4")
-          warm; $m "gruszka alone (4 workers)" "$out" "'$W/gruszka/target/release/gruszka' '$W/in.susz' 4"
+          counter=$COUNTER
+          for ROUND in $(seq "$ROUNDS"); do
+            export ROUND
+            if [ "$ROUND" -gt 1 ] && [ "$counter" = cachegrind ]; then export COUNTER=none; fi
+            warm; $m "nitrolean -j1" "$out" "$nl check -j 1 '$IN'"
+            warm; gr "gruszka (susz pack + 1 worker)" "$out" "scripts/arena-run '$IN' 1"
+            warm; $m "nitrolean -j4" "$out" "$nl check -j 4 '$IN'"
+            warm; gr "gruszka (susz pack + 4 workers)" "$out" "scripts/arena-run '$IN' 4"
+            warm; $m "gruszka alone (4 workers)" "$out" "'$W/gruszka/target/release/gruszka' '$W/in.susz' 4"
+          done
 
       - name: Report
         if: always()
         run: |
-          out=$RUNNER_TEMP/mathlib-x86.tsv
+          out=$RUNNER_TEMP/mathlib-bench.tsv
           [ -f "$out" ] || exit 1
+          ok=0
           {
-            echo "## Mathlib v4.36.0 on x86_64"
+            echo "## Mathlib v4.36.0 on $(uname -m) ($RUNNER_LABEL)"
             echo
             cat "$RUNNER_TEMP/input.md"
             echo
             echo "nitrolean \`$(git rev-parse --short HEAD)\`, gruszka \`${GRUSZKA_REV:0:12}\`, susz $SUSZ_VERSION;"
-            echo "rustc flags \`$FLAGS\`, both PGO; instructions by \`$COUNTER\`."
+            echo "rustc flags \`${FLAGS:-(none)}\`, both PGO; instructions by \`$COUNTER\`."
             echo
-            echo "| run | verdict | G instructions | wall s | user s | sys s | CPU s | peak RSS MiB |"
-            echo "|---|---|--:|--:|--:|--:|--:|--:|"
-            awk -F'\t' 'NR > 1 {printf "| %s | %s | %s | %s | %s | %s | %s | %s |\n", $1, $3, $9, $4, $5, $6, $7, $8}' "$out"
+            bench/mathlib-ci/report.sh "$out" || ok=$?
             echo
             cat "$RUNNER_TEMP/probe.md"
-          } >> "$GITHUB_STEP_SUMMARY"
-          awk -F'\t' 'NR > 1 && $3 != "accepted" {bad = 1; print "not accepted: " $1 " (" $11 ")"} END {exit bad}' "$out"
+          } > "$RUNNER_TEMP/summary.md"
+          cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          exit "$ok"
+        env:
+          RUNNER_LABEL: ${{ inputs.runner || 'ubuntu-24.04' }}
 
       - name: Upload the results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: mathlib-x86-results
+          name: mathlib-bench-${{ runner.arch }}
           path: |
-            ${{ runner.temp }}/mathlib-x86.tsv
+            ${{ runner.temp }}/mathlib-bench.tsv
+            ${{ runner.temp }}/summary.md
             ${{ runner.temp }}/probe.md
             ${{ runner.temp }}/input.md
           if-no-files-found: ignore

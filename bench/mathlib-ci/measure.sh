@@ -13,8 +13,9 @@
 #               Some 30 to 70 times slower than the plain run.
 #   none        no count
 # Appends one tab-separated row to OUT.tsv (header written if new):
-# name, exit status, verdict, wall s, user s, sys s, CPU s, peak RSS MiB,
-# billions of instructions, counter, last line of output.
+# name, round ($ROUND, default 1), exit status, verdict, wall s, user s,
+# sys s, CPU s, peak RSS MiB, billions of instructions, counter, last line
+# of output.
 set -uo pipefail
 name=$1 out=$2 cmd=$3
 counter=${COUNTER:-none}
@@ -56,8 +57,8 @@ case $status in
   *) verdict=error ;;
 esac
 last=$(grep -v '^\s*$' "$tmp/log" | tail -1 | tr '\t' ' ' | cut -c1-200)
-[ -s "$out" ] || printf 'run\tstatus\tverdict\twall_s\tuser_s\tsys_s\tcpu_s\trss_mib\tginstructions\tcounter\tlast_line\n' >"$out"
+[ -s "$out" ] || printf 'run\tround\tstatus\tverdict\twall_s\tuser_s\tsys_s\tcpu_s\trss_mib\tginstructions\tcounter\tlast_line\n' >"$out"
 cpu=$(awk -v u="$user" -v s="$sys" 'BEGIN {printf "%.2f", u + s}')
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$status" "$verdict" \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "${ROUND:-1}" "$status" "$verdict" \
   "$wall" "$user" "$sys" "$cpu" "$((rss_kib / 1024))" "${ginstr:--}" "$counter" "$last" >>"$out"
-echo "$name: $verdict, wall ${wall}s, CPU ${cpu}s, RSS $((rss_kib / 1024)) MiB, ${ginstr:--} G instructions"
+echo "$name (round ${ROUND:-1}): $verdict, wall ${wall}s, CPU ${cpu}s, RSS $((rss_kib / 1024)) MiB, ${ginstr:--} G instructions"

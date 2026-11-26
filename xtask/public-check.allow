@@ -3,3 +3,6 @@
 # A prefix of Lean's Init export, packed: training data for profile-guided
 # builds (bench/arena/pgo/README.md).
 bench/arena/pgo/init-prefix.ndjson.xz
+# The declarations the rep25s slice of Mathlib starts from, zstd-packed
+# (bench/mathlib/rep25s/README.md).
+bench/mathlib/rep25s/rep25s.roots.jsonl.zst

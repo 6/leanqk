@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 use crate::util::{run, sha256_file};
 
@@ -16,6 +16,9 @@ pub struct InstallElanArgs {
     /// The SHA-256 of its x86_64 Linux archive
     #[arg(long, env = "ELAN_SHA256")]
     sha256: String,
+    /// The SHA-256 of its aarch64 Linux archive (needed on aarch64)
+    #[arg(long, env = "ELAN_SHA256_AARCH64")]
+    sha256_aarch64: Option<String>,
     /// Also install this toolchain
     #[arg(long)]
     toolchain: Option<String>,
@@ -28,8 +31,16 @@ pub fn install_elan(a: InstallElanArgs) -> Result<()> {
         let tmp = std::env::temp_dir().join(format!("elan-{}", std::process::id()));
         std::fs::create_dir_all(&tmp)?;
         let archive = tmp.join("elan.tar.gz");
+        let arch = std::env::consts::ARCH;
+        let want = match arch {
+            "x86_64" => a.sha256.clone(),
+            "aarch64" => a.sha256_aarch64.clone().context(
+                "install-elan: on aarch64, give --sha256-aarch64 or ELAN_SHA256_AARCH64",
+            )?,
+            _ => bail!("install-elan: no pinned elan archive for {arch}"),
+        };
         let url = format!(
-            "https://github.com/leanprover/elan/releases/download/{}/elan-x86_64-unknown-linux-gnu.tar.gz",
+            "https://github.com/leanprover/elan/releases/download/{}/elan-{arch}-unknown-linux-gnu.tar.gz",
             a.version
         );
         run(Command::new("curl")
@@ -37,8 +48,8 @@ pub fn install_elan(a: InstallElanArgs) -> Result<()> {
             .arg(&archive)
             .arg(&url))?;
         let got = sha256_file(&archive)?;
-        if got != a.sha256 {
-            bail!("install-elan: {url}: SHA-256 {got}, expected {}", a.sha256);
+        if got != want {
+            bail!("install-elan: {url}: SHA-256 {got}, expected {want}");
         }
         run(Command::new("tar")
             .arg("-xzf")
