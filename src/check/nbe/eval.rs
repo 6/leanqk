@@ -22,6 +22,10 @@ const EAGER_ALL: bool = true;
 /// the environment the term reads (`eager`), not through a thunk.
 const EAGER_MEMO: bool = true;
 
+/// Whether `thunk` looks an application, `let` or projection up in the
+/// eager front itself, before the rest (out of line).
+const THUNK_EAGER_FRONT: bool = true;
+
 /// Whether `eager` remembers in a direct-mapped table only
 /// (`Nbe::eager_direct`), not a growing one.
 const EAGER_DIRECT: bool = true;
@@ -62,11 +66,31 @@ impl Nbe<'_> {
         self.ticks += 1;
         let base = self.terms.len();
         let mut f = e;
-        while let ExprNode::App(g, a) = self.st.node(f) {
-            self.terms.push(a);
-            f = g;
-        }
-        let h = self.eval(f, env, ls);
+        let head = loop {
+            match self.st.node(f) {
+                ExprNode::App(g, a) => {
+                    self.terms.push(a);
+                    f = g;
+                }
+                n => break n,
+            }
+        };
+        // The head as `eval` would, from its node read already.
+        let h = match head {
+            ExprNode::BVar(i) => match self.a.lookup(env, i) {
+                Some(v) => self.force(v),
+                None => self.bottom(Sp::NIL),
+            },
+            ExprNode::Const(n, lv) => {
+                let ls = if self.st.data(f).has_level_param() {
+                    ls
+                } else {
+                    Ls::ID
+                };
+                self.eval_const(n, lv, ls)
+            }
+            _ => self.eval(f, env, ls),
+        };
         let vbase = self.vargs.len();
         for k in (base..self.terms.len()).rev() {
             let a = *super::val::at(&self.terms, k);
@@ -81,6 +105,20 @@ impl Nbe<'_> {
 
     #[inline(never)]
     fn eval_binder(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        // A front by the environment as given, before it is cut.
+        let si = (crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64) >> 50)
+            as usize
+            & (super::BINDER_SLOTS - 1);
+        let s = self.binder_slots[si];
+        if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
+            return V(s[3]);
+        }
+        let v = self.eval_binder_new(e, env, ls);
+        self.binder_slots[si] = [e.0, env.0, ls.0, v.0];
+        v
+    }
+
+    fn eval_binder_new(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let d = self.st.data(e);
         let env = self.trim_prune(env, d);
         match self.st.node(e) {
@@ -119,15 +157,47 @@ impl Nbe<'_> {
 
     /// `e` in `env`, unevaluated unless that is as cheap as a thunk.
     pub fn thunk(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        if let ExprNode::BVar(i) = self.st.node(e)
+            && let Some(v) = self.a.lookup(env, i)
+        {
+            return v;
+        }
+        if THUNK_EAGER_FRONT
+            && EAGER_MEMO
+            && matches!(
+                self.st.node(e),
+                ExprNode::App(..) | ExprNode::Let(..) | ExprNode::Proj(..)
+            )
+            && self.eager_depth < EAGER_DEPTH
+        {
+            return self.eager(e, env, ls);
+        }
+        self.thunk_other(e, env, ls)
+    }
+
+    /// `thunk` but of a variable found: out of line, so that a variable
+    /// costs no frame for the rest.
+    #[inline(never)]
+    fn thunk_other(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         match self.st.node(e) {
-            ExprNode::BVar(i) => match self.a.lookup(env, i) {
-                Some(v) => v,
-                None => self.bottom(Sp::NIL),
-            },
+            ExprNode::BVar(_) => self.bottom(Sp::NIL),
+            ExprNode::Const(n, lv) => {
+                let ls = if self.st.data(e).has_level_param() {
+                    ls
+                } else {
+                    Ls::ID
+                };
+                self.eval_const(n, lv, ls)
+            }
+            ExprNode::Lam(..) | ExprNode::Pi(..) => {
+                let ls = if self.st.data(e).has_level_param() {
+                    ls
+                } else {
+                    Ls::ID
+                };
+                self.eval_binder(e, env, ls)
+            }
             ExprNode::Sort(_)
-            | ExprNode::Const(..)
-            | ExprNode::Lam(..)
-            | ExprNode::Pi(..)
             | ExprNode::NatSmall(..)
             | ExprNode::NatBig(_)
             | ExprNode::Str(_)

@@ -76,6 +76,9 @@ const SYN_T: usize = 1 << 12;
 /// Slots of `Nbe::eager_slots`.
 pub(super) const EAGER_SLOTS: usize = 1 << 14;
 
+/// Slots of `Nbe::binder_slots`.
+pub(super) const BINDER_SLOTS: usize = 1 << 14;
+
 /// Slots of `Nbe::eager_direct`.
 pub(super) const EAGER_DIRECT_SLOTS: usize = 1 << 16;
 
@@ -113,6 +116,8 @@ pub struct Nbe<'e> {
     /// `eager`'s direct-mapped memo: (term, substitution, values read,
     /// value).
     pub(super) eager_direct: Box<[[u32; 4]; EAGER_DIRECT_SLOTS]>,
+    /// λ and Π values by term, environment and substitution (`eval_binder`).
+    pub(super) binder_slots: Box<[[u32; 4]; BINDER_SLOTS]>,
     /// Lists of values read from environments (`read_tuple`).
     tuples: memo::TupleMemo,
     /// A direct-mapped front of `tuples`: (environment, range, holes (two
@@ -295,6 +300,7 @@ impl<'e> Nbe<'e> {
             eager_slots: val::table(val::NONE),
             eager_memo: Default::default(),
             eager_direct: val::table(val::NONE),
+            binder_slots: val::table(val::NONE),
             tuples: Default::default(),
             tuple_slots: val::table(val::NONE),
             infer_memo: Default::default(),
@@ -555,7 +561,7 @@ impl<'e> Nbe<'e> {
         self.vargs.clear();
         self.eager_depth = 0;
         shrink(&mut self.open_count);
-        self.trim_cache.fill([val::NONE; 3]);
+        self.trim_cache.as_flattened_mut().fill(val::NONE);
         shrink(&mut self.key_envs);
         shrink(&mut self.canon_fvar);
         shrink(&mut self.level_checked);
@@ -564,15 +570,16 @@ impl<'e> Nbe<'e> {
         if let Some(cache) = &mut self.stable_queries {
             cache.reset();
         }
-        self.prunes.fill([val::NONE; 3]);
-        self.trim_holes_memo.fill([val::NONE; 4]);
-        self.eager_slots.fill([val::NONE; 4]);
+        self.prunes.as_flattened_mut().fill(val::NONE);
+        self.trim_holes_memo.as_flattened_mut().fill(val::NONE);
+        self.eager_slots.as_flattened_mut().fill(val::NONE);
         self.eager_memo.clear();
-        self.eager_direct.fill([val::NONE; 4]);
+        self.eager_direct.as_flattened_mut().fill(val::NONE);
+        self.binder_slots.as_flattened_mut().fill(val::NONE);
         self.tuples.clear();
-        self.tuple_slots.fill([val::NONE; 5]);
+        self.tuple_slots.as_flattened_mut().fill(val::NONE);
         self.infer_memo.clear();
-        self.infer_slots.fill([val::NONE; 4]);
+        self.infer_slots.as_flattened_mut().fill(val::NONE);
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;
@@ -592,7 +599,7 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.const_type);
         shrink(&mut self.const_value);
         self.pairs.clear();
-        self.syn_t.fill([val::NONE; 8]);
+        self.syn_t.as_flattened_mut().fill(val::NONE);
         shrink(&mut self.level_eq);
         shrink(&mut self.major_induct);
         if self.kept_bytes() > self.cache_share {
