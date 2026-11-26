@@ -2,13 +2,13 @@
 //! `type_checker.cpp` step by step.
 
 use crate::env::{DeclKind, Hints};
-use crate::expr::ExprNode;
+use crate::expr::{ExprData, ExprNode};
 use crate::level::{LevelId, LevelList};
 
 use super::super::tc::R;
 use super::super::univ;
 use super::Nbe;
-use super::val::{Elim, Sp, V, Val};
+use super::val::{Elim, Env, Sp, V, Val};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Step {
@@ -1213,11 +1213,23 @@ impl Nbe<'_> {
         budget: &mut u32,
     ) -> bool {
         if t_l == t_r && k_l == k_r && k_l == d {
-            let d_l = self.st.data(t_l);
-            let closed = d_l.loose_bvar_range() <= d || e_l == e_r;
-            let lvl = !d_l.has_level_param() || l_l == l_r;
-            if closed && lvl {
-                return true;
+            let data = self.st.data(t_l);
+            if l_l == l_r || !data.has_level_param() {
+                let range = data.loose_bvar_range();
+                if e_l == e_r || range <= d {
+                    return true;
+                }
+                if range <= 63 && *budget > 0 {
+                    let used = if range <= ExprData::USED_LOW {
+                        ((1u64 << range) - 1) & !u64::from(data.unused_low())
+                    } else {
+                        self.used_bvars(t_l)
+                    };
+                    if used & super::MANY_BVARS == 0 {
+                        *budget -= 1;
+                        return self.syn_eq_env(e_l, e_r, used >> d, budget);
+                    }
+                }
             }
         }
         if *budget == 0 {
@@ -1253,6 +1265,22 @@ impl Nbe<'_> {
             return r;
         }
         self.syn_eq_t_node(t_l, e_l, l_l, k_l, t_r, e_r, l_r, k_r, d, budget)
+    }
+
+    /// For one term under the same binders and universe substitution, only
+    /// the environment entries that it reads can distinguish the closures.
+    fn syn_eq_env(&mut self, left: Env, right: Env, mut used: u64, budget: &mut u32) -> bool {
+        while used != 0 {
+            let i = used.trailing_zeros();
+            used &= used - 1;
+            let (Some(a), Some(b)) = (self.a.lookup(left, i), self.a.lookup(right, i)) else {
+                return false;
+            };
+            if !self.syn_eq_v(a, b, budget) {
+                return false;
+            }
+        }
+        true
     }
 
     #[allow(clippy::too_many_arguments)]

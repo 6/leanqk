@@ -160,7 +160,7 @@ impl ExprData {
     /// `USED_LOW`: exactly, except that `#(USED_LOW - 1)` counts as
     /// occurring under a binder whose body has a larger range.
     const USED_SHIFT: u32 = 22;
-    const USED_LOW: u32 = 10;
+    pub(crate) const USED_LOW: u32 = 10;
     const USED: u32 = ((1 << Self::USED_LOW) - 1) << Self::USED_SHIFT;
 
     /// The data of a constant, sort or literal (`range` 0), or of the
