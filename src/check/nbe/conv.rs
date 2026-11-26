@@ -1179,6 +1179,46 @@ const SHAPE_ELIM: u8 = 4;
 /// Bound on the nodes one structural comparison may visit.
 const SYN_BUDGET: u32 = 1 << 10;
 
+/// Common binders and the extra binders on either side of a term comparison.
+/// Every extra binder was entered by a mixed comparison within SYN_BUDGET.
+#[derive(Clone, Copy)]
+struct SynDepth(u64);
+
+impl SynDepth {
+    const ZERO: Self = Self(0);
+    const RIGHT_SHIFT: u32 = 48;
+
+    fn left(k: u32) -> Self {
+        debug_assert!(k <= SYN_BUDGET);
+        Self(u64::from(k) << 32)
+    }
+
+    fn right(k: u32) -> Self {
+        debug_assert!(k <= SYN_BUDGET);
+        Self(u64::from(k) << Self::RIGHT_SHIFT)
+    }
+
+    fn common(self) -> u32 {
+        self.0 as u32
+    }
+
+    fn aligned(self) -> bool {
+        self.0 >> 32 == 0
+    }
+
+    fn left_total(self) -> u32 {
+        self.common() + (self.0 >> 32) as u16 as u32
+    }
+
+    fn right_total(self) -> u32 {
+        self.common() + (self.0 >> Self::RIGHT_SHIFT) as u32
+    }
+
+    fn under_binder(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
 impl Nbe<'_> {
     /// Whether `t` and `s` are the same term up to how they are represented
     /// (Lean's `eqv_manager` check): equal closures over equal environments,
@@ -1222,7 +1262,7 @@ impl Nbe<'_> {
             | (Val::Lam(t_l, e_l, l_l), Val::Lam(t_r, e_r, l_r))
             | (Val::Pi(t_l, e_l, l_l), Val::Pi(t_r, e_r, l_r))
             | (Val::PiInfer(t_l, e_l, l_l), Val::PiInfer(t_r, e_r, l_r)) => {
-                self.syn_eq_t(t_l, e_l, l_l, 0, t_r, e_r, l_r, 0, 0, budget)
+                self.syn_eq_t(t_l, e_l, l_l, t_r, e_r, l_r, SynDepth::ZERO, budget)
             }
             (Val::Thunk(..), _) | (_, Val::Thunk(..)) => {
                 let (ft, fs) = (self.forced_or(t), self.forced_or(s));
@@ -1285,15 +1325,14 @@ impl Nbe<'_> {
         t_l: crate::expr::ExprId,
         e_l: super::val::Env,
         l_l: super::val::Ls,
-        k_l: u32,
         t_r: crate::expr::ExprId,
         e_r: super::val::Env,
         l_r: super::val::Ls,
-        k_r: u32,
-        d: u32,
+        depth: SynDepth,
         budget: &mut u32,
     ) -> bool {
-        if t_l == t_r && k_l == k_r && k_l == d {
+        let d = depth.common();
+        if t_l == t_r && depth.aligned() {
             let data = self.st.data(t_l);
             if l_l == l_r || !data.has_level_param() {
                 let range = data.loose_bvar_range();
@@ -1317,8 +1356,7 @@ impl Nbe<'_> {
             return false;
         }
         // Terms are DAGs: remember what was compared at the same depth.
-        if k_l == d
-            && k_r == d
+        if depth.aligned()
             && let ExprNode::App(f_l, a_l) = self.st.node(t_l)
             && let ExprNode::App(f_r, a_r) = self.st.node(t_r)
         {
@@ -1337,8 +1375,8 @@ impl Nbe<'_> {
                 return s[7] != 0;
             }
             *budget -= 1;
-            let r = self.syn_eq_t(f_l, e_l, l_l, k_l, f_r, e_r, l_r, k_r, d, budget)
-                && self.syn_eq_t(a_l, e_l, l_l, k_l, a_r, e_r, l_r, k_r, d, budget);
+            let r = self.syn_eq_t(f_l, e_l, l_l, f_r, e_r, l_r, depth, budget)
+                && self.syn_eq_t(a_l, e_l, l_l, a_r, e_r, l_r, depth, budget);
             if r || *budget > 0 {
                 let mut e = [0; 8];
                 e[..7].copy_from_slice(&key);
@@ -1347,7 +1385,7 @@ impl Nbe<'_> {
             }
             return r;
         }
-        self.syn_eq_t_node(t_l, e_l, l_l, k_l, t_r, e_r, l_r, k_r, d, budget)
+        self.syn_eq_t_node(t_l, e_l, l_l, t_r, e_r, l_r, depth, budget)
     }
 
     /// For one term under the same binders and universe substitution, only
@@ -1372,21 +1410,21 @@ impl Nbe<'_> {
         t_l: crate::expr::ExprId,
         e_l: super::val::Env,
         l_l: super::val::Ls,
-        k_l: u32,
         t_r: crate::expr::ExprId,
         e_r: super::val::Env,
         l_r: super::val::Ls,
-        k_r: u32,
-        d: u32,
+        depth: SynDepth,
         budget: &mut u32,
     ) -> bool {
         *budget -= 1;
         let (n_l, n_r) = (self.st.node(t_l), self.st.node(t_r));
+        let d = depth.common();
         match (n_l, n_r) {
             (ExprNode::BVar(i), ExprNode::BVar(j)) => {
                 if i < d || j < d {
                     return i == j;
                 }
+                let k_l = depth.left_total();
                 if i < k_l || *budget == 0 {
                     return false;
                 }
@@ -1395,6 +1433,7 @@ impl Nbe<'_> {
                 };
                 // Charge for the right variable as in the mixed comparison.
                 *budget -= 1;
+                let k_r = depth.right_total();
                 if j < k_r {
                     return false;
                 }
@@ -1404,20 +1443,40 @@ impl Nbe<'_> {
                 };
             }
             (ExprNode::BVar(i), _) if i >= d => {
+                let k_l = depth.left_total();
                 if i < k_l {
                     return false;
                 }
                 return match self.a.lookup(e_l, i - k_l) {
-                    Some(x) => self.syn_eq_vt_loaded(x, t_r, n_r, e_r, l_r, k_r, budget, false),
+                    Some(x) => self.syn_eq_vt_loaded(
+                        x,
+                        t_r,
+                        n_r,
+                        e_r,
+                        l_r,
+                        depth.right_total(),
+                        budget,
+                        false,
+                    ),
                     None => false,
                 };
             }
             (_, ExprNode::BVar(j)) if j >= d => {
+                let k_r = depth.right_total();
                 if j < k_r {
                     return false;
                 }
                 return match self.a.lookup(e_r, j - k_r) {
-                    Some(y) => self.syn_eq_vt_loaded(y, t_l, n_l, e_l, l_l, k_l, budget, true),
+                    Some(y) => self.syn_eq_vt_loaded(
+                        y,
+                        t_l,
+                        n_l,
+                        e_l,
+                        l_l,
+                        depth.left_total(),
+                        budget,
+                        true,
+                    ),
                     None => false,
                 };
             }
@@ -1425,46 +1484,24 @@ impl Nbe<'_> {
         }
         match (n_l, n_r) {
             (ExprNode::App(f_l, a_l), ExprNode::App(f_r, a_r)) => {
-                self.syn_eq_t(f_l, e_l, l_l, k_l, f_r, e_r, l_r, k_r, d, budget)
-                    && self.syn_eq_t(a_l, e_l, l_l, k_l, a_r, e_r, l_r, k_r, d, budget)
+                self.syn_eq_t(f_l, e_l, l_l, f_r, e_r, l_r, depth, budget)
+                    && self.syn_eq_t(a_l, e_l, l_l, a_r, e_r, l_r, depth, budget)
             }
             (ExprNode::Lam(_, _, a_l, b_l), ExprNode::Lam(_, _, a_r, b_r))
             | (ExprNode::Pi(_, _, a_l, b_l), ExprNode::Pi(_, _, a_r, b_r)) => {
-                self.syn_eq_t(a_l, e_l, l_l, k_l, a_r, e_r, l_r, k_r, d, budget)
-                    && self.syn_eq_t(
-                        b_l,
-                        e_l,
-                        l_l,
-                        k_l + 1,
-                        b_r,
-                        e_r,
-                        l_r,
-                        k_r + 1,
-                        d + 1,
-                        budget,
-                    )
+                self.syn_eq_t(a_l, e_l, l_l, a_r, e_r, l_r, depth, budget)
+                    && self.syn_eq_t(b_l, e_l, l_l, b_r, e_r, l_r, depth.under_binder(), budget)
             }
             (ExprNode::Let(h_l, b_l), ExprNode::Let(h_r, b_r)) => {
                 let (x, y) = (self.st.let_binder(h_l), self.st.let_binder(h_r));
-                self.syn_eq_t(x.ty, e_l, l_l, k_l, y.ty, e_r, l_r, k_r, d, budget)
-                    && self.syn_eq_t(x.value, e_l, l_l, k_l, y.value, e_r, l_r, k_r, d, budget)
-                    && self.syn_eq_t(
-                        b_l,
-                        e_l,
-                        l_l,
-                        k_l + 1,
-                        b_r,
-                        e_r,
-                        l_r,
-                        k_r + 1,
-                        d + 1,
-                        budget,
-                    )
+                self.syn_eq_t(x.ty, e_l, l_l, y.ty, e_r, l_r, depth, budget)
+                    && self.syn_eq_t(x.value, e_l, l_l, y.value, e_r, l_r, depth, budget)
+                    && self.syn_eq_t(b_l, e_l, l_l, b_r, e_r, l_r, depth.under_binder(), budget)
             }
             (ExprNode::Proj(s_l, i_l, x_l), ExprNode::Proj(s_r, i_r, x_r)) => {
                 s_l == s_r
                     && i_l == i_r
-                    && self.syn_eq_t(x_l, e_l, l_l, k_l, x_r, e_r, l_r, k_r, d, budget)
+                    && self.syn_eq_t(x_l, e_l, l_l, x_r, e_r, l_r, depth, budget)
             }
             (ExprNode::Const(n_l, ls1), ExprNode::Const(n_r, ls2)) => {
                 n_l == n_r && {
@@ -1603,9 +1640,9 @@ impl Nbe<'_> {
         match head {
             Val::Thunk(t_l, e_l, l_l) | Val::Lam(t_l, e_l, l_l) | Val::Pi(t_l, e_l, l_l) => {
                 if flip {
-                    self.syn_eq_t(t, e, l, k, t_l, e_l, l_l, 0, 0, budget)
+                    self.syn_eq_t(t, e, l, t_l, e_l, l_l, SynDepth::left(k), budget)
                 } else {
-                    self.syn_eq_t(t_l, e_l, l_l, 0, t, e, l, k, 0, budget)
+                    self.syn_eq_t(t_l, e_l, l_l, t, e, l, SynDepth::right(k), budget)
                 }
             }
             Val::Const(_, _, sp) | Val::FVar(_, sp) => {
