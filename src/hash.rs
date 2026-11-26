@@ -39,6 +39,13 @@ pub fn hash_front(w0: u64, w1: u64) -> u64 {
     fold_mul(w0 ^ K0, w1.rotate_left(32) ^ K0)
 }
 
+/// Hash one word: the folded product of the word, offset by a constant,
+/// and that constant.
+#[inline]
+pub fn hash1(w: u64) -> u64 {
+    fold_mul(w ^ K0, K0)
+}
+
 /// Hash a byte string.
 pub fn hash_bytes(bytes: &[u8]) -> u64 {
     let mut h = K2 ^ bytes.len() as u64;

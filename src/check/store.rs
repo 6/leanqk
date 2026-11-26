@@ -753,34 +753,60 @@ impl<'e> Store<'e> {
 
 /// A fast hasher for maps keyed by ids.
 #[derive(Default, Clone, Copy)]
-pub struct IdHasher(u64);
+pub struct IdHasher {
+    /// The words written so far: up to two 32-bit or one 64-bit word
+    /// as they are, mixed in from the third on.
+    s: u64,
+    /// How many 32-bit words `s` holds (2 once full). Known at compile
+    /// time for a key whose `Hash` is inlined, so the branches fold away.
+    n: u32,
+}
+
+impl IdHasher {
+    #[inline]
+    fn word(&mut self, x: u64, words: u32) {
+        if self.n == 0 {
+            self.s = x;
+            self.n = words;
+        } else if self.n == 1 && words == 1 {
+            self.s = self.s << 32 | x;
+            self.n = 2;
+        } else {
+            self.s = crate::hash::hash2(self.s, x);
+            self.n = 2;
+        }
+    }
+}
 
 impl std::hash::Hasher for IdHasher {
     #[inline]
     fn finish(&self) -> u64 {
-        crate::hash::hash2(self.0, 0x9e37_79b9_7f4a_7c15)
+        crate::hash::hash1(self.s)
     }
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
+        let mut h = self.s;
         for &b in bytes {
-            self.0 = (self.0.rotate_left(8) ^ b as u64).wrapping_mul(0x100_0000_01b3);
+            h = (h.rotate_left(8) ^ b as u64).wrapping_mul(0x100_0000_01b3);
         }
+        self.s = h;
+        self.n = 2;
     }
     #[inline]
     fn write_u32(&mut self, i: u32) {
-        self.0 = (self.0.rotate_left(32) ^ i as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        self.word(i as u64, 1)
     }
     #[inline]
     fn write_u64(&mut self, i: u64) {
-        self.0 = (self.0.rotate_left(32) ^ i).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        self.word(i, 2)
     }
     #[inline]
     fn write_u8(&mut self, i: u8) {
-        self.write_u32(i as u32)
+        self.word(i as u64, 1)
     }
     #[inline]
     fn write_usize(&mut self, i: usize) {
-        self.write_u64(i as u64)
+        self.word(i as u64, 2)
     }
 }
 
