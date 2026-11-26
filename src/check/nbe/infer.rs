@@ -11,7 +11,7 @@ use crate::name::NameId;
 use super::super::tc::{KErr, NAT_MAX_BYTES, R};
 use super::super::univ;
 use super::val::{Elim, Env, Ls, NONE, Sp, V, Val};
-use super::{BOTTOM, EAGER_SLOTS, Nbe};
+use super::{BOTTOM, INFER_SLOTS, Nbe};
 
 fn err<T>(msg: impl Into<String>) -> R<T> {
     Err(KErr::new(msg.into()))
@@ -480,7 +480,7 @@ impl Nbe<'_> {
         let has_level_param = d.has_level_param();
         let key_ls = if has_level_param { ls } else { Ls::ID };
         let hash = crate::hash::hash2(e.0 as u64 | (key_ls.0 as u64) << 32, key_env.0 as u64);
-        let slot = (hash >> 50) as usize & (EAGER_SLOTS - 1);
+        let slot = (hash >> 50) as usize & (INFER_SLOTS - 1);
         let [expr, cached_env, cached_ls, entry] = self.infer_slots[slot];
         let mut memo = None;
         if expr == e.0 && cached_env == key_env.0 {
@@ -608,7 +608,7 @@ impl Nbe<'_> {
     /// word stores the type itself and whether the term was checked.
     #[inline(always)]
     fn infer_closed(&mut self, e: ExprId, node: ExprNode, infer_only: bool) -> R<V> {
-        let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - EAGER_SLOTS.ilog2())) as usize;
+        let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - INFER_SLOTS.ilog2())) as usize;
         let [expr, tag, checked, ty] = self.infer_slots[i];
         let cached = expr == e.0 && tag == NONE;
         if cached && (infer_only || checked != 0) {
@@ -750,7 +750,7 @@ impl Nbe<'_> {
         ls: Ls,
         infer_only: bool,
     ) -> R<V> {
-        let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - EAGER_SLOTS.ilog2())) as usize;
+        let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - INFER_SLOTS.ilog2())) as usize;
         let [expr, limit, checked, ty] = self.infer_slots[i];
         let check_identity = ls == Ls::ID && !infer_only;
         if expr == e.0 {
