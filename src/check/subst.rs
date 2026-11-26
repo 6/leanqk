@@ -8,10 +8,16 @@
 use std::mem;
 
 use crate::expr::{ExprId, ExprNode};
-use crate::level::{LevelId, LevelList, LevelNode};
+use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
 use super::store::{IdMap, Store};
+use super::univ;
+
+fn lookup_param(ps: &[NameId], ls: &[LevelId], n: NameId) -> Option<LevelId> {
+    let i = ps.iter().position(|&p| p == n)?;
+    ls.get(i).copied()
+}
 
 /// What a traversal does at the leaves.
 #[derive(Clone, Copy)]
@@ -258,51 +264,12 @@ impl Store<'_> {
 
     // ---- universe parameters ----
 
-    /// Lean's level `instantiate`: a rebuilt `max` or `imax` goes through
-    /// the simplifying constructors (`update_max`), which affects what
-    /// Lean's level normalization can prove.
     pub fn inst_level(&mut self, l: LevelId, ps: &[NameId], ls: &[LevelId]) -> LevelId {
-        if !self.level_has_param(l) {
-            return l;
-        }
-        match self.level(l) {
-            LevelNode::Zero => l,
-            LevelNode::Succ(a) => {
-                let a2 = self.inst_level(a, ps, ls);
-                if a2 == a { l } else { self.succ(a2) }
-            }
-            LevelNode::Max(a, b) => {
-                let a2 = self.inst_level(a, ps, ls);
-                let b2 = self.inst_level(b, ps, ls);
-                if (a2, b2) == (a, b) {
-                    l
-                } else {
-                    super::univ::mk_max(self, a2, b2)
-                }
-            }
-            LevelNode::IMax(a, b) => {
-                let a2 = self.inst_level(a, ps, ls);
-                let b2 = self.inst_level(b, ps, ls);
-                if (a2, b2) == (a, b) {
-                    l
-                } else {
-                    super::univ::mk_imax(self, a2, b2)
-                }
-            }
-            LevelNode::Param(n) => match ps.iter().position(|&p| p == n) {
-                Some(i) if i < ls.len() => ls[i],
-                _ => l,
-            },
-        }
+        univ::instantiate_level(self, l, |_, n| lookup_param(ps, ls, n))
     }
 
     pub fn inst_list(&mut self, ll: LevelList, ps: &[NameId], ls: &[LevelId]) -> LevelList {
-        if !self.list_has_param(ll) {
-            return ll;
-        }
-        let v: Vec<LevelId> = self.list(ll).to_vec();
-        let v: Vec<LevelId> = v.into_iter().map(|l| self.inst_level(l, ps, ls)).collect();
-        self.mk_list(&v)
+        univ::instantiate_list(self, ll, |_, n| lookup_param(ps, ls, n))
     }
 
     /// Replace the universe parameters `ps` with `ls` throughout `e`.

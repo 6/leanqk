@@ -10,7 +10,7 @@
 
 use std::cmp::Ordering;
 
-use crate::level::{LevelId, LevelNode};
+use crate::level::{LevelId, LevelList, LevelNode};
 use crate::name::NameId;
 
 use super::store::Store;
@@ -311,6 +311,60 @@ pub fn undefined_param(st: &Store<'_>, l: LevelId, ps: &[NameId]) -> Option<Name
         }
         LevelNode::Param(p) => (!ps.contains(&p)).then_some(p),
     }
+}
+
+/// Lean's level `instantiate`: a rebuilt `max` or `imax` goes through
+/// the simplifying constructors (`update_max`), which affects what
+/// Lean's level normalization can prove.
+pub(super) fn instantiate_level(
+    st: &mut Store<'_>,
+    l: LevelId,
+    replacement: impl Fn(&Store<'_>, NameId) -> Option<LevelId> + Copy,
+) -> LevelId {
+    if !st.level_has_param(l) {
+        return l;
+    }
+    match st.level(l) {
+        LevelNode::Zero => l,
+        LevelNode::Succ(a) => {
+            let a2 = instantiate_level(st, a, replacement);
+            if a2 == a { l } else { st.succ(a2) }
+        }
+        LevelNode::Max(a, b) => {
+            let a2 = instantiate_level(st, a, replacement);
+            let b2 = instantiate_level(st, b, replacement);
+            if (a2, b2) == (a, b) {
+                l
+            } else {
+                mk_max(st, a2, b2)
+            }
+        }
+        LevelNode::IMax(a, b) => {
+            let a2 = instantiate_level(st, a, replacement);
+            let b2 = instantiate_level(st, b, replacement);
+            if (a2, b2) == (a, b) {
+                l
+            } else {
+                mk_imax(st, a2, b2)
+            }
+        }
+        LevelNode::Param(n) => replacement(st, n).unwrap_or(l),
+    }
+}
+
+pub(super) fn instantiate_list(
+    st: &mut Store<'_>,
+    ll: LevelList,
+    replacement: impl Fn(&Store<'_>, NameId) -> Option<LevelId> + Copy,
+) -> LevelList {
+    if !st.list_has_param(ll) {
+        return ll;
+    }
+    let mut levels = st.list(ll).to_vec();
+    for l in &mut levels {
+        *l = instantiate_level(st, *l, replacement);
+    }
+    st.mk_list(&levels)
 }
 
 /// An exact decision procedure for `l1 ≤ l2` over all assignments, used

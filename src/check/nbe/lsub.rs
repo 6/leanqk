@@ -5,10 +5,18 @@
 use std::hash::Hash;
 
 use crate::env::NameList;
+use crate::level::LevelId;
 use crate::name::NameId;
 
 use super::super::store::{IdMap, Store};
 use super::Cap;
+use super::val::LsNode;
+
+/// Find the replacement for a parameter in an interned substitution.
+pub(super) fn replacement(st: &Store<'_>, node: LsNode, name: NameId) -> Option<LevelId> {
+    let i = st.name_list(node.params).iter().position(|&p| p == name)?;
+    st.list(node.levels).get(i).copied()
+}
 
 /// Whether the substitution caches have the direct-mapped table.
 pub const LSUB_DIRECT: bool = true;

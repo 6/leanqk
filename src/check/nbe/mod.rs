@@ -38,6 +38,7 @@ use crate::name::NameId;
 use super::ext::Ext;
 use super::store::{IdMap, IdSet, Store};
 use super::tc::{KErr, R, Tc};
+use super::univ;
 use val::{Arena, Ls, V};
 
 /// A free variable opened while checking.
@@ -617,9 +618,7 @@ impl<'e> Nbe<'e> {
     #[inline(never)]
     fn inst_level_new(&mut self, l: LevelId, ls: Ls) -> LevelId {
         let node = self.a.ls(ls);
-        let ps: Vec<NameId> = self.st.name_list(node.params).to_vec();
-        let lv: Vec<LevelId> = self.st.list(node.levels).to_vec();
-        let r = self.st.inst_level(l, &ps, &lv);
+        let r = univ::instantiate_level(&mut self.st, l, |st, n| lsub::replacement(st, node, n));
         self.level_cache.insert((l, ls), r);
         r
     }
@@ -639,9 +638,7 @@ impl<'e> Nbe<'e> {
     #[inline(never)]
     fn inst_list_new(&mut self, ll: LevelList, ls: Ls) -> LevelList {
         let node = self.a.ls(ls);
-        let ps: Vec<NameId> = self.st.name_list(node.params).to_vec();
-        let lv: Vec<LevelId> = self.st.list(node.levels).to_vec();
-        let r = self.st.inst_list(ll, &ps, &lv);
+        let r = univ::instantiate_list(&mut self.st, ll, |st, n| lsub::replacement(st, node, n));
         self.list_cache.insert((ll, ls), r);
         r
     }
