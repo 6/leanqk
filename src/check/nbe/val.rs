@@ -760,7 +760,8 @@ impl Arena {
         if let Some(&(id, _)) = sptable.find(spread(h), |&(id, k)| {
             k == h && {
                 let i = id as usize;
-                sps[i] & LEN_BITS == (w.len() / 2) as u32 && sps[i + 1..i + 1 + w.len()] == *w
+                *at(sps, i) & LEN_BITS == (w.len() / 2) as u32
+                    && w.iter().enumerate().all(|(j, &x)| *at(sps, i + 1 + j) == x)
             }
         }) {
             return Sp(id);
