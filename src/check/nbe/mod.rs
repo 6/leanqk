@@ -191,8 +191,9 @@ pub struct Nbe<'e> {
     /// of the environment `.1`, after `.0`.
     ctxs: IdMap<(u32, ExprId), u32>,
     /// The context (`ctxs`) of environments made of the free variables of
-    /// binders only, as opened by checking.
-    ctx_of: IdMap<val::Env, u32>,
+    /// binders only, as opened by checking: by environment id, `NONE` for
+    /// the others. Cleared with the arena, which numbers environments.
+    ctx_of: Vec<u32>,
     /// `checked_closed`'s key for `lparams`, or `None` until computed.
     lparams_key: Option<u64>,
     /// Ids of lists of universe parameters, from 1.
@@ -336,7 +337,7 @@ impl<'e> Nbe<'e> {
             name_exprs: 0,
             checked_closed: IdSet::default(),
             ctxs: IdMap::default(),
-            ctx_of: IdMap::default(),
+            ctx_of: Vec::new(),
             lparams_key: None,
             lparams_ids: Default::default(),
             ticks: 0,
@@ -427,15 +428,21 @@ impl<'e> Nbe<'e> {
         let parent = if env == val::Env::NIL {
             0
         } else {
-            match self.ctx_of.get(&env) {
-                Some(&c) => c,
-                None => return,
+            match self.ctx_of.get(env.0 as usize) {
+                Some(&c) if c != val::NONE => c,
+                _ => return,
             }
         };
         let next = self.ctxs.len() as u32 + 1;
         let c = *self.ctxs.entry((parent, dom)).or_insert(next);
         // Equal environments are one context, whichever binders made them.
-        self.ctx_of.entry(env2).or_insert(c);
+        let i = env2.0 as usize;
+        if self.ctx_of.len() <= i {
+            self.ctx_of.resize(i + 1, val::NONE);
+        }
+        if self.ctx_of[i] == val::NONE {
+            self.ctx_of[i] = c;
+        }
     }
 
     /// The context (`ctxs`) of `env`, if it is one.
@@ -443,7 +450,10 @@ impl<'e> Nbe<'e> {
         if env == val::Env::NIL {
             return Some(0);
         }
-        self.ctx_of.get(&env).copied()
+        self.ctx_of
+            .get(env.0 as usize)
+            .copied()
+            .filter(|&c| c != val::NONE)
     }
 
     /// The id of the declaration's list of universe parameters.
@@ -506,11 +516,16 @@ impl<'e> Nbe<'e> {
         self.limit = limit;
         self.lparams_key = None;
         if self.checked_closed.len() > CHECKED_KEEP || self.ctxs.len() > CHECKED_KEEP {
-            self.checked_closed = IdSet::default();
-            self.ctxs = IdMap::default();
+            // Emptied, keeping their storage: they refill to this size.
+            self.checked_closed.clear();
+            self.ctxs.clear();
             self.lparams_ids = Default::default();
         }
-        shrink(&mut self.ctx_of);
+        if self.ctx_of.capacity() > 1 << 20 {
+            self.ctx_of = Vec::new();
+        } else {
+            self.ctx_of.clear();
+        }
         self.decl_steps = 0;
         // Names hold free variables by index, and those go now.
         if !self.names.is_empty() {
@@ -797,6 +812,7 @@ impl<'e> Nbe<'e> {
                 k
             }
         };
+
         self.a.mk(val::Val::FVar(k, val::Sp::NIL))
     }
 
