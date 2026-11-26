@@ -707,6 +707,12 @@ impl<'e> Nbe<'e> {
         if ls == Ls::ID || !self.st.level_has_param(l) {
             return l;
         }
+        self.inst_param_level(l, ls)
+    }
+
+    #[inline(always)]
+    fn inst_param_level(&mut self, l: LevelId, ls: Ls) -> LevelId {
+        debug_assert!(ls != Ls::ID && self.st.level_has_param(l));
         if let Some(r) = self.level_cache.get_direct((l, ls)) {
             return r;
         }
@@ -726,6 +732,12 @@ impl<'e> Nbe<'e> {
         if ls == Ls::ID || !self.st.list_has_param(ll) {
             return ll;
         }
+        self.inst_param_list(ll, ls)
+    }
+
+    #[inline(always)]
+    fn inst_param_list(&mut self, ll: LevelList, ls: Ls) -> LevelList {
+        debug_assert!(ls != Ls::ID && self.st.list_has_param(ll));
         if let Some(r) = self.list_cache.get_direct((ll, ls)) {
             return r;
         }
