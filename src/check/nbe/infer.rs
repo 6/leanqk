@@ -17,6 +17,21 @@ fn err<T>(msg: impl Into<String>) -> R<T> {
     Err(KErr::new(msg.into()))
 }
 
+/// Whether `infer_term` remembers types by the environment entries a term
+/// reads (`memo`), not through a thunk.
+const INFER_MEMO: bool = true;
+
+/// Past this many environment entries in range, `infer_term`'s memo goes
+/// through a thunk.
+const INFER_MEMO_RANGE: u32 = 32;
+
+/// A key of `infer_term`'s memo.
+#[derive(Clone, Copy)]
+enum IKey {
+    Memo(usize),
+    Thunk(V),
+}
+
 impl Nbe<'_> {
     // ---- binders ----
 
@@ -337,16 +352,9 @@ impl Nbe<'_> {
         // A memo keyed by the term in its environment, without the entries
         // it does not use.
         let d = self.st.data(e);
-        let key = if self.key_is_trim(e) {
-            // The key is the term's thunk, likely made already.
-            self.thunk_value(e, env, ls)
-        } else {
-            let kenv = self.key_env(env, e);
-            let kls = if d.has_level_param() { ls } else { Ls::ID };
-            self.a.mk(Val::Thunk(e, kenv, kls))
-        };
-        let c = self.a.r(key).ty;
-        if c != super::val::NONE && (infer_only || self.a.checked(key)) {
+        let key = self.infer_key(e, env, ls);
+        let c = self.ikey_ty(key);
+        if c != super::val::NONE && (infer_only || self.ikey_checked(key)) {
             return Ok(V(c));
         }
         // A closed term of the environment checked in an earlier
@@ -374,10 +382,7 @@ impl Nbe<'_> {
                 && self.checked_closed.contains(&k)
             {
                 let r = self.infer_term(e, env, ls, true)?;
-                self.a.set_checked(key);
-                if d.has_level_param() {
-                    self.level_checked.push(key);
-                }
+                self.ikey_set_checked(key, d.has_level_param());
                 return Ok(r);
             }
             k
@@ -397,18 +402,90 @@ impl Nbe<'_> {
             _ => unreachable!(),
         };
         if c == super::val::NONE {
-            self.a.rm(key).ty = r.0;
+            self.ikey_set_ty(key, r);
         }
-        if !infer_only && !self.a.checked(key) {
-            self.a.set_checked(key);
-            if d.has_level_param() {
-                self.level_checked.push(key);
-            }
+        if !infer_only && !self.ikey_checked(key) {
+            self.ikey_set_checked(key, d.has_level_param());
         }
         if let Some(k) = ck {
             self.checked_closed.insert(k);
         }
         Ok(if c == super::val::NONE { r } else { V(c) })
+    }
+
+    /// The key of `infer_term`'s memo for `e` in `env` under `ls`: by the
+    /// entries `e` reads (`memo`), or else a thunk.
+    fn infer_key(&mut self, e: ExprId, env: Env, ls: Ls) -> IKey {
+        if INFER_MEMO {
+            let sh = crate::hash::hash2(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
+            let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
+            let s = self.infer_slots[si];
+            if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
+                return IKey::Memo(s[3] as usize);
+            }
+            let holes = if self.key_is_trim(e) {
+                self.st.data(e).unused_low() as u64
+            } else {
+                // Where terms are inferred again and again, sharper.
+                !self.used_bvars(e)
+            };
+            if let Some(k) = self.memo_key(e, env, ls, holes, INFER_MEMO_RANGE) {
+                let none = super::val::NONE;
+                let (i, _) =
+                    Self::memo_find_or_add(&mut self.vargs, &mut self.infer_memo, k, [none, 0]);
+                self.infer_slots[si] = [e.0, env.0, ls.0, i as u32];
+                return IKey::Memo(i);
+            }
+        }
+        let d = self.st.data(e);
+        IKey::Thunk(if self.key_is_trim(e) {
+            // The key is the term's thunk, likely made already.
+            self.thunk_value(e, env, ls)
+        } else {
+            let kenv = self.key_env(env, e);
+            let kls = if d.has_level_param() { ls } else { Ls::ID };
+            self.a.mk(Val::Thunk(e, kenv, kls))
+        })
+    }
+
+    fn ikey_ty(&self, k: IKey) -> u32 {
+        match k {
+            IKey::Memo(i) => self.infer_memo.get(i)[0],
+            IKey::Thunk(t) => self.a.r(t).ty,
+        }
+    }
+
+    fn ikey_set_ty(&mut self, k: IKey, ty: V) {
+        match k {
+            IKey::Memo(i) => self.infer_memo.set(i, 0, ty.0),
+            IKey::Thunk(t) => self.a.rm(t).ty = ty.0,
+        }
+    }
+
+    fn ikey_checked(&self, k: IKey) -> bool {
+        match k {
+            IKey::Memo(i) => self.infer_memo.get(i)[1] != 0,
+            IKey::Thunk(t) => self.a.checked(t),
+        }
+    }
+
+    /// Mark `k` checked; under the declaration's universe parameters only
+    /// if `levels`.
+    fn ikey_set_checked(&mut self, k: IKey, levels: bool) {
+        match k {
+            IKey::Memo(i) => {
+                self.infer_memo.set(i, 1, 1);
+                if levels {
+                    self.level_checked_memo.push(i);
+                }
+            }
+            IKey::Thunk(t) => {
+                self.a.set_checked(t);
+                if levels {
+                    self.level_checked.push(t);
+                }
+            }
+        }
     }
 
     fn infer_constant(&mut self, n: NameId, ls: LevelList, infer_only: bool) -> R<V> {

@@ -1,0 +1,146 @@
+//! Memos keyed by a term, its universe substitution and the entries of its
+//! environment it reads: terms met again in environments that agree where
+//! they look find what was found, with no environment cut to build a key.
+
+use hashbrown::HashTable;
+
+use super::val::{Env, Ls, V, spread};
+use super::{Nbe, val};
+use crate::expr::ExprId;
+use crate::hash::hash2;
+
+/// A memo of `WORDS` words per key (see the module).
+pub struct EnvMemo<const WORDS: usize> {
+    table: HashTable<u32>,
+    /// Records: hash, term, substitution, range, holes (two words), number
+    /// of values read, those values, then the `WORDS` words.
+    keys: Vec<u32>,
+}
+
+impl<const WORDS: usize> Default for EnvMemo<WORDS> {
+    fn default() -> Self {
+        EnvMemo {
+            table: HashTable::new(),
+            keys: Vec::new(),
+        }
+    }
+}
+
+impl<const WORDS: usize> EnvMemo<WORDS> {
+    pub fn clear(&mut self) {
+        if self.table.capacity() > 1 << 16 {
+            *self = Self::default();
+        } else {
+            self.table.clear();
+            self.keys.clear();
+        }
+    }
+
+    /// The words at `i` (from `find_or_add`).
+    #[inline]
+    pub fn get(&self, i: usize) -> &[u32] {
+        &self.keys[i..i + WORDS]
+    }
+
+    #[inline]
+    pub fn set(&mut self, i: usize, w: usize, v: u32) {
+        self.keys[i + w] = v;
+    }
+}
+
+/// A key being looked up: its hash and fixed words; the values it reads
+/// are on `Nbe::vargs` from `base`.
+pub struct Key {
+    h: u32,
+    head: [u32; 6],
+    base: usize,
+}
+
+impl Nbe<'_> {
+    /// The key of `e` in `env` under `ls`, reading the entries below its
+    /// range but those `holes` sets (from bit 64 on, all are read); `None`
+    /// past `max` entries in range. The values read are left on `vargs`
+    /// (give the key to `memo_find_or_add`, which takes them off).
+    #[inline]
+    pub(super) fn memo_key(
+        &mut self,
+        e: ExprId,
+        env: Env,
+        ls: Ls,
+        holes: u64,
+        max: u32,
+    ) -> Option<Key> {
+        let d = self.st.data(e);
+        let n = d.loose_bvar_range().min(self.a.env_len(env));
+        if n > max {
+            return None;
+        }
+        let ls2 = if d.has_level_param() { ls } else { Ls::ID };
+        let holes = if n >= 64 {
+            holes
+        } else {
+            holes & ((1u64 << n) - 1)
+        };
+        let base = self.vargs.len();
+        let mut cur = env;
+        let mut h = hash2(
+            e.0 as u64 | (ls2.0 as u64) << 32,
+            n as u64 ^ holes.rotate_left(17),
+        );
+        for j in 0..n {
+            if j >= 64 || holes >> j & 1 == 0 {
+                let v = self.a.env_head(cur);
+                h = (h.rotate_left(5) ^ v.0 as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+                self.vargs.push(v);
+            }
+            cur = self.a.env_tail(cur);
+        }
+        let cnt = (self.vargs.len() - base) as u32;
+        Some(Key {
+            h: (h >> 32) as u32,
+            head: [e.0, ls2.0, n, holes as u32, (holes >> 32) as u32, cnt],
+            base,
+        })
+    }
+
+    /// The words of `k` in `memo` (by index, for `EnvMemo::get` and `set`),
+    /// and whether they were there already; new words are `init`.
+    pub(super) fn memo_find_or_add<const WORDS: usize>(
+        vargs: &mut Vec<V>,
+        memo: &mut EnvMemo<WORDS>,
+        k: Key,
+        init: [u32; WORDS],
+    ) -> (usize, bool) {
+        let vals = &vargs[k.base..];
+        let EnvMemo { table, keys } = memo;
+        let cnt = vals.len();
+        let eq = |&i: &u32| {
+            let i = i as usize;
+            keys[i] == k.h
+                && keys[i + 1..i + 7] == k.head
+                && keys[i + 7..i + 7 + cnt]
+                    .iter()
+                    .zip(vals)
+                    .all(|(&a, b)| a == b.0)
+        };
+        let r = match table.find(spread(k.h), eq) {
+            Some(&i) => (i as usize + 7 + cnt, true),
+            None => {
+                let i = keys.len();
+                assert!(
+                    i + 7 + cnt + WORDS < val::NONE as usize,
+                    "nitrolean: resource limit: memo too large"
+                );
+                keys.push(k.h);
+                keys.extend_from_slice(&k.head);
+                keys.extend(vals.iter().map(|v| v.0));
+                keys.extend_from_slice(&init);
+                let keys = &*keys;
+                table.insert_unique(spread(k.h), i as u32, |&i| spread(keys[i as usize]));
+                (i + 7 + cnt, false)
+            }
+        };
+        vargs.truncate(k.base);
+        r
+    }
+}

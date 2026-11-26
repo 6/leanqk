@@ -19,6 +19,7 @@ mod conv;
 mod eval;
 mod infer;
 mod lsub;
+mod memo;
 mod readback;
 pub mod val;
 mod whnf;
@@ -104,13 +105,16 @@ pub struct Nbe<'e> {
     /// A direct-mapped front of `eager_memo`: (term, environment,
     /// substitution, value).
     pub(super) eager_slots: Vec<[u32; 4]>,
-    /// Values of terms evaluated by `thunk` at once, by the term, its
-    /// substitution and the entries of its environment it reads: indices
-    /// of records in `eager_keys`.
-    pub(super) eager_memo: HashTable<u32>,
-    /// Records of `eager_memo`: hash, term, substitution, range, holes,
-    /// number of values read, those values, the value.
-    pub(super) eager_keys: Vec<u32>,
+    /// Values of terms evaluated by `thunk` at once (`eager`).
+    pub(super) eager_memo: memo::EnvMemo<1>,
+    /// Types of terms (`infer_term`): the type, and whether checked.
+    pub(super) infer_memo: memo::EnvMemo<2>,
+    /// A direct-mapped front of `infer_memo`: (term, environment,
+    /// substitution, entry).
+    pub(super) infer_slots: Vec<[u32; 4]>,
+    /// Entries of `infer_memo` checked under the declaration's universe
+    /// parameters, as `level_checked`.
+    pub(super) level_checked_memo: Vec<usize>,
     level_cache: lsub::Lsub<(LevelId, Ls), LevelId>,
     list_cache: lsub::Lsub<(LevelList, Ls), LevelList>,
     /// Universe parameter lists by their names (see `lsub::ParamClasses`).
@@ -272,8 +276,10 @@ impl<'e> Nbe<'e> {
             bigs: Vec::new(),
             big_table: HashTable::new(),
             eager_slots: vec![[val::NONE; 4]; EAGER_SLOTS],
-            eager_memo: HashTable::new(),
-            eager_keys: Vec::new(),
+            eager_memo: Default::default(),
+            infer_memo: Default::default(),
+            infer_slots: vec![[val::NONE; 4]; EAGER_SLOTS],
+            level_checked_memo: Vec::new(),
             level_cache: Default::default(),
             list_cache: Default::default(),
             param_classes: Default::default(),
@@ -358,6 +364,9 @@ impl<'e> Nbe<'e> {
         self.open_count.clear();
         for v in self.level_checked.drain(..) {
             self.a.clear_checked(v);
+        }
+        for i in self.level_checked_memo.drain(..) {
+            self.infer_memo.set(i, 1, 0);
         }
         self.fresh = self.a.is_empty();
     }
@@ -469,13 +478,10 @@ impl<'e> Nbe<'e> {
         self.prunes.fill([val::NONE; 3]);
         self.trim_holes_memo.fill([val::NONE; 4]);
         self.eager_slots.fill([val::NONE; 4]);
-        if self.eager_memo.capacity() > 1 << 16 {
-            self.eager_memo = HashTable::new();
-            self.eager_keys = Vec::new();
-        } else {
-            self.eager_memo.clear();
-            self.eager_keys.clear();
-        }
+        self.eager_memo.clear();
+        self.infer_memo.clear();
+        self.infer_slots.fill([val::NONE; 4]);
+        self.level_checked_memo.clear();
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;

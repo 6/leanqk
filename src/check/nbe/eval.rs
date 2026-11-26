@@ -163,68 +163,25 @@ impl Nbe<'_> {
             self.eager_depth -= 1;
             return v;
         }
-        let ls2 = if d.has_level_param() { ls } else { Ls::ID };
-        let holes = if n == 0 {
-            0
-        } else {
-            d.unused_low() & ((1u64 << n.min(32)) - 1) as u32
-        };
-        let base = self.vargs.len();
-        let mut cur = env;
-        let mut h = hash2(
-            e.0 as u64 | (ls2.0 as u64) << 32,
-            n as u64 | (holes as u64) << 32,
+        let key = self
+            .memo_key(e, env, ls, d.unused_low() as u64, EAGER_MEMO_RANGE)
+            .expect("in range");
+        let (i, found) = Self::memo_find_or_add(
+            &mut self.vargs,
+            &mut self.eager_memo,
+            key,
+            [super::val::NONE],
         );
-        for j in 0..n {
-            if j >= 32 || holes >> j & 1 == 0 {
-                let v = self.a.env_head(cur);
-                h = (h.rotate_left(5) ^ v.0 as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
-                self.vargs.push(v);
-            }
-            cur = self.a.env_tail(cur);
-        }
-        let h = (h >> 32) as u32;
-        let cnt = self.vargs.len() - base;
-        let found = {
-            let keys = &self.eager_keys;
-            let vargs = &self.vargs[base..];
-            self.eager_memo
-                .find(super::val::spread(h), |&i| {
-                    let i = i as usize;
-                    keys[i] == h
-                        && keys[i + 1] == e.0
-                        && keys[i + 2] == ls2.0
-                        && keys[i + 3] == n
-                        && keys[i + 4] == holes
-                        && keys[i + 5] as usize == cnt
-                        && keys[i + 6..i + 6 + cnt]
-                            .iter()
-                            .zip(vargs)
-                            .all(|(&a, b)| a == b.0)
-                })
-                .map(|&i| keys[i as usize + 6 + cnt])
+        let known = self.eager_memo.get(i)[0];
+        let v = if found && known != super::val::NONE {
+            V(known)
+        } else {
+            self.eager_depth += 1;
+            let v = self.eval(e, env, ls);
+            self.eager_depth -= 1;
+            self.eager_memo.set(i, 0, v.0);
+            v
         };
-        let v = match found {
-            Some(v) => V(v),
-            None => {
-                self.eager_depth += 1;
-                let v = self.eval(e, env, ls);
-                self.eager_depth -= 1;
-                let i = self.eager_keys.len() as u32;
-                self.eager_keys
-                    .extend_from_slice(&[h, e.0, ls2.0, n, holes, cnt as u32]);
-                self.eager_keys
-                    .extend(self.vargs[base..base + cnt].iter().map(|v| v.0));
-                self.eager_keys.push(v.0);
-                let keys = &self.eager_keys;
-                self.eager_memo
-                    .insert_unique(super::val::spread(h), i, |&i| {
-                        super::val::spread(keys[i as usize])
-                    });
-                v
-            }
-        };
-        self.vargs.truncate(base);
         self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
         v
     }
