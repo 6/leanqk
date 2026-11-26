@@ -192,6 +192,7 @@ const HAS_FVAR: u32 = 1;
 const CHECKED: u32 = 2;
 const CORE_NORMAL: u32 = 4;
 const WHNF_NORMAL: u32 = 8;
+const THUNK: u32 = 16;
 const FLAG_BITS: u32 = 8;
 const FLAG_MASK: u32 = (1 << FLAG_BITS) - 1;
 
@@ -214,6 +215,11 @@ impl Rec {
     #[inline]
     pub(super) fn whnf_normal(&self) -> bool {
         self.flags & WHNF_NORMAL != 0
+    }
+
+    #[inline]
+    pub(super) fn is_thunk(&self) -> bool {
+        self.flags & THUNK != 0
     }
 
     pub(super) fn set_core_normal(&mut self) {
@@ -500,7 +506,7 @@ impl Arena {
                 CORE_NORMAL | WHNF_NORMAL | self.env_flags(e)
             }
             Val::Sort(_) | Val::Nat(..) | Val::NatBig(_) | Val::Str(_) => CORE_NORMAL | WHNF_NORMAL,
-            Val::Thunk(_, e, _) => self.env_flags(e),
+            Val::Thunk(_, e, _) => THUNK | self.env_flags(e),
             Val::Const(..) => CORE_NORMAL,
             Val::FVar(..) => HAS_FVAR,
         };

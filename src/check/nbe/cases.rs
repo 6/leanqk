@@ -186,29 +186,17 @@ impl Nbe<'_> {
         Ok((!self.a.sp_has_proj(sp)).then_some((c, sp)))
     }
 
-    /// The application `v` of a `casesOn` or matcher reduced to the chosen
-    /// minor premise, applied, if its major premises are constructors.
-    pub fn cases_direct(&mut self, v: V) -> R<Option<V>> {
-        let Val::Const(n, ls, sp) = self.a.get(v) else {
-            return Ok(None);
-        };
+    /// Reduce a validated delta application of a `casesOn` or matcher to
+    /// its chosen minor premise if its major premises are constructors.
+    pub(super) fn cases_direct(&mut self, d: &Decl, ls: LevelList, sp: Sp) -> R<Option<V>> {
+        let n = d.name;
         if sp == Sp::NIL || self.case_shapes.is_none(n) || self.a.sp_has_proj(sp) {
             return Ok(None);
         }
-        let s = self.case_shape(n);
-        if matches!(s, CaseShape::Rec(_) | CaseShape::Ctor(_) | CaseShape::Other) {
-            return Ok(None);
-        }
-        let Some(d) = self.find(n) else {
-            return Ok(None);
-        };
-        if self.st.list(ls).len() != d.level_params.len() {
-            return Ok(None);
-        }
-        match s {
-            CaseShape::Cases(ci) => self.cases_n(&ci, &d, ls, sp),
+        match self.case_shape(n) {
+            CaseShape::Cases(ci) => self.cases_n(&ci, d, ls, sp),
             CaseShape::Tree(ti) => {
-                let dls = self.decl_ls(&d, ls);
+                let dls = self.decl_ls(d, ls);
                 self.tree_n(&ti, dls, sp)
             }
             _ => Ok(None),

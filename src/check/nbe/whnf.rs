@@ -36,14 +36,19 @@ impl Nbe<'_> {
         if self.a.r(v).core_normal() {
             return Ok(v);
         }
-        self.whnf_core_slow(v, cheap_rec, cheap_proj)
+        self.whnf_core_non_normal(v, cheap_rec, cheap_proj)
     }
 
-    fn whnf_core_slow(&mut self, v: V, cheap_rec: bool, cheap_proj: bool) -> R<V> {
-        let v = self.force(v);
-        let rec = self.a.r(v);
-        if rec.core_normal() {
-            return Ok(v);
+    /// Core reduction after the original value's normal flag has been checked.
+    #[inline]
+    fn whnf_core_non_normal(&mut self, mut v: V, cheap_rec: bool, cheap_proj: bool) -> R<V> {
+        let mut rec = self.a.r(v);
+        if rec.is_thunk() {
+            v = self.force(v);
+            rec = self.a.r(v);
+            if rec.core_normal() {
+                return Ok(v);
+            }
         }
         if !cheap_rec {
             let c = if cheap_proj {
@@ -55,6 +60,10 @@ impl Nbe<'_> {
                 return Ok(V(c));
             }
         }
+        self.whnf_core_slow(v, cheap_rec, cheap_proj)
+    }
+
+    fn whnf_core_slow(&mut self, v: V, cheap_rec: bool, cheap_proj: bool) -> R<V> {
         let r = match self.a.get(v) {
             Val::Const(_, _, sp) if sp != Sp::NIL => {
                 self.whnf_core_app(v, cheap_rec, cheap_proj)?
@@ -534,9 +543,13 @@ impl Nbe<'_> {
         if self.a.sp_has_proj(sp) {
             return None;
         }
+        self.delta_decl(n, ls).map(|d| (d, ls, sp))
+    }
+
+    fn delta_decl(&self, n: NameId, ls: LevelList) -> Option<Decl> {
         let d = self.find(n)?;
         Self::decl_value(&d)?;
-        (self.st.list(ls).len() == d.level_params.len()).then_some((d, ls, sp))
+        (self.st.list(ls).len() == d.level_params.len()).then_some(d)
     }
 
     pub fn unfold_definition(&mut self, v: V) -> Option<V> {
@@ -549,17 +562,25 @@ impl Nbe<'_> {
         self.unfold_delta(v, &d, ls, sp)
     }
 
-    /// Unfold with metadata already validated for this value by `is_delta`.
-    pub(super) fn unfold_known_definition(&mut self, v: V, d: &Decl) -> Option<V> {
+    /// Take the chosen lazy delta step using metadata validated by `is_delta`.
+    pub(super) fn unfold_cheap(&mut self, v: V, d: &Decl) -> R<V> {
         let v = self.force(v);
         let m = self.a.r(v).delta;
-        if m != NONE {
-            return Some(V(m));
-        }
-        let Val::Const(_, ls, sp) = self.a.get(v) else {
-            unreachable!()
+        let r = if m != NONE {
+            V(m)
+        } else {
+            let Val::Const(_, ls, sp) = self.a.get(v) else {
+                unreachable!()
+            };
+            if super::cases::CASES_DIRECT
+                && let Some(branch) = self.cases_direct(d, ls, sp)?
+            {
+                branch
+            } else {
+                self.unfold_delta(v, d, ls, sp).expect("delta")
+            }
         };
-        self.unfold_delta(v, d, ls, sp)
+        self.whnf_core(r, false, true)
     }
 
     fn unfold_delta(&mut self, v: V, d: &Decl, ls: LevelList, sp: Sp) -> Option<V> {
@@ -636,6 +657,10 @@ impl Nbe<'_> {
         if ls != LevelList::EMPTY || self.a.sp_has_proj(sp) {
             return Ok(None);
         }
+        self.reduce_nat_app(n, sp)
+    }
+
+    fn reduce_nat_app(&mut self, n: NameId, sp: Sp) -> R<Option<V>> {
         match self.a.sp_len(sp) {
             1 if Some(n) == self.ext.nat_succ => {
                 let Elim::Arg(a) = self.a.sp_elim(sp, 0) else {
@@ -849,14 +874,28 @@ impl Nbe<'_> {
             if rec.whnf != NONE {
                 break V(rec.whnf);
             }
-            let t_l = self.whnf_core(t, false, false)?;
-            if self.a.r(t_l).whnf_normal() {
+            let t_l = if rec.core_normal() {
+                t
+            } else {
+                let r = self.whnf_core_non_normal(t, false, false)?;
+                if self.a.r(r).whnf_normal() {
+                    break r;
+                }
+                r
+            };
+            let Val::Const(name, ls, sp) = self.a.get(t_l) else {
+                break t_l;
+            };
+            if self.a.sp_has_proj(sp) {
                 break t_l;
             }
-            if let Some(n) = self.reduce_nat(t_l)? {
+            if ls == LevelList::EMPTY
+                && self.ext.nat.is_some()
+                && let Some(n) = self.reduce_nat_app(name, sp)?
+            {
                 break n;
             }
-            let Some((d, ls, sp)) = self.delta_head(t_l) else {
+            let Some(d) = self.delta_decl(name, ls) else {
                 break t_l;
             };
             if first {
@@ -867,7 +906,7 @@ impl Nbe<'_> {
                 }
             }
             if super::cases::CASES_DIRECT
-                && let Some(n) = self.cases_direct(t_l)?
+                && let Some(n) = self.cases_direct(&d, ls, sp)?
             {
                 t = n;
                 continue;
