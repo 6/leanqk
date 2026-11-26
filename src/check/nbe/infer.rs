@@ -1006,44 +1006,65 @@ impl Nbe<'_> {
         self.is_def_eq(t, expected)
     }
 
-    /// `check_against` of a λ.
+    /// Check a λ spine against successive Π binders.
     #[inline(never)]
     fn check_lambda_against(
         &mut self,
-        e: ExprId,
-        node: ExprNode,
-        env: Env,
+        mut e: ExprId,
+        mut node: ExprNode,
+        mut env: Env,
         ls: Ls,
-        expected: V,
+        mut expected: V,
     ) -> R<bool> {
-        if let ExprNode::Lam(bi, n, dom, body) = node {
-            let ex = self.force(expected);
-            let ex = if matches!(self.a.get(ex), Val::Pi(..) | Val::PiInfer(..)) {
-                Some(ex)
-            } else {
-                let w = self.whnf(ex)?;
-                matches!(self.a.get(w), Val::Pi(..) | Val::PiInfer(..)).then_some(w)
-            };
-            if let Some(ex) = ex {
-                let s = self.infer_term(dom, env, ls, false)?;
-                self.ensure_sort(s)?;
-                let dv = self.thunk(dom, env, ls);
-                let ed = self.binder_dom(ex);
+        let base = self.infer_opened.len();
+        let result = (|| {
+            while let ExprNode::Lam(bi, n, dom, body) = node {
+                let ex = self.force(expected);
+                let mut binder = self.a.get(ex);
+                if !matches!(binder, Val::Pi(..) | Val::PiInfer(..)) {
+                    let w = self.whnf(ex)?;
+                    binder = self.a.get(w);
+                }
+                let (Val::Pi(t, pi_env, pi_ls) | Val::PiInfer(t, pi_env, pi_ls)) = binder else {
+                    break;
+                };
+                let (ExprNode::Pi(_, _, pi_dom, _) | ExprNode::Lam(_, _, pi_dom, _)) =
+                    self.st.node(t)
+                else {
+                    unreachable!()
+                };
+                let dom_node = self.st.node(dom);
+                let dv = if let ExprNode::BVar(i) = dom_node {
+                    let Some(v) = self.a.lookup(env, i) else {
+                        return err("type checker does not support loose bound variables");
+                    };
+                    let s = self.infer_value(v)?;
+                    self.ensure_sort(s)?;
+                    v
+                } else {
+                    let s = self.infer_node(dom, dom_node, env, ls, false)?;
+                    self.ensure_sort(s)?;
+                    self.thunk(dom, env, ls)
+                };
+                let ed = self.thunk(pi_dom, pi_env, pi_ls);
                 if dv != ed && !self.is_def_eq(dv, ed)? {
                     // Lean compares the domains first and fails there.
                     return Ok(false);
                 }
                 let x = self.push_fvar(n, dv, None, bi);
-                let env2 = self.a.cons(env, x);
-                self.ctx_push(env, dom, ls, env2);
-                let ebody = self.instantiate(ex, x)?;
-                let r = self.check_against(body, env2, ls, ebody);
-                self.pop_fvar(x);
-                return r;
+                self.infer_opened.push(x);
+                let next = self.a.cons(env, x);
+                self.ctx_push(env, dom, ls, next);
+                expected = self.instantiate_binder(binder, x)?;
+                e = body;
+                node = self.st.node(body);
+                env = next;
             }
-        }
-        let t = self.infer_node(e, node, env, ls, false)?;
-        self.is_def_eq(t, expected)
+            let t = self.infer_node(e, node, env, ls, false)?;
+            self.is_def_eq(t, expected)
+        })();
+        self.close_inferred_binders(base);
+        result
     }
 
     fn check_lambda(&mut self, e: ExprId, env: Env, ls: Ls) -> R<V> {
