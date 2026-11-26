@@ -129,7 +129,7 @@ pub struct Nbe<'e> {
     /// Values left in their `.olean` files, as built in the store.
     lazy_values: IdMap<ExprId, ExprId>,
     /// What is known of pairs of values (`conv::EQ` and the other bits).
-    pairs: IdMap<(V, V), u8>,
+    pairs: IdMap<u64, u8>,
     /// Terms with universe parameters marked checked in this declaration.
     level_checked: Vec<V>,
     fresh: bool,

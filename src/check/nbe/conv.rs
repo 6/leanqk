@@ -18,8 +18,9 @@ enum Step {
     Diff,
 }
 
-fn pair(a: V, b: V) -> (V, V) {
-    if a <= b { (a, b) } else { (b, a) }
+fn pair(a: V, b: V) -> u64 {
+    let (a, b) = if a <= b { (a, b) } else { (b, a) };
+    (u64::from(a.0) << 32) | u64::from(b.0)
 }
 
 /// Bits of `Nbe::pairs`: found definitionally equal, found not equal,
