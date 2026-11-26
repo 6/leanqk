@@ -151,13 +151,9 @@ impl Table {
     }
 
     /// The id with hash `h` for which `eq` holds, or else where to insert
-    /// one. The table first grows if one more would not fit, so the slot
-    /// stays good until something else is inserted.
+    /// one: the slot stays good until something else is inserted.
     #[inline]
     pub fn find_or_slot(&mut self, h: u32, mut eq: impl FnMut(u32) -> bool) -> Result<u32, Slot> {
-        if (self.len + 1) * 2 > self.slots.len() {
-            self.grow();
-        }
         let tag = tag(h);
         let mut i = self.start(h);
         loop {
@@ -181,13 +177,15 @@ impl Table {
         // changed since (no insert in between).
         unsafe { *self.slots.get_unchecked_mut(slot.0) = tag(h) | id as u64 };
         self.len += 1;
+        // Grow once more than half full, so that a probe always meets an
+        // empty slot.
+        if self.len * 2 > self.slots.len() {
+            self.grow();
+        }
     }
 
     /// Add `id` with hash `h`; the caller knows no equal key is present.
     pub fn insert_new(&mut self, h: u32, id: u32) {
-        if (self.len + 1) * 2 > self.slots.len() {
-            self.grow();
-        }
         let mut i = self.start(h);
         while self.slot(i) != EMPTY {
             i = (i + 1) & self.mask();
