@@ -1,18 +1,19 @@
 name: Mathlib benchmark
 
 # Checks the NDJSON export of Mathlib v4.36.0 (`cargo xtask mathlib fetch`),
-# or its rep25s slice (bench/mathlib/rep25s/), with nitrolean and with
-# gruszka, built at the commit the Lean Kernel Arena pins and run as the
-# arena runs it (`susz pack --no-index`, then its workers), on GitHub's
+# or its rep25s slice (bench/mathlib/rep25s/), with nitrolean, with
+# nano-lean and with gruszka, the last two built at the commits the Lean
+# Kernel Arena pins and run as the arena runs them (nano-lean's `nl-fast -q
+# -j N`; gruszka's `susz pack --no-index`, then its workers), on GitHub's
 # x86_64 (ubuntu-24.04) and aarch64 (ubuntu-24.04-arm) runners, or one of
-# them (the `arch` input). The runs are nitrolean -j1 and -j4, gruszka with 1 and
-# 4 workers, and gruszka alone (4 workers) on the packed file, in rounds:
-# within a round the two checkers alternate, so that the runner's noise
-# falls on both alike. Each run is measured as the arena measures it
+# them (the `arch` input). The runs are nitrolean -j1 and -j4, nano-lean -j1
+# and -j4, gruszka with 1 and 4 workers, and gruszka alone (4 workers) on
+# the packed file, in rounds: within a round the checkers alternate, so
+# that the runner's noise falls on all alike. Each run is measured as the arena measures it
 # (bench/mathlib-ci/measure.sh): instructions, wall time, user and system
 # CPU time, peak RSS. Every run must accept. The job summary gives the
-# medians over the rounds and the ratios nitrolean / gruszka
-# (bench/mathlib-ci/report.sh); the artifact holds every row.
+# medians over the rounds and the ratios nitrolean / nano-lean and
+# nitrolean / gruszka (bench/mathlib-ci/report.sh); the artifact holds every row.
 #
 # hyperfine then times the same commands once more, timing only: one
 # warm-up and `hyperfine_runs` runs of each, in two groups (one thread or
@@ -27,7 +28,13 @@ name: Mathlib benchmark
 # to 70 times slower, taken in auto mode only for a slice. gruszka reserves
 # 128 GiB of address space and exits with status 101 under valgrind (seen on
 # x86_64 and aarch64); a run that ends differently under valgrind gets no
-# count.
+# count. nano-lean's own build script compiles for the machine's own
+# instruction set (-C target-cpu=native) in every mode.
+#
+# Where perf cannot count instructions, the job goes on without counts:
+# `counter: perf` or `perf-u` on such a runner becomes `none`, a run whose
+# perf stat fails to start is timed again without it, and the summary says
+# so in a note; wall time, CPU time and peak RSS are measured as usual.
 
 on:
   workflow_dispatch:
@@ -76,6 +83,11 @@ env:
   ELAN_SHA256: 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2
   ELAN_SHA256_AARCH64: 45cde3006f82f98804c94cf2ca4949d117060a5f3cc8afa62f523759947ee21f
   LEAN_TOOLCHAIN: leanprover/lean4:v4.36.0
+  # nano-lean as the arena's checkers/nano-lean.yaml builds and runs it
+  # (arena commit 1453c10ef00ec6bc7863269ad1b695267ada1488).
+  NANO_LEAN_URL: https://github.com/sdiehl/nano-lean
+  NANO_LEAN_TAG: v0.4.2
+  NANO_LEAN_REV: 5cd4a25de7cdd8a5fadde3fec53e41a6a8693138
   # gruszka as the arena's checkers/gruszka.yaml builds it (arena commit
   # 8a7d0dceea76dfe6fd7bd7f3a6ea216f6347c6aa).
   GRUSZKA_URL: https://github.com/jasisz/gruszka

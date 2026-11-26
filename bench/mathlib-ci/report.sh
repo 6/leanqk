@@ -1,7 +1,8 @@
 #!/bin/bash
 # Summarises the rows measure.sh wrote: per run, the median of each measure
-# over the rounds, then the ratios nitrolean / gruszka of the medians for
-# the pairs that run the same number of threads, then every row.
+# over the rounds, then the ratios of the medians, nitrolean / nano-lean and
+# nitrolean / gruszka, for the pairs that run the same number of threads,
+# then every row.
 #
 #   report.sh RESULTS.tsv > summary.md
 #
@@ -21,7 +22,7 @@ median() {
 ratio() { awk -v a="$1" -v b="$2" 'BEGIN {if (a == "-" || b == "-" || b + 0 == 0) print "-"; else printf "%.2f\n", a / b}'; }
 
 mapfile -t runs < <(awk -F'\t' 'NR > 1 && !seen[$1]++ {print $1}' "$tsv")
-echo "Medians over $(awk -F'\t' 'NR > 1 {print $2}' "$tsv" | sort -u | wc -l) rounds; in each round the runs alternate between the two checkers."
+echo "Medians over $(awk -F'\t' 'NR > 1 {print $2}' "$tsv" | sort -u | wc -l) rounds; in each round the runs alternate between the checkers."
 echo
 echo "| run | verdicts | G instructions | wall s | user s | sys s | CPU s | peak RSS MiB |"
 echo "|---|---|--:|--:|--:|--:|--:|--:|"
@@ -32,11 +33,13 @@ for r in "${runs[@]}"; do
   echo "| $r | $v | ${med[$r,10]} | ${med[$r,5]} | ${med[$r,6]} | ${med[$r,7]} | ${med[$r,8]} | ${med[$r,9]} |"
 done
 echo
-echo "Ratios of the medians, nitrolean / gruszka (below 1: nitrolean used less):"
+echo "Ratios of the medians, nitrolean / the other checker (below 1: nitrolean used less):"
 echo
-echo "| nitrolean | gruszka | instructions | wall | CPU | peak RSS |"
+echo "| nitrolean | other | instructions | wall | CPU | peak RSS |"
 echo "|---|---|--:|--:|--:|--:|"
 pairs=(
+  "nitrolean -j1|nano-lean -j1"
+  "nitrolean -j4|nano-lean -j4"
   "nitrolean -j1|gruszka (susz pack + 1 worker)"
   "nitrolean -j4|gruszka (susz pack + 4 workers)"
   "nitrolean -j4|gruszka alone (4 workers)"

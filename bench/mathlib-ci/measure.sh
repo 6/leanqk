@@ -12,6 +12,8 @@
 #               threads and children); times and RSS come from the plain run.
 #               Some 30 to 70 times slower than the plain run.
 #   none        no count
+# If perf stat cannot count (the command did not run), the run is timed
+# again without it and gets no count; a note goes to $COUNTER_NOTES if set.
 # Appends one tab-separated row to OUT.tsv (header written if new):
 # name, round ($ROUND, default 1), exit status, verdict, wall s, user s,
 # sys s, CPU s, peak RSS MiB, billions of instructions, counter, last line
@@ -24,18 +26,35 @@ trap 'rm -rf "$tmp"' EXIT
 
 timed=(/usr/bin/time -f '%e %U %S %M' -o "$tmp/time" -- sh -c "$cmd")
 case $counter in
-  perf)   perf stat -x, -e instructions -o "$tmp/perf" -- "${timed[@]}" >"$tmp/log" 2>&1 ;;
-  perf-u) perf stat -x, -e instructions:u -o "$tmp/perf" -- "${timed[@]}" >"$tmp/log" 2>&1 ;;
+  perf|perf-u)
+    ev=instructions; [ "$counter" = perf-u ] && ev=instructions:u
+    perf stat -x, -e "$ev" -o "$tmp/perf" -- "${timed[@]}" >"$tmp/log" 2>&1 ;;
   *)      "${timed[@]}" >"$tmp/log" 2>&1 ;;
 esac
 status=$?
+# perf stat that cannot open the counter ("instructions not supported", as
+# on some VMs without hardware counters) exits before the command runs:
+# GNU time wrote nothing. Run it again without perf, with no count, rather
+# than record the run as failed.
+if [ "${counter#perf}" != "$counter" ] && ! grep -qE '^[0-9.]+ [0-9.]+ [0-9.]+ [0-9]+$' "$tmp/time" 2>/dev/null; then
+  why=$(grep -v '^\s*$' "$tmp/log" | head -3 | tr '\n' ' ' | cut -c1-200)
+  echo "$name: perf stat gave no count, run again without it: $why" >&2
+  [ -n "${COUNTER_NOTES:-}" ] && echo "- $name, round ${ROUND:-1}: \`perf stat -e $ev\` did not run (${why:-no output}); timed again without it, with no count." >>"$COUNTER_NOTES"
+  counter=none
+  "${timed[@]}" >"$tmp/log" 2>&1
+  status=$?
+fi
 read -r wall user sys rss_kib < <(grep -E '^[0-9.]+ [0-9.]+ [0-9.]+ [0-9]+$' "$tmp/time" | tail -1)
 
 ginstr=
 case $counter in
   perf|perf-u)
     n=$(awk -F, '$3 ~ /^instructions/ && $1 ~ /^[0-9]+$/ {print $1}' "$tmp/perf")
-    [ -n "$n" ] && ginstr=$(awk -v n="$n" 'BEGIN {printf "%.1f", n / 1e9}') ;;
+    if [ -n "$n" ]; then
+      ginstr=$(awk -v n="$n" 'BEGIN {printf "%.1f", n / 1e9}')
+    elif [ -n "${COUNTER_NOTES:-}" ]; then
+      echo "- $name, round ${ROUND:-1}: perf stat gave no count (\`$(grep instructions "$tmp/perf" | head -1 | cut -c1-120)\`)." >>"$COUNTER_NOTES"
+    fi ;;
   cachegrind)
     valgrind --tool=cachegrind --cache-sim=no --trace-children=yes \
       --cachegrind-out-file="$tmp/cg.%p" -- sh -c "$cmd" >"$tmp/cglog" 2>&1
