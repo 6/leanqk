@@ -37,6 +37,10 @@ enum LambdaExpected {
     Pi(ExprNode, Env, Ls),
 }
 
+/// Whether the codomain of a Π type instantiated at an argument is
+/// remembered when it is an application (see `eval_codomain`).
+const CODOMAIN_SLOT: bool = true;
+
 impl Nbe<'_> {
     // ---- binders ----
 
@@ -50,6 +54,16 @@ impl Nbe<'_> {
             unreachable!()
         };
         self.thunk(d, env, ls)
+    }
+
+    /// The value of a binder's body `b` in `env`. An application is
+    /// remembered by its exact term and environment (`eval_slot`): the type
+    /// of one application is often inferred more than once.
+    fn eval_codomain(&mut self, b: ExprId, env: Env, ls: Ls) -> V {
+        if CODOMAIN_SLOT && matches!(self.st.node(b), ExprNode::App(..)) {
+            return self.eval_slot(b, env, ls);
+        }
+        self.eval(b, env, ls)
     }
 
     /// Whether the body of a binder value may refer to its variable.
@@ -75,7 +89,7 @@ impl Nbe<'_> {
                     unreachable!()
                 };
                 let env2 = self.bind_value(b, env, x);
-                Ok(self.eval(b, env2, ls))
+                Ok(self.eval_codomain(b, env2, ls))
             }
             Val::PiInfer(t, env, ls) => {
                 let ExprNode::Lam(_, _, _, b) = self.st.node(t) else {
@@ -883,7 +897,7 @@ impl Nbe<'_> {
                         continue;
                     }
                 }
-                ft = self.eval(b, pi_env, pi_ls);
+                ft = self.eval_codomain(b, pi_env, pi_ls);
                 break;
             }
         }
