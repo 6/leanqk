@@ -167,6 +167,10 @@ impl IdTable {
         (n.div_ceil(LINE) * 4 / 3 + 1).min(u32::MAX as usize)
     }
 
+    pub(crate) fn bytes_for_capacity(n: usize) -> usize {
+        Self::lines_for(n) * LINE * size_of::<AtomicU64>()
+    }
+
     #[inline]
     pub fn len(&self) -> usize {
         self.len.load(Ordering::Relaxed)
@@ -486,7 +490,17 @@ impl<T: Node> Big<T> {
 
     /// [`Big::index`] on this thread.
     fn index_here(&mut self) -> Result<(), (u32, u32)> {
-        let n = self.nodes.len();
+        let table = self.build_index_here(self.nodes.len(), |_, _| true)?;
+        self.replace_index(table);
+        Ok(())
+    }
+
+    /// Build an index for a selected subset. The count sizes the table.
+    pub(crate) fn build_index_here(
+        &self,
+        n: usize,
+        mut keep: impl FnMut(u32, &T) -> bool,
+    ) -> Result<IdTable, (u32, u32)> {
         let lines = IdTable::lines_for(n);
         let nodes = &self.nodes;
         // A table line is picked by the low half of the hash (scaled), so
@@ -515,6 +529,9 @@ impl<T: Node> Big<T> {
         let mut spill = Vec::new();
         let ents = map.ents();
         for (id, node) in (0u32..).zip(nodes.as_slice()) {
+            if !keep(id, node) {
+                continue;
+            }
             let h = node.hash();
             let b = (h as u32 >> (32 - BITS)) as usize;
             let k = fill[b];
@@ -611,8 +628,11 @@ impl<T: Node> Big<T> {
                 return Err((id.max(old), id.min(old)));
             }
         }
+        Ok(table)
+    }
+
+    pub(crate) fn replace_index(&mut self, table: IdTable) {
         self.table = table;
-        Ok(())
     }
 
     /// Make room for `extra` more nodes without growing the table.

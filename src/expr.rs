@@ -255,8 +255,158 @@ impl From<Overflow> for ExprError {
     }
 }
 
+/// Applications grouped by the larger of their two child IDs.
+struct AppIndex {
+    /// Zero for an empty group, a tagged App ID for one member, or an offset
+    /// into pairs. Slab IDs leave the high bit free.
+    heads: Vec<u32>,
+    /// Each group starts with [length, write cursor], followed by its pairs
+    /// of [smaller child with orientation bit, App ID].
+    pairs: Vec<[u32; 2]>,
+    has_dynamic_apps: bool,
+}
+
+impl AppIndex {
+    const SINGLE: u32 = 1 << 31;
+    const SCAN: usize = 8;
+
+    #[inline]
+    fn key(fun: ExprId, arg: ExprId) -> usize {
+        fun.0.max(arg.0) as usize
+    }
+
+    #[inline]
+    fn other(fun: ExprId, arg: ExprId) -> u32 {
+        if fun >= arg {
+            arg.0
+        } else {
+            fun.0 | Self::SINGLE
+        }
+    }
+
+    #[inline(never)]
+    fn prepare(nodes: &[ExprNode]) -> Option<(Self, usize)> {
+        let mut heads = vec![0; nodes.len()];
+        let mut pairs_len = 1;
+        let mut non_apps = 0;
+        for (id, node) in (0u32..).zip(nodes) {
+            if let ExprNode::App(fun, arg) = *node {
+                let head = heads.get_mut(Self::key(fun, arg))?;
+                if *head == 0 {
+                    *head = Self::SINGLE | id;
+                } else if *head >= Self::SINGLE {
+                    *head = 2;
+                    pairs_len += 3;
+                } else {
+                    *head += 1;
+                    pairs_len += 1;
+                }
+            } else {
+                non_apps += 1;
+            }
+        }
+        if pairs_len > Self::SINGLE as usize
+            || heads.len() * size_of::<u32>()
+                + pairs_len * size_of::<[u32; 2]>()
+                + IdTable::bytes_for_capacity(non_apps)
+                > IdTable::bytes_for_capacity(nodes.len())
+        {
+            return None;
+        }
+        let mut pairs = vec![[0; 2]; pairs_len];
+        let mut offset = 1;
+        for head in &mut heads {
+            let count = *head;
+            if count != 0 && count < Self::SINGLE {
+                pairs[offset] = [count, 1];
+                *head = offset as u32;
+                offset += 1 + count as usize;
+            }
+        }
+        Some((
+            Self {
+                heads,
+                pairs,
+                has_dynamic_apps: false,
+            },
+            non_apps,
+        ))
+    }
+
+    /// Scatter an App during the scan that hashes the other expressions.
+    #[inline]
+    fn scatter_or_keep(&mut self, id: u32, node: ExprNode) -> bool {
+        let ExprNode::App(fun, arg) = node else {
+            return true;
+        };
+        let head = self.heads[Self::key(fun, arg)];
+        if head < Self::SINGLE {
+            let offset = head as usize;
+            let cursor = self.pairs[offset][1] as usize;
+            self.pairs[offset + cursor] = [Self::other(fun, arg), id];
+            self.pairs[offset][1] += 1;
+        }
+        false
+    }
+
+    #[inline(never)]
+    fn finish(&mut self) -> Result<(), (u32, u32)> {
+        let mut rest = &mut self.pairs[1..];
+        while let Some((header, after)) = rest.split_first_mut() {
+            let (group, next) = after.split_at_mut(header[0] as usize);
+            if group.len() <= Self::SCAN {
+                for (i, &[arg, id]) in group.iter().enumerate() {
+                    if let Some(&[_, other]) = group[..i].iter().find(|pair| pair[0] == arg) {
+                        return Err((id, other));
+                    }
+                }
+            } else {
+                group.sort_unstable_by_key(|pair| pair[0]);
+                for chunk in group.windows(2) {
+                    if chunk[0][0] == chunk[1][0] {
+                        let [a, b] = [chunk[0][1], chunk[1][1]];
+                        return Err((a.max(b), a.min(b)));
+                    }
+                }
+            }
+            rest = next;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn find(&self, nodes: &Slab<ExprNode>, fun: ExprId, arg: ExprId) -> Option<u32> {
+        let head = *self.heads.get(Self::key(fun, arg))?;
+        if head == 0 {
+            return None;
+        }
+        if head >= Self::SINGLE {
+            let id = head & !Self::SINGLE;
+            return (*nodes.get(id) == ExprNode::App(fun, arg)).then_some(id);
+        }
+        let offset = head as usize;
+        let count = self.pairs[offset][0] as usize;
+        let group = &self.pairs[offset + 1..][..count];
+        let other = Self::other(fun, arg);
+        if count <= Self::SCAN {
+            group
+                .iter()
+                .find(|pair| pair[0] == other)
+                .map(|pair| pair[1])
+        } else {
+            let at = group.binary_search_by_key(&other, |pair| pair[0]).ok()?;
+            Some(group[at][1])
+        }
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.heads.capacity() * size_of::<u32>() + self.pairs.capacity() * size_of::<[u32; 2]>()
+    }
+}
+
 pub struct Exprs {
     arena: Big<ExprNode>,
+    app_index: Option<AppIndex>,
     data: Slab<ExprData>,
     /// Lends the checker's stores blocks of ids above the nodes, for their
     /// own terms (see `crate::slab`).
@@ -286,6 +436,7 @@ impl Exprs {
     pub fn new() -> Self {
         Exprs {
             arena: Big::new("too many expressions"),
+            app_index: None,
             data: Slab::new(),
             pool: Pool::default(),
             data_from: u32::MAX,
@@ -312,6 +463,7 @@ impl Exprs {
         }
         Exprs {
             arena: Big::from_parts(nodes, table, "too many expressions"),
+            app_index: None,
             data,
             pool: Pool::default(),
             data_from: u32::MAX,
@@ -447,9 +599,29 @@ impl Exprs {
     /// of their ids (the later, the earlier).
     pub fn index(&mut self, threads: usize) -> Result<(), (ExprId, ExprId)> {
         self.finish_data();
+        if threads == 1 && self.arena.len() >= 1 << 16 && self.index_apps()? {
+            return Ok(());
+        }
         self.arena
             .index(threads)
-            .map_err(|(a, b)| (ExprId(a), ExprId(b)))
+            .map_err(|(a, b)| (ExprId(a), ExprId(b)))?;
+        self.app_index = None;
+        Ok(())
+    }
+
+    fn index_apps(&mut self) -> Result<bool, (ExprId, ExprId)> {
+        let Some((mut apps, non_apps)) = AppIndex::prepare(self.arena.nodes().as_slice()) else {
+            return Ok(false);
+        };
+        let errors = |(a, b)| (ExprId(a), ExprId(b));
+        let table = self
+            .arena
+            .build_index_here(non_apps, |id, node| apps.scatter_or_keep(id, *node))
+            .map_err(errors)?;
+        apps.finish().map_err(errors)?;
+        self.arena.replace_index(table);
+        self.app_index = Some(apps);
+        Ok(true)
     }
 
     fn add(
@@ -465,6 +637,15 @@ impl Exprs {
         }
         let (id, fresh) = if unindexed {
             (self.arena.push_unindexed(node)?, true)
+        } else if let ExprNode::App(fun, arg) = node
+            && let Some(apps) = &mut self.app_index
+        {
+            if let Some(id) = apps.find(self.arena.nodes(), fun, arg) {
+                return Ok((ExprId(id), false));
+            }
+            let added = self.arena.intern(node)?;
+            apps.has_dynamic_apps |= added.1;
+            added
         } else {
             self.arena.intern(node)?
         };
@@ -505,6 +686,14 @@ impl Exprs {
     /// The id of `node`, if it is interned here.
     #[inline]
     pub(crate) fn find(&self, node: &ExprNode) -> Option<ExprId> {
+        if let ExprNode::App(fun, arg) = *node
+            && let Some(apps) = &self.app_index
+        {
+            let found = apps.find(self.arena.nodes(), fun, arg);
+            if found.is_some() || !apps.has_dynamic_apps {
+                return found.map(ExprId);
+            }
+        }
         self.arena.find(node).map(ExprId)
     }
 
@@ -552,6 +741,7 @@ impl Exprs {
 
     pub fn heap_bytes(&self) -> usize {
         self.arena.heap_bytes()
+            + self.app_index.as_ref().map_or(0, AppIndex::heap_bytes)
             + self.data.heap_bytes()
             + self.lets.heap_bytes()
             + self.bigs.capacity() * size_of::<BigUint>()
@@ -595,6 +785,46 @@ mod tests {
             es.intern(ExprNode::BVar(ExprData::MAX_RANGE), &levels),
             Err(ExprError::BVarTooLarge(_))
         ));
+    }
+
+    #[test]
+    fn application_groups_distinguish_orientation_and_detect_duplicates() {
+        let levels = Levels::new();
+        let mut es = Exprs::new();
+        let f = es.intern(ExprNode::BVar(0), &levels).unwrap().0;
+        let a = es.intern(ExprNode::BVar(1), &levels).unwrap().0;
+        let b = es.intern(ExprNode::BVar(2), &levels).unwrap().0;
+        let forward = ExprNode::App(f, a);
+        let reverse = ExprNode::App(a, f);
+        let single = ExprNode::App(a, b);
+        let first = es.append(forward, &levels).unwrap();
+        let second = es.append(reverse, &levels).unwrap();
+        let mut last = es.append(single, &levels).unwrap();
+        let single_id = last;
+        for _ in 0..64 {
+            last = es.append(ExprNode::App(last, f), &levels).unwrap();
+        }
+        let mut large_group = Vec::new();
+        for id in 0..10 {
+            let app = ExprNode::App(last, ExprId(id));
+            large_group.push((app, es.append(app, &levels).unwrap()));
+        }
+        es.finish_data();
+        assert!(es.index_apps().unwrap());
+        assert_eq!(es.find(&forward), Some(first));
+        assert_eq!(es.find(&reverse), Some(second));
+        assert_eq!(es.find(&single), Some(single_id));
+        assert_eq!(es.intern(single, &levels).unwrap(), (single_id, false));
+        for (app, id) in large_group {
+            assert_eq!(es.find(&app), Some(id));
+        }
+        let fresh = ExprNode::App(f, b);
+        assert_eq!(es.find(&fresh), None);
+        let (new, added) = es.intern(fresh, &levels).unwrap();
+        assert!(added);
+        assert_eq!(es.find(&fresh), Some(new));
+        let duplicate = es.append(reverse, &levels).unwrap();
+        assert_eq!(es.index_apps(), Err((duplicate, second)));
     }
 
     #[test]
