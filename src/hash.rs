@@ -28,12 +28,15 @@ pub fn fold32(h: u64) -> u32 {
 }
 
 /// Hash two words with one multiply (the folded product of the two words,
-/// each offset by a constant). Enough for direct-mapped fronts and for
-/// the hash-consing tables keyed by ids; a word equal to its constant
-/// would make every hash with it zero, which only costs time.
+/// each offset by the same constant, the second rotated so that swapping
+/// the words changes the hash). One constant, as loading a 64-bit
+/// constant takes four instructions on some targets. Enough for
+/// direct-mapped fronts and for the hash-consing tables keyed by ids; a
+/// word equal to the constant would make every hash with it zero, which
+/// only costs time.
 #[inline]
 pub fn hash_front(w0: u64, w1: u64) -> u64 {
-    fold_mul(w0 ^ K0, w1 ^ K2)
+    fold_mul(w0 ^ K0, w1.rotate_left(32) ^ K0)
 }
 
 /// Hash a byte string.
