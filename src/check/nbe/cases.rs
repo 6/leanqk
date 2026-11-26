@@ -10,8 +10,9 @@
 
 use std::rc::Rc;
 
-use crate::env::DeclKind;
+use crate::env::{Decl, DeclKind};
 use crate::expr::{ExprId, ExprNode};
+use crate::level::LevelList;
 use crate::name::NameId;
 
 use super::super::shape::{self, CasesInfo, Head, Heads, Minor, RecInfo, Src, Tree, TreeInfo};
@@ -169,7 +170,7 @@ impl Nbe<'_> {
 
     /// The major premise `v` as a constructor application: its constructor
     /// and arguments, if it reduces to one.
-    fn ctor_of(&mut self, v: V) -> R<Option<(NameId, Vec<V>)>> {
+    fn ctor_of(&mut self, v: V) -> R<Option<(NameId, Sp)>> {
         let mut m = self.whnf(v)?;
         match self.a.get(m) {
             Val::Nat(..) | Val::NatBig(_) => m = self.nat_lit_to_constructor(m)?,
@@ -182,11 +183,7 @@ impl Nbe<'_> {
         let Val::Const(c, _, sp) = self.a.get(m) else {
             return Ok(None);
         };
-        let mut args = Vec::new();
-        if !self.a.args(sp, &mut args) {
-            return Ok(None);
-        }
-        Ok(Some((c, args)))
+        Ok((!self.a.sp_has_proj(sp)).then_some((c, sp)))
     }
 
     /// The application `v` of a `casesOn` or matcher reduced to the chosen
@@ -195,7 +192,7 @@ impl Nbe<'_> {
         let Val::Const(n, ls, sp) = self.a.get(v) else {
             return Ok(None);
         };
-        if sp == Sp::NIL || self.case_shapes.is_none(n) {
+        if sp == Sp::NIL || self.case_shapes.is_none(n) || self.a.sp_has_proj(sp) {
             return Ok(None);
         }
         let s = self.case_shape(n);
@@ -208,87 +205,102 @@ impl Nbe<'_> {
         if self.st.list(ls).len() != d.level_params.len() {
             return Ok(None);
         }
-        let mut args = Vec::new();
-        if !self.a.args(sp, &mut args) {
-            return Ok(None);
-        }
-        let dls = self.decl_ls(&d, ls);
         match s {
-            CaseShape::Cases(ci) => self.cases_n(&ci, dls, &args),
-            CaseShape::Tree(ti) => self.tree_n(&ti, dls, &args),
+            CaseShape::Cases(ci) => self.cases_n(&ci, &d, ls, sp),
+            CaseShape::Tree(ti) => {
+                let dls = self.decl_ls(&d, ls);
+                self.tree_n(&ti, dls, sp)
+            }
             _ => Ok(None),
         }
     }
 
-    fn cases_n(&mut self, ci: &CasesInfo, dls: Ls, args: &[V]) -> R<Option<V>> {
-        if args.len() < ci.arity {
+    fn cases_n(&mut self, ci: &CasesInfo, d: &Decl, ls: LevelList, sp: Sp) -> R<Option<V>> {
+        let len = self.a.sp_len(sp);
+        if (len as usize) < ci.arity {
             return Ok(None);
         }
-        let Some((c, margs)) = self.ctor_of(args[ci.major])? else {
+        let Some((c, msp)) = self.ctor_of(self.a.sp_arg(sp, ci.major as u32))? else {
             return Ok(None);
         };
         let Some((_, nf, e, minor)) = ci.rules.iter().find(|r| r.0 == c) else {
             return Ok(None);
         };
-        let (nf, e) = (*nf as usize, *e as usize);
-        if nf > margs.len() || args.len() < ci.arity + e {
+        let mlen = self.a.sp_len(msp);
+        let tail = ci.arity as u32 + e;
+        if *nf > mlen || len < tail {
             return Ok(None);
         }
-        let rest = &args[ci.arity..ci.arity + e];
-        let tail = &args[ci.arity + e..];
-        let (f, mut call) = match minor {
-            Minor::Arg(l) => (args[*l], margs[margs.len() - nf..].to_vec()),
-            Minor::Extra(j, ts) => {
-                let ts = ts.iter().map(|&t| self.thunk(t, Env::NIL, dls)).collect();
-                (rest[*j as usize], ts)
+        let base = self.vargs.len();
+        let f = match minor {
+            Minor::Arg(l) => {
+                self.a.extend_sp_args(msp, mlen - nf, mlen, &mut self.vargs);
+                self.a.sp_arg(sp, *l as u32)
             }
-            Minor::Closed(t) => (self.thunk(*t, Env::NIL, dls), Vec::new()),
-            Minor::Var(l) => (args[*l], Vec::new()),
+            Minor::Extra(j, ts) => {
+                let dls = self.decl_ls(d, ls);
+                for &t in ts {
+                    let a = self.thunk(t, Env::NIL, dls);
+                    self.vargs.push(a);
+                }
+                self.a.sp_arg(sp, ci.arity as u32 + j)
+            }
+            Minor::Closed(t) => {
+                let dls = self.decl_ls(d, ls);
+                self.thunk(*t, Env::NIL, dls)
+            }
+            Minor::Var(l) => self.a.sp_arg(sp, *l as u32),
         };
-        call.extend_from_slice(tail);
-        Ok(Some(self.apply_all(f, &call)))
+        self.a.extend_sp_args(sp, tail, len, &mut self.vargs);
+        let r = self.apply_n(f, base);
+        self.vargs.truncate(base);
+        Ok(Some(r))
     }
 
-    fn src(&mut self, s: Src, dls: Ls, args: &[V], levels: &[(V, Vec<V>)]) -> V {
+    fn src(&mut self, s: Src, dls: Ls, sp: Sp, levels: &[(V, Sp, u32)]) -> V {
         match s {
-            Src::Arg(i) => args[i],
-            Src::Field(l, f) => levels[l].1[f],
+            Src::Arg(i) => self.a.sp_arg(sp, i as u32),
+            Src::Field(l, f) => {
+                let (_, msp, start) = levels[l];
+                self.a.sp_arg(msp, start + f as u32)
+            }
             Src::Major(l) => levels[l].0,
             Src::Closed(e) => self.thunk(e, Env::NIL, dls),
         }
     }
 
-    fn tree_n(&mut self, ti: &TreeInfo, dls: Ls, args: &[V]) -> R<Option<V>> {
-        if args.len() < ti.arity {
+    fn tree_n(&mut self, ti: &TreeInfo, dls: Ls, sp: Sp) -> R<Option<V>> {
+        let len = self.a.sp_len(sp);
+        if (len as usize) < ti.arity {
             return Ok(None);
         }
-        let tail = &args[ti.arity..];
-        let mut levels: Vec<(V, Vec<V>)> = Vec::new();
+        let mut levels = Vec::new();
         let mut t = &ti.tree;
         loop {
             match t {
                 Tree::Leaf(h, xs) => {
-                    let f = self.src(*h, dls, args, &levels);
-                    let mut call = Vec::with_capacity(xs.len() + tail.len());
+                    let f = self.src(*h, dls, sp, &levels);
+                    let base = self.vargs.len();
                     for &x in xs.iter() {
-                        call.push(self.src(x, dls, args, &levels));
+                        let a = self.src(x, dls, sp, &levels);
+                        self.vargs.push(a);
                     }
-                    call.extend_from_slice(tail);
-                    return Ok(Some(self.apply_all(f, &call)));
+                    self.a
+                        .extend_sp_args(sp, ti.arity as u32, len, &mut self.vargs);
+                    let r = self.apply_n(f, base);
+                    self.vargs.truncate(base);
+                    return Ok(Some(r));
                 }
                 Tree::Case(m, rules) => {
-                    let mv = self.src(*m, dls, args, &levels);
-                    let Some((c, margs)) = self.ctor_of(mv)? else {
+                    let mv = self.src(*m, dls, sp, &levels);
+                    let Some((c, msp)) = self.ctor_of(mv)? else {
                         return Ok(None);
                     };
-                    let Some(r) = rules
-                        .iter()
-                        .find(|r| r.0 == c && r.1 as usize <= margs.len())
-                    else {
+                    let mlen = self.a.sp_len(msp);
+                    let Some(r) = rules.iter().find(|r| r.0 == c && r.1 <= mlen) else {
                         return Ok(None);
                     };
-                    let fields = margs[margs.len() - r.1 as usize..].to_vec();
-                    levels.push((mv, fields));
+                    levels.push((mv, msp, mlen - r.1));
                     t = &r.2;
                 }
             }

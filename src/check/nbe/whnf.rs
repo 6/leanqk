@@ -10,7 +10,7 @@ use crate::name::NameId;
 
 use super::super::ext::{NatOp, SMALL_NAT, SmallNat};
 use super::super::tc::{KErr, NAT_MAX_BYTES, R};
-use super::val::{Elim, Sp, V, Val};
+use super::val::{Elim, NONE, Sp, V, Val};
 use super::{BOTTOM, Nbe};
 
 /// Steps of reduction before a closed computation goes to the closed-term
@@ -27,31 +27,53 @@ impl Nbe<'_> {
         self.fvars[k as usize].val
     }
 
+    #[inline]
     pub fn whnf_core(&mut self, v: V, cheap_rec: bool, cheap_proj: bool) -> R<V> {
-        let v = self.force(v);
-        match self.a.get(v) {
-            Val::Const(_, _, sp) if sp != Sp::NIL => {}
-            Val::FVar(k, sp) => {
-                return match self.let_value(k) {
-                    Some(x) => {
-                        let r = self.apply_spine(x, sp);
-                        self.whnf_core(r, cheap_rec, cheap_proj)
-                    }
-                    None => Ok(v),
-                };
-            }
-            _ => return Ok(v),
+        if self.a.r(v).core_normal() {
+            return Ok(v);
         }
-        let full = !cheap_rec && !cheap_proj;
-        if full {
-            let c = self.a.r(v).whnf_core;
-            if c != super::val::NONE {
+        self.whnf_core_slow(v, cheap_rec, cheap_proj)
+    }
+
+    fn whnf_core_slow(&mut self, v: V, cheap_rec: bool, cheap_proj: bool) -> R<V> {
+        let v = self.force(v);
+        let rec = self.a.r(v);
+        if rec.core_normal() {
+            return Ok(v);
+        }
+        if !cheap_rec {
+            let c = if cheap_proj {
+                rec.cheap_core()
+            } else {
+                rec.whnf_core
+            };
+            if c != NONE {
                 return Ok(V(c));
             }
         }
-        let r = self.whnf_core_app(v, cheap_rec, cheap_proj)?;
-        if full {
-            self.a.rm(v).whnf_core = r.0;
+        let r = match self.a.get(v) {
+            Val::Const(_, _, sp) if sp != Sp::NIL => {
+                self.whnf_core_app(v, cheap_rec, cheap_proj)?
+            }
+            Val::FVar(k, sp) => match self.let_value(k) {
+                Some(x) => {
+                    let r = self.apply_spine(x, sp);
+                    self.whnf_core(r, cheap_rec, cheap_proj)?
+                }
+                None => {
+                    self.a.rm(v).set_whnf_normal();
+                    return Ok(v);
+                }
+            },
+            _ => return Ok(v),
+        };
+        if !cheap_rec {
+            let rec = self.a.rm(v);
+            if cheap_proj {
+                rec.set_cheap_core(r);
+            } else {
+                rec.whnf_core = r.0;
+            }
         }
         Ok(r)
     }
@@ -61,28 +83,25 @@ impl Nbe<'_> {
         let Val::Const(c, l, sp) = self.a.get(v) else {
             unreachable!()
         };
-        if !self.a.sp_has_proj(sp) && !self.may_reduce_rec(c) {
-            return Ok(v);
+        if !self.a.sp_has_proj(sp) && !self.is_quot_recursor(c) {
+            match self.find(c) {
+                Some(d) if matches!(d.kind, DeclKind::Recursor { .. }) => {}
+                Some(_) => {
+                    self.a.rm(v).set_core_normal();
+                    return Ok(v);
+                }
+                None => return Ok(v),
+            }
         }
-        let mut es = self.take_elims();
-        self.a.elims(sp, &mut es);
-        let p = es
-            .iter()
-            .position(|e| matches!(e, Elim::Proj(..)))
-            .unwrap_or(es.len());
-        let mut args = Vec::with_capacity(p);
-        for e in &es[..p] {
-            let Elim::Arg(a) = *e else { unreachable!() };
-            args.push(a);
-        }
-        let r = if let Some(r) = self.reduce_recursor(c, l, &args, cheap_rec, cheap_proj)? {
-            let r = self.apply_elims(r, &es[p..]);
-            self.whnf_core(r, cheap_rec, cheap_proj)?
-        } else if p < es.len() {
-            let Elim::Proj(s, i) = es[p] else {
+        let p = self.a.sp_arg_prefix(sp);
+        if let Some(r) = self.reduce_recursor(c, l, sp, p, cheap_rec, cheap_proj)? {
+            let r = self.apply_sp_suffix(r, sp, p);
+            self.whnf_core(r, cheap_rec, cheap_proj)
+        } else if p < self.a.sp_len(sp) {
+            let Elim::Proj(s, i) = self.a.sp_elim(sp, p) else {
                 unreachable!()
             };
-            let pre = self.a.sp_prefix(sp, p as u32);
+            let pre = self.a.sp_prefix(sp, p);
             let x = self.a.mk(Val::Const(c, l, pre));
             let x = if cheap_proj {
                 self.whnf_core(x, cheap_rec, cheap_proj)?
@@ -91,16 +110,29 @@ impl Nbe<'_> {
             };
             match self.reduce_proj_core(x, s, i)? {
                 Some(f) => {
-                    let r = self.apply_elims(f, &es[p + 1..]);
-                    self.whnf_core(r, cheap_rec, cheap_proj)?
+                    let r = self.apply_sp_suffix(f, sp, p + 1);
+                    self.whnf_core(r, cheap_rec, cheap_proj)
                 }
-                None => v,
+                None => Ok(v),
             }
         } else {
-            v
-        };
-        self.put_elims(es);
-        Ok(r)
+            Ok(v)
+        }
+    }
+
+    fn apply_sp_suffix(&mut self, mut f: V, sp: Sp, start: u32) -> V {
+        for i in start..self.a.sp_len(sp) {
+            f = self.apply_elim(f, self.a.sp_elim(sp, i));
+        }
+        f
+    }
+
+    fn apply_sp_args(&mut self, f: V, sp: Sp, start: u32, end: u32) -> V {
+        let base = self.vargs.len();
+        self.a.extend_sp_args(sp, start, end, &mut self.vargs);
+        let r = self.apply_n(f, base);
+        self.vargs.truncate(base);
+        r
     }
 
     /// Lean's `reduce_proj_core`, on a struct already in whnf.
@@ -112,37 +144,29 @@ impl Nbe<'_> {
         Ok(self.ctor_field(c, s, i))
     }
 
-    /// Whether `c` is a recursor or a quotient's lift or induction.
-    fn may_reduce_rec(&self, c: NameId) -> bool {
-        if let Some(q) = self.ext.quot.as_ref()
-            && (c == q.lift || c == q.ind)
-        {
-            return true;
-        }
-        matches!(
-            self.find(c),
-            Some(Decl {
-                kind: DeclKind::Recursor { .. },
-                ..
-            })
-        )
+    fn is_quot_recursor(&self, c: NameId) -> bool {
+        self.ext
+            .quot
+            .as_ref()
+            .is_some_and(|q| c == q.lift || c == q.ind)
     }
 
     fn reduce_recursor(
         &mut self,
         c: NameId,
         l: LevelList,
-        args: &[V],
+        sp: Sp,
+        arg_count: u32,
         cheap_rec: bool,
         cheap_proj: bool,
     ) -> R<Option<V>> {
-        if let Some(r) = self.quot_reduce_rec(c, args)? {
+        if let Some(r) = self.quot_reduce_rec(c, sp, arg_count)? {
             return Ok(Some(r));
         }
-        self.inductive_reduce_rec(c, l, args, cheap_rec, cheap_proj)
+        self.inductive_reduce_rec(c, l, sp, arg_count, cheap_rec, cheap_proj)
     }
 
-    fn quot_reduce_rec(&mut self, f: NameId, args: &[V]) -> R<Option<V>> {
+    fn quot_reduce_rec(&mut self, f: NameId, sp: Sp, arg_count: u32) -> R<Option<V>> {
         let Some(q) = self.ext.quot.as_ref() else {
             return Ok(None);
         };
@@ -161,19 +185,18 @@ impl Nbe<'_> {
             }) => {}
             _ => return Ok(None),
         }
-        if args.len() <= mk_pos {
+        if arg_count <= mk_pos {
             return Ok(None);
         }
-        let mk = self.whnf(args[mk_pos])?;
+        let mk = self.whnf(self.a.sp_arg(sp, mk_pos))?;
         let Val::Const(n, _, msp) = self.a.get(mk) else {
             return Ok(None);
         };
-        let mut margs = Vec::new();
-        if n != qmk || !self.a.args(msp, &mut margs) || margs.len() != 3 {
+        if n != qmk || self.a.sp_has_proj(msp) || self.a.sp_len(msp) != 3 {
             return Ok(None);
         }
-        let r = self.apply(args[arg_pos], margs[2]);
-        Ok(Some(self.apply_all(r, &args[mk_pos + 1..])))
+        let r = self.apply(self.a.sp_arg(sp, arg_pos), self.a.sp_arg(msp, 2));
+        Ok(Some(self.apply_sp_args(r, sp, mk_pos + 1, arg_count)))
     }
 
     pub(super) fn major_induct(&mut self, rec: NameId, d: &Decl) -> Option<NameId> {
@@ -352,7 +375,8 @@ impl Nbe<'_> {
         &mut self,
         rec_name: NameId,
         rec_lvls: LevelList,
-        args: &[V],
+        sp: Sp,
+        arg_count: u32,
         cheap_rec: bool,
         cheap_proj: bool,
     ) -> R<Option<V>> {
@@ -371,14 +395,14 @@ impl Nbe<'_> {
         else {
             return Ok(None);
         };
-        let major_idx = (num_params + num_motives + num_minors + num_indices) as usize;
-        if major_idx >= args.len() {
+        let major_idx = num_params + num_motives + num_minors + num_indices;
+        if major_idx >= arg_count {
             return Ok(None);
         }
         let Some(induct) = self.major_induct(rec_name, &d) else {
             return Ok(None);
         };
-        let mut major = args[major_idx];
+        let mut major = self.a.sp_arg(sp, major_idx);
         if k {
             major = self.ctor_when_k(induct, num_params, major)?;
         }
@@ -406,12 +430,8 @@ impl Nbe<'_> {
         else {
             return Ok(None);
         };
-        let mut margs = Vec::new();
-        if !self.a.args(msp, &mut margs) {
-            return Ok(None);
-        }
-        let nfields = rule.nfields as usize;
-        if nfields > margs.len() {
+        let mlen = self.a.sp_len(msp);
+        if self.a.sp_has_proj(msp) || rule.nfields > mlen {
             return Ok(None);
         }
         if self.st.list(rec_lvls).len() != d.level_params.len() {
@@ -419,10 +439,10 @@ impl Nbe<'_> {
         }
         let ls = self.decl_ls(&d, rec_lvls);
         let mut rhs = self.eval(rule.rhs, super::val::Env::NIL, ls);
-        let pmm = (num_params + num_motives + num_minors) as usize;
-        rhs = self.apply_all(rhs, &args[..pmm]);
-        rhs = self.apply_all(rhs, &margs[margs.len() - nfields..]);
-        rhs = self.apply_all(rhs, &args[major_idx + 1..]);
+        let pmm = num_params + num_motives + num_minors;
+        rhs = self.apply_sp_args(rhs, sp, 0, pmm);
+        rhs = self.apply_sp_args(rhs, msp, mlen - rule.nfields, mlen);
+        rhs = self.apply_sp_args(rhs, sp, major_idx + 1, arg_count);
         Ok(Some(rhs))
     }
 
@@ -493,6 +513,11 @@ impl Nbe<'_> {
     /// The definition at the head of `v`, if `v` can be unfolded.
     pub fn is_delta(&mut self, v: V) -> Option<Decl> {
         let v = self.force(v);
+        self.delta_head(v).map(|(d, _, _)| d)
+    }
+
+    /// The definition, levels and spine of a forced delta redex.
+    fn delta_head(&self, v: V) -> Option<(Decl, LevelList, Sp)> {
         let Val::Const(n, ls, sp) = self.a.get(v) else {
             return None;
         };
@@ -501,21 +526,22 @@ impl Nbe<'_> {
         }
         let d = self.find(n)?;
         Self::decl_value(&d)?;
-        (self.st.list(ls).len() == d.level_params.len()).then_some(d)
+        (self.st.list(ls).len() == d.level_params.len()).then_some((d, ls, sp))
     }
 
     pub fn unfold_definition(&mut self, v: V) -> Option<V> {
         let v = self.force(v);
         let m = self.a.r(v).delta;
-        if m != super::val::NONE {
+        if m != NONE {
             return Some(V(m));
         }
-        let d = self.is_delta(v)?;
-        let value = self.unfold_value(&d)?;
-        let Val::Const(_, ls, sp) = self.a.get(v) else {
-            unreachable!()
-        };
-        let body = self.const_value(&d, value, ls);
+        let (d, ls, sp) = self.delta_head(v)?;
+        self.unfold_delta(v, &d, ls, sp)
+    }
+
+    fn unfold_delta(&mut self, v: V, d: &Decl, ls: LevelList, sp: Sp) -> Option<V> {
+        let value = self.unfold_value(d)?;
+        let body = self.const_value(d, value, ls);
         let r = self.apply_spine(body, sp);
         self.a.rm(v).delta = r.0;
         Some(r)
@@ -744,22 +770,28 @@ impl Nbe<'_> {
         }
     }
 
+    #[inline]
     pub fn whnf(&mut self, v: V) -> R<V> {
+        if self.a.r(v).whnf_normal() {
+            return Ok(v);
+        }
+        self.whnf_slow(v)
+    }
+
+    fn whnf_slow(&mut self, v: V) -> R<V> {
         let v = self.force(v);
-        match self.a.get(v) {
-            Val::Sort(_)
-            | Val::Pi(..)
-            | Val::PiInfer(..)
-            | Val::Lam(..)
-            | Val::Nat(..)
-            | Val::NatBig(_)
-            | Val::Str(_) => return Ok(v),
-            Val::FVar(k, _) if self.let_value(k).is_none() => return Ok(v),
-            _ => {}
+        if self.a.r(v).whnf_normal() {
+            return Ok(v);
         }
         let c = self.a.r(v).whnf;
-        if c != super::val::NONE {
+        if c != NONE {
             return Ok(V(c));
+        }
+        if let Val::FVar(k, _) = self.a.get(v)
+            && self.let_value(k).is_none()
+        {
+            self.a.rm(v).set_whnf_normal();
+            return Ok(v);
         }
         self.whnf_from(v, true)
     }
@@ -768,19 +800,30 @@ impl Nbe<'_> {
     fn whnf_from(&mut self, v: V, eval: bool) -> R<V> {
         let mut t = v;
         let mut first = eval;
-        loop {
+        let n = loop {
             self.tick()?;
-            let t_l = self.whnf_core(t, false, false)?;
-            if let Some(n) = self.reduce_nat(t_l)? {
-                self.a.rm(v).whnf = n.0;
-                return Ok(n);
+            let rec = self.a.r(t);
+            if rec.whnf_normal() {
+                break t;
             }
-            if first && self.is_delta(t_l).is_some() {
+            if rec.whnf != NONE {
+                break V(rec.whnf);
+            }
+            let t_l = self.whnf_core(t, false, false)?;
+            if self.a.r(t_l).whnf_normal() {
+                break t_l;
+            }
+            if let Some(n) = self.reduce_nat(t_l)? {
+                break n;
+            }
+            let Some((d, ls, sp)) = self.delta_head(t_l) else {
+                break t_l;
+            };
+            if first {
                 first = false;
                 if let Some(n) = self.whnf_closed(t_l)? {
-                    self.a.rm(v).whnf = n.0;
                     self.a.rm(n).whnf = n.0;
-                    return Ok(n);
+                    break n;
                 }
             }
             if super::cases::CASES_DIRECT
@@ -789,13 +832,16 @@ impl Nbe<'_> {
                 t = n;
                 continue;
             }
-            match self.unfold_definition(t_l) {
-                Some(n) => t = n,
-                None => {
-                    self.a.rm(v).whnf = t_l.0;
-                    return Ok(t_l);
-                }
+            let m = self.a.r(t_l).delta;
+            if m != NONE {
+                t = V(m);
+            } else if let Some(n) = self.unfold_delta(t_l, &d, ls, sp) {
+                t = n;
+            } else {
+                break t_l;
             }
-        }
+        };
+        self.a.rm(v).whnf = n.0;
+        Ok(n)
     }
 }

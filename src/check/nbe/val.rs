@@ -140,7 +140,9 @@ pub struct LsNode {
 /// A value with what is known about it.
 #[derive(Clone, Copy)]
 pub struct Rec {
-    flags: u8,
+    /// The low byte holds flags. The upper bits hold the core memo with
+    /// cheap projections, encoded as the value id plus one (zero is empty).
+    flags: u32,
     /// What a thunk evaluates to, or `NONE`; likewise the memos below.
     pub forced: u32,
     pub whnf_core: u32,
@@ -150,13 +152,48 @@ pub struct Rec {
     pub delta: u32,
 }
 
-const HAS_FVAR: u8 = 1;
-const CHECKED: u8 = 2;
+const HAS_FVAR: u32 = 1;
+const CHECKED: u32 = 2;
+const CORE_NORMAL: u32 = 4;
+const WHNF_NORMAL: u32 = 8;
+const FLAG_BITS: u32 = 8;
+const FLAG_MASK: u32 = (1 << FLAG_BITS) - 1;
+
+impl Rec {
+    #[inline]
+    pub(super) fn cheap_core(&self) -> u32 {
+        (self.flags >> FLAG_BITS).wrapping_sub(1)
+    }
+
+    #[inline]
+    pub(super) fn set_cheap_core(&mut self, v: V) {
+        self.flags = (self.flags & FLAG_MASK) | ((v.0 + 1) << FLAG_BITS);
+    }
+
+    #[inline]
+    pub(super) fn core_normal(&self) -> bool {
+        self.flags & CORE_NORMAL != 0
+    }
+
+    #[inline]
+    pub(super) fn whnf_normal(&self) -> bool {
+        self.flags & WHNF_NORMAL != 0
+    }
+
+    pub(super) fn set_core_normal(&mut self) {
+        self.flags |= CORE_NORMAL;
+    }
+
+    pub(super) fn set_whnf_normal(&mut self) {
+        self.flags |= CORE_NORMAL | WHNF_NORMAL;
+    }
+}
 
 /// The most values, spines or environments one declaration may build.
 /// Past it the evaluating checker gives up on the declaration (by
 /// unwinding with [`OutOfRoom`]) and the substituting one checks it.
 const LIMIT: u32 = 1 << 23;
+const _: () = assert!(LIMIT <= u32::MAX >> FLAG_BITS);
 
 /// The most words the spines of one declaration may take.
 const SP_WORDS: usize = 8 << 23;
@@ -403,27 +440,32 @@ impl Arena {
         }
         slot.insert((id, h));
         vals.push(val);
+        let flags = match val {
+            Val::Lam(_, e, _) | Val::Pi(_, e, _) | Val::PiInfer(_, e, _) => {
+                CORE_NORMAL | WHNF_NORMAL | self.env_flags(e)
+            }
+            Val::Sort(_) | Val::Nat(..) | Val::NatBig(_) | Val::Str(_) => CORE_NORMAL | WHNF_NORMAL,
+            Val::Thunk(_, e, _) => self.env_flags(e),
+            Val::Const(..) => CORE_NORMAL,
+            Val::FVar(..) => HAS_FVAR,
+        };
         self.recs.push(Rec {
-            flags: 0,
+            flags,
             forced: NONE,
             whnf_core: NONE,
             whnf: NONE,
             ty: NONE,
             delta: NONE,
         });
-        let fv = match val {
-            Val::Sort(_) | Val::Nat(..) | Val::NatBig(_) | Val::Str(_) => false,
-            Val::Lam(_, e, _) | Val::Pi(_, e, _) | Val::PiInfer(_, e, _) | Val::Thunk(_, e, _) => {
-                self.envs[e.0 as usize].len & HAS_FVAR_BIT != 0
-            }
-            Val::Const(_, _, sp) => self.sps[sp.0 as usize] & HAS_FVAR_BIT != 0,
-            Val::FVar(..) => true,
-        };
-        if fv {
-            self.recs[id as usize].flags = HAS_FVAR;
-        }
-
         V(id)
+    }
+
+    fn env_flags(&self, e: Env) -> u32 {
+        if self.envs[e.0 as usize].len & HAS_FVAR_BIT != 0 {
+            HAS_FVAR
+        } else {
+            0
+        }
     }
 
     // ---- spines ----
@@ -439,6 +481,21 @@ impl Arena {
         self.sps[sp.0 as usize] & HAS_PROJ_BIT != 0
     }
 
+    /// The length of the application-only prefix of a spine.
+    pub(super) fn sp_arg_prefix(&self, sp: Sp) -> u32 {
+        let len = self.sp_len(sp);
+        if !self.sp_has_proj(sp) {
+            return len;
+        }
+        let start = sp.0 as usize + 1;
+        self.sps[start..start + 2 * len as usize]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .position(|&[_, tag]| tag != NONE)
+            .expect("spine has a projection") as u32
+    }
+
     /// Elimination `i` of `sp`, from the first.
     #[inline]
     pub fn sp_elim(&self, sp: Sp, i: u32) -> Elim {
@@ -449,6 +506,25 @@ impl Arena {
         } else {
             Elim::Proj(NameId(a), b)
         }
+    }
+
+    /// Argument `i` of a spine, at a position known to be an application.
+    #[inline]
+    pub(super) fn sp_arg(&self, sp: Sp, i: u32) -> V {
+        let k = sp.0 as usize + 1 + 2 * i as usize;
+        debug_assert!(i < self.sp_len(sp) && self.sps[k + 1] == NONE);
+        V(self.sps[k])
+    }
+
+    /// Append an application-only range of a spine.
+    pub(super) fn extend_sp_args(&self, sp: Sp, start: u32, end: u32, out: &mut Vec<V>) {
+        debug_assert!(start <= end && end <= self.sp_len(sp));
+        let k = sp.0 as usize + 1;
+        let words = &self.sps[k + 2 * start as usize..k + 2 * end as usize];
+        out.extend(words.as_chunks::<2>().0.iter().map(|&[a, tag]| {
+            debug_assert_eq!(tag, NONE);
+            V(a)
+        }));
     }
 
     /// The last elimination of a non-empty spine.
