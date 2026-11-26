@@ -10,7 +10,7 @@ use crate::name::NameId;
 
 use super::super::ext::{NatOp, SMALL_NAT, SmallNat};
 use super::super::tc::{KErr, NAT_MAX_BYTES, R};
-use super::val::{Elim, Sp, V, Val};
+use super::val::{Elim, NONE, Sp, V, Val};
 use super::{BOTTOM, Nbe};
 
 /// Steps of reduction before a closed computation goes to the closed-term
@@ -37,35 +37,43 @@ impl Nbe<'_> {
 
     fn whnf_core_slow(&mut self, v: V, cheap_rec: bool, cheap_proj: bool) -> R<V> {
         let v = self.force(v);
-        if self.a.r(v).core_normal() {
+        let rec = self.a.r(v);
+        if rec.core_normal() {
             return Ok(v);
         }
-        match self.a.get(v) {
-            Val::Const(_, _, sp) if sp != Sp::NIL => {}
-            Val::FVar(k, sp) => {
-                return match self.let_value(k) {
-                    Some(x) => {
-                        let r = self.apply_spine(x, sp);
-                        self.whnf_core(r, cheap_rec, cheap_proj)
-                    }
-                    None => {
-                        self.a.rm(v).set_whnf_normal();
-                        Ok(v)
-                    }
-                };
-            }
-            _ => return Ok(v),
-        }
-        let full = !cheap_rec && !cheap_proj;
-        if full {
-            let c = self.a.r(v).whnf_core;
-            if c != super::val::NONE {
+        if !cheap_rec {
+            let c = if cheap_proj {
+                rec.cheap_core()
+            } else {
+                rec.whnf_core
+            };
+            if c != NONE {
                 return Ok(V(c));
             }
         }
-        let r = self.whnf_core_app(v, cheap_rec, cheap_proj)?;
-        if full {
-            self.a.rm(v).whnf_core = r.0;
+        let r = match self.a.get(v) {
+            Val::Const(_, _, sp) if sp != Sp::NIL => {
+                self.whnf_core_app(v, cheap_rec, cheap_proj)?
+            }
+            Val::FVar(k, sp) => match self.let_value(k) {
+                Some(x) => {
+                    let r = self.apply_spine(x, sp);
+                    self.whnf_core(r, cheap_rec, cheap_proj)?
+                }
+                None => {
+                    self.a.rm(v).set_whnf_normal();
+                    return Ok(v);
+                }
+            },
+            _ => return Ok(v),
+        };
+        if !cheap_rec {
+            let rec = self.a.rm(v);
+            if cheap_proj {
+                rec.set_cheap_core(r);
+            } else {
+                rec.whnf_core = r.0;
+            }
         }
         Ok(r)
     }

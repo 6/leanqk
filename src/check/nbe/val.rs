@@ -140,7 +140,9 @@ pub struct LsNode {
 /// A value with what is known about it.
 #[derive(Clone, Copy)]
 pub struct Rec {
-    flags: u8,
+    /// The low byte holds flags. The upper bits hold the core memo with
+    /// cheap projections, encoded as the value id plus one (zero is empty).
+    flags: u32,
     /// What a thunk evaluates to, or `NONE`; likewise the memos below.
     pub forced: u32,
     pub whnf_core: u32,
@@ -150,12 +152,24 @@ pub struct Rec {
     pub delta: u32,
 }
 
-const HAS_FVAR: u8 = 1;
-const CHECKED: u8 = 2;
-const CORE_NORMAL: u8 = 4;
-const WHNF_NORMAL: u8 = 8;
+const HAS_FVAR: u32 = 1;
+const CHECKED: u32 = 2;
+const CORE_NORMAL: u32 = 4;
+const WHNF_NORMAL: u32 = 8;
+const FLAG_BITS: u32 = 8;
+const FLAG_MASK: u32 = (1 << FLAG_BITS) - 1;
 
 impl Rec {
+    #[inline]
+    pub(super) fn cheap_core(&self) -> u32 {
+        (self.flags >> FLAG_BITS).wrapping_sub(1)
+    }
+
+    #[inline]
+    pub(super) fn set_cheap_core(&mut self, v: V) {
+        self.flags = (self.flags & FLAG_MASK) | ((v.0 + 1) << FLAG_BITS);
+    }
+
     #[inline]
     pub(super) fn core_normal(&self) -> bool {
         self.flags & CORE_NORMAL != 0
@@ -179,6 +193,7 @@ impl Rec {
 /// Past it the evaluating checker gives up on the declaration (by
 /// unwinding with [`OutOfRoom`]) and the substituting one checks it.
 const LIMIT: u32 = 1 << 23;
+const _: () = assert!(LIMIT <= u32::MAX >> FLAG_BITS);
 
 /// The most words the spines of one declaration may take.
 const SP_WORDS: usize = 8 << 23;
@@ -445,7 +460,7 @@ impl Arena {
         V(id)
     }
 
-    fn env_flags(&self, e: Env) -> u8 {
+    fn env_flags(&self, e: Env) -> u32 {
         if self.envs[e.0 as usize].len & HAS_FVAR_BIT != 0 {
             HAS_FVAR
         } else {
