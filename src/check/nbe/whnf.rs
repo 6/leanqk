@@ -36,14 +36,19 @@ impl Nbe<'_> {
         if self.a.r(v).core_normal() {
             return Ok(v);
         }
-        self.whnf_core_slow(v, cheap_rec, cheap_proj)
+        self.whnf_core_non_normal(v, cheap_rec, cheap_proj)
     }
 
-    fn whnf_core_slow(&mut self, v: V, cheap_rec: bool, cheap_proj: bool) -> R<V> {
-        let v = self.force(v);
-        let rec = self.a.r(v);
-        if rec.core_normal() {
-            return Ok(v);
+    /// Core reduction after the original value's normal flag has been checked.
+    #[inline]
+    fn whnf_core_non_normal(&mut self, mut v: V, cheap_rec: bool, cheap_proj: bool) -> R<V> {
+        let mut rec = self.a.r(v);
+        if rec.is_thunk() {
+            v = self.force(v);
+            rec = self.a.r(v);
+            if rec.core_normal() {
+                return Ok(v);
+            }
         }
         if !cheap_rec {
             let c = if cheap_proj {
@@ -55,6 +60,10 @@ impl Nbe<'_> {
                 return Ok(V(c));
             }
         }
+        self.whnf_core_slow(v, cheap_rec, cheap_proj)
+    }
+
+    fn whnf_core_slow(&mut self, v: V, cheap_rec: bool, cheap_proj: bool) -> R<V> {
         let r = match self.a.get(v) {
             Val::Const(_, _, sp) if sp != Sp::NIL => {
                 self.whnf_core_app(v, cheap_rec, cheap_proj)?
