@@ -23,6 +23,10 @@ const EAGER_ALL: bool = true;
 /// the environment the term reads (`eager`), not through a thunk.
 const EAGER_MEMO: bool = true;
 
+/// Whether `eager` remembers in a direct-mapped table only
+/// (`Nbe::eager_direct`), not a growing one.
+const EAGER_DIRECT: bool = true;
+
 /// Past this many environment entries in range, `eager` goes through a
 /// thunk instead.
 const EAGER_MEMO_RANGE: u32 = 32;
@@ -35,46 +39,63 @@ impl Nbe<'_> {
     pub fn eval(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let d = self.st.data(e);
         let ls = if d.has_level_param() { ls } else { Ls::ID };
+        // A small frame here: each kind of term is evaluated out of line.
         match self.st.node(e) {
             ExprNode::BVar(i) => match self.a.lookup(env, i) {
                 Some(v) => self.force(v),
                 None => self.bottom(Sp::NIL),
             },
+            ExprNode::App(..) => self.eval_app(e, env, ls),
+            ExprNode::Lam(..) | ExprNode::Pi(..) => self.eval_binder(e, env, ls),
+            ExprNode::Const(n, lv) => self.eval_const(n, lv, ls),
+            _ => self.eval_other(e, env, ls),
+        }
+    }
+
+    #[inline(never)]
+    fn eval_const(&mut self, n: NameId, lv: LevelList, ls: Ls) -> V {
+        let lv = self.inst_list(lv, ls);
+        self.a.cnst(n, lv)
+    }
+
+    #[inline(never)]
+    fn eval_app(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        self.ticks += 1;
+        let base = self.terms.len();
+        let mut f = e;
+        while let ExprNode::App(g, a) = self.st.node(f) {
+            self.terms.push(a);
+            f = g;
+        }
+        let h = self.eval(f, env, ls);
+        let vbase = self.vargs.len();
+        for k in (base..self.terms.len()).rev() {
+            let a = self.terms[k];
+            let av = self.thunk(a, env, ls);
+            self.vargs.push(av);
+        }
+        self.terms.truncate(base);
+        let r = self.apply_n(h, vbase);
+        self.vargs.truncate(vbase);
+        r
+    }
+
+    #[inline(never)]
+    fn eval_binder(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        let d = self.st.data(e);
+        let env = self.trim_prune(env, d);
+        match self.st.node(e) {
+            ExprNode::Lam(..) => self.a.mk(Val::Lam(e, env, ls)),
+            _ => self.a.mk(Val::Pi(e, env, ls)),
+        }
+    }
+
+    #[inline(never)]
+    fn eval_other(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        match self.st.node(e) {
             ExprNode::Sort(l) => {
                 let l = self.inst_level(l, ls);
                 self.a.sort(l)
-            }
-            ExprNode::Const(n, lv) => {
-                let lv = self.inst_list(lv, ls);
-                self.a.cnst(n, lv)
-            }
-            ExprNode::App(..) => {
-                self.ticks += 1;
-                let base = self.terms.len();
-                let mut f = e;
-                while let ExprNode::App(g, a) = self.st.node(f) {
-                    self.terms.push(a);
-                    f = g;
-                }
-                let h = self.eval(f, env, ls);
-                let vbase = self.vargs.len();
-                for k in (base..self.terms.len()).rev() {
-                    let a = self.terms[k];
-                    let av = self.thunk(a, env, ls);
-                    self.vargs.push(av);
-                }
-                self.terms.truncate(base);
-                let r = self.apply_n(h, vbase);
-                self.vargs.truncate(vbase);
-                r
-            }
-            ExprNode::Lam(..) => {
-                let env = self.trim_prune(env, d);
-                self.a.mk(Val::Lam(e, env, ls))
-            }
-            ExprNode::Pi(..) => {
-                let env = self.trim_prune(env, d);
-                self.a.mk(Val::Pi(e, env, ls))
             }
             ExprNode::Let(h, b) => {
                 let lb = self.st.let_binder(h);
@@ -93,6 +114,7 @@ impl Nbe<'_> {
                 self.proj(xv, s, i)
             }
             ExprNode::FVar(k) => self.a.mk(Val::FVar(k, Sp::NIL)),
+            _ => unreachable!(),
         }
     }
 
@@ -142,6 +164,7 @@ impl Nbe<'_> {
     /// The value of `e` in `env` under `ls`, evaluated now, remembered by
     /// the entries of `env` that `e` reads (no thunk is made, and no
     /// environment is cut).
+    #[inline(never)]
     fn eager(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let sh = hash2(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
@@ -166,6 +189,23 @@ impl Nbe<'_> {
         let key = self
             .memo_key(e, env, ls, d.unused_low() as u64, EAGER_MEMO_RANGE)
             .expect("in range");
+        if EAGER_DIRECT && let Some([h, ke, kls, kt]) = key.by_tuple() {
+            // A lossy table: a value lost is made again, the same.
+            key.drop_in(&mut self.vargs);
+            let di = h as usize & (super::EAGER_DIRECT_SLOTS - 1);
+            let s = self.eager_direct[di];
+            let v = if s[0] == ke && s[1] == kls && s[2] == kt {
+                V(s[3])
+            } else {
+                self.eager_depth += 1;
+                let v = self.eval(e, env, ls);
+                self.eager_depth -= 1;
+                self.eager_direct[di] = [ke, kls, kt, v.0];
+                v
+            };
+            self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+            return v;
+        }
         let (i, found) = Self::memo_find_or_add(
             &mut self.vargs,
             &mut self.eager_memo,

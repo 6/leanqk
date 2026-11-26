@@ -1354,6 +1354,19 @@ impl Nbe<'_> {
         }
     }
 
+    /// Whether the value `x` is, structurally, the term `t` in `e` under
+    /// `l` (as `syn_eq`).
+    pub(super) fn syn_eq_term(
+        &mut self,
+        x: V,
+        t: crate::expr::ExprId,
+        e: super::val::Env,
+        l: super::val::Ls,
+    ) -> bool {
+        let mut budget = SYN_BUDGET;
+        self.syn_eq_vt(x, t, e, l, 0, &mut budget, false)
+    }
+
     /// The value `x` (outside every binder) against the term `t` in `e`
     /// under `k` binders: `t` may not use those binders.
     #[allow(clippy::too_many_arguments)]

@@ -31,6 +31,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use crate::env::{Block, BlockKind, Decl, DeclKind, Env, Safety};
+use crate::expr::ExprId;
 use crate::name::NameId;
 
 use ext::Ext;
@@ -422,7 +423,10 @@ fn check_block(
         BlockKind::Single if use_nbe(&decls[0]) => check_nbe(tc, nb, b, &decls[0]),
         BlockKind::Single => check_single(tc, &decls[0]),
         BlockKind::Inductive { types, ctors, .. } => {
-            check_inductive_block(tc, decls, types as usize, ctors as usize, corrections)
+            let start = b.start;
+            let mut pre = |e, ps: &[NameId], k: u32| nbe_check_type(nb, start, k, ps, e);
+            let pre: Option<&mut inductive::PreCheck<'_>> = INDUCTIVE_NBE.then_some(&mut pre);
+            check_inductive_block(tc, decls, types as usize, ctors as usize, corrections, pre)
         }
     }
 }
@@ -595,12 +599,33 @@ fn check_single(tc: &mut Tc<'_>, d: &Decl) -> R<()> {
     }
 }
 
+/// Whether the types of an inductive block and of its constructors are
+/// checked by the evaluating checker first (`nbe_check_type`).
+const INDUCTIVE_NBE: bool = true;
+
+/// Check with the evaluating checker that `e` is a type under the
+/// universe parameters `ps`, with the first `k` declarations of the block
+/// at `start` visible. A failure says nothing (the substituting checker
+/// decides then), and what was learned goes.
+fn nbe_check_type(nb: &mut Nbe<'_>, start: u32, k: u32, ps: &[NameId], e: ExprId) -> bool {
+    nb.begin(start + k);
+    nb.lparams = ps.to_vec();
+    match catch_unwind(AssertUnwindSafe(|| nb.check_type(e))) {
+        Ok(Ok(())) => true,
+        _ => {
+            nb.reset(start + k);
+            false
+        }
+    }
+}
+
 fn check_inductive_block(
     tc: &mut Tc<'_>,
     decls: &[Decl],
     ntypes: usize,
     nctors: usize,
     corrections: &mut Vec<(usize, DeclKind)>,
+    pre: Option<&mut inductive::PreCheck<'_>>,
 ) -> R<()> {
     let env = tc.st.env;
     let (types, rest) = decls.split_at(ntypes);
@@ -673,7 +698,7 @@ fn check_inductive_block(
         let lps = env.name_list(r.level_params);
         (lps.len() == lparams.len() + 1).then(|| lps[0])
     });
-    let generated = tc.add_inductive(&decl, &RecNaming { elim_param })?;
+    let generated = tc.add_inductive(&decl, &RecNaming { elim_param }, pre)?;
     // The export must contain exactly the derived declarations.
     for g in &generated {
         let Some(x) = decls.iter().find(|x| x.name == g.name) else {
