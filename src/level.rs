@@ -3,7 +3,7 @@
 
 use hashbrown::HashTable;
 
-use crate::hash::{hash_bytes, hash2};
+use crate::hash::hash2;
 use crate::intern::{Interner, Node};
 use crate::name::NameId;
 use crate::strings::Overflow;
@@ -69,17 +69,15 @@ impl Default for Levels {
 }
 
 pub(crate) fn list_hash(ls: &[LevelId]) -> u64 {
-    // Ids are u32; hash their little-endian bytes.
-    let mut buf = [0u8; 64];
-    if ls.len() <= 16 {
-        for (i, l) in ls.iter().enumerate() {
-            buf[i * 4..i * 4 + 4].copy_from_slice(&l.0.to_le_bytes());
-        }
-        hash_bytes(&buf[..ls.len() * 4])
-    } else {
-        let bytes: Vec<u8> = ls.iter().flat_map(|l| l.0.to_le_bytes()).collect();
-        hash_bytes(&bytes)
+    let mut hash = ls.len() as u64;
+    let (pairs, rest) = ls.as_chunks::<2>();
+    for &[a, b] in pairs {
+        hash = hash2(hash, a.0 as u64 | ((b.0 as u64) << 32));
     }
+    if let [a] = *rest {
+        hash = hash2(hash, a.0 as u64);
+    }
+    hash
 }
 
 /// List `i` of a store of lists: `data`, with `offs` (list `i` is from
