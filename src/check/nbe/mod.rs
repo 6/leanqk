@@ -150,6 +150,9 @@ pub struct Nbe<'e> {
     canon_fvar: IdMap<(V, V, u32), u32>,
     elims: Vec<Vec<val::Elim>>,
     terms: Vec<ExprId>,
+    /// Scratch stacks for nested Π and λ inference.
+    infer_opened: Vec<V>,
+    infer_sorts: Vec<LevelId>,
     /// Declarations found by name, a direct-mapped front for the
     /// environment's table: (name, index), or `NONE` names.
     found: Box<[std::cell::Cell<(u32, u32)>; 1 << FOUND_BITS]>,
@@ -313,6 +316,8 @@ impl<'e> Nbe<'e> {
             canon_fvar: IdMap::default(),
             elims: Vec::new(),
             terms: Vec::new(),
+            infer_opened: Vec::new(),
+            infer_sorts: Vec::new(),
             found: (0..1 << FOUND_BITS)
                 .map(|_| std::cell::Cell::new((val::NONE, 0)))
                 .collect::<Box<[_]>>()
@@ -373,8 +378,8 @@ impl<'e> Nbe<'e> {
     /// What the arena and the caches hold stays: a value means the same in
     /// every declaration (a free variable is identified by its type, value
     /// and depth), and the environment only grows. What depends on the
-    /// declaration goes: its universe parameters, and so which terms with
-    /// universe parameters are known to be well-formed. Past a size (or
+    /// declaration goes: its active universe parameters and checked thunk
+    /// flags that depend on them. Past a size (or
     /// this checker's share of memory), all of it goes.
     pub fn begin(&mut self, limit: u32) {
         self.end_scopes();
@@ -398,6 +403,8 @@ impl<'e> Nbe<'e> {
             self.ev_used = false;
         }
         self.terms.clear();
+        self.infer_opened.clear();
+        self.infer_sorts.clear();
         self.vargs.clear();
         self.eager_depth = 0;
         self.decl_steps = 0;
@@ -515,6 +522,8 @@ impl<'e> Nbe<'e> {
         self.eager = false;
         shrink(&mut self.fvars);
         self.terms.clear();
+        shrink(&mut self.infer_opened);
+        shrink(&mut self.infer_sorts);
         self.vargs.clear();
         self.eager_depth = 0;
         shrink(&mut self.open_count);

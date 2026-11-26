@@ -1034,17 +1034,18 @@ impl Nbe<'_> {
     fn check_lambda(&mut self, e: ExprId, env: Env, ls: Ls) -> R<V> {
         let mut cur = e;
         let mut env2 = env;
-        let mut opened = Vec::new();
-        while let ExprNode::Lam(bi, n, dom, body) = self.st.node(cur) {
-            let s = self.infer_term(dom, env2, ls, false)?;
-            self.ensure_sort(s)?;
-            env2 = self.open_inferred_binder((bi, n, dom, body), env2, ls, &mut opened);
-            cur = body;
-        }
-        self.infer_term(cur, env2, ls, false)?;
-        for &x in opened.iter().rev() {
-            self.pop_fvar(x);
-        }
+        let base = self.infer_opened.len();
+        let result = (|| {
+            while let ExprNode::Lam(bi, n, dom, body) = self.st.node(cur) {
+                let s = self.infer_term(dom, env2, ls, false)?;
+                self.ensure_sort(s)?;
+                env2 = self.open_inferred_binder((bi, n, dom, body), env2, ls);
+                cur = body;
+            }
+            self.infer_term(cur, env2, ls, false)
+        })();
+        self.close_inferred_binders(base);
+        result?;
         let d = self.st.data(e);
         let env = self.trim_prune(env, d);
         let ls = if d.has_level_param() { ls } else { Ls::ID };
@@ -1058,7 +1059,6 @@ impl Nbe<'_> {
         (bi, name, dom, body): (BinderInfo, NameId, ExprId, ExprId),
         env: Env,
         ls: Ls,
-        opened: &mut Vec<V>,
     ) -> Env {
         let data = self.st.data(body);
         if !data.has_loose_bvars() {
@@ -1071,32 +1071,44 @@ impl Nbe<'_> {
         }
         let dv = self.thunk(dom, env, ls);
         let x = self.push_fvar(name, dv, None, bi);
-        opened.push(x);
+        self.infer_opened.push(x);
         let next = self.a.cons(env, x);
         self.ctx_push(env, dom, ls, next);
         next
     }
 
+    fn close_inferred_binders(&mut self, base: usize) {
+        while self.infer_opened.len() > base {
+            let x = self.infer_opened.pop().unwrap();
+            self.pop_fvar(x);
+        }
+    }
+
     fn infer_pi(&mut self, e: ExprId, env: Env, ls: Ls, infer_only: bool) -> R<V> {
         let mut cur = e;
         let mut env2 = env;
-        let mut us = Vec::new();
-        let mut opened = Vec::new();
-        while let ExprNode::Pi(bi, n, dom, body) = self.st.node(cur) {
-            let s = self.infer_term(dom, env2, ls, infer_only)?;
-            us.push(self.ensure_sort(s)?);
-            env2 = self.open_inferred_binder((bi, n, dom, body), env2, ls, &mut opened);
-            cur = body;
-        }
-        let s = self.infer_term(cur, env2, ls, infer_only)?;
-        let mut r = self.ensure_sort(s)?;
-        for &x in opened.iter().rev() {
-            self.pop_fvar(x);
-        }
-        for &u in us.iter().rev() {
-            r = univ::mk_imax(&mut self.st, u, r);
-        }
-        Ok(self.a.mk(Val::Sort(r)))
+        let opened = self.infer_opened.len();
+        let sorts = self.infer_sorts.len();
+        let result = (|| {
+            while let ExprNode::Pi(bi, n, dom, body) = self.st.node(cur) {
+                let s = self.infer_term(dom, env2, ls, infer_only)?;
+                let sort = self.ensure_sort(s)?;
+                self.infer_sorts.push(sort);
+                env2 = self.open_inferred_binder((bi, n, dom, body), env2, ls);
+                cur = body;
+            }
+            let s = self.infer_term(cur, env2, ls, infer_only)?;
+            self.ensure_sort(s)
+        })();
+        self.close_inferred_binders(opened);
+        let r = result.map(|mut r| {
+            for &u in self.infer_sorts[sorts..].iter().rev() {
+                r = univ::mk_imax(&mut self.st, u, r);
+            }
+            r
+        });
+        self.infer_sorts.truncate(sorts);
+        Ok(self.a.mk(Val::Sort(r?)))
     }
 
     fn infer_let(&mut self, e: ExprId, env: Env, ls: Ls, infer_only: bool) -> R<V> {
@@ -1173,7 +1185,7 @@ impl Nbe<'_> {
 
     fn check_decl_value_type(&mut self, mut value: ExprId, mut ty: ExprId) -> R<bool> {
         let mut env = Env::NIL;
-        let mut opened = Vec::new();
+        let opened = self.infer_opened.len();
         while let ExprNode::Lam(bi, n, dom, body) = self.st.node(value)
             && let ExprNode::Pi(_, _, expected_dom, expected_body) = self.st.node(ty)
             && dom == expected_dom
@@ -1184,16 +1196,14 @@ impl Nbe<'_> {
             let x = self.push_fvar(n, dv, None, bi);
             let next = self.a.cons(env, x);
             self.ctx_push(env, dom, Ls::ID, next);
-            opened.push(x);
+            self.infer_opened.push(x);
             env = next;
             value = body;
             ty = expected_body;
         }
         let expected = self.thunk(ty, env, Ls::ID);
         let result = self.check_against(value, env, Ls::ID, expected);
-        for x in opened.into_iter().rev() {
-            self.pop_fvar(x);
-        }
+        self.close_inferred_binders(opened);
         result
     }
 
