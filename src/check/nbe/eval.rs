@@ -23,6 +23,10 @@ const EAGER_ALL: bool = true;
 /// the environment the term reads (`eager`), not through a thunk.
 const EAGER_MEMO: bool = true;
 
+/// Whether `eager` remembers in a direct-mapped table only
+/// (`Nbe::eager_direct`), not a growing one.
+const EAGER_DIRECT: bool = true;
+
 /// Past this many environment entries in range, `eager` goes through a
 /// thunk instead.
 const EAGER_MEMO_RANGE: u32 = 32;
@@ -185,6 +189,23 @@ impl Nbe<'_> {
         let key = self
             .memo_key(e, env, ls, d.unused_low() as u64, EAGER_MEMO_RANGE)
             .expect("in range");
+        if EAGER_DIRECT && let Some([h, ke, kls, kt]) = key.by_tuple() {
+            // A lossy table: a value lost is made again, the same.
+            key.drop_in(&mut self.vargs);
+            let di = h as usize & (super::EAGER_DIRECT_SLOTS - 1);
+            let s = self.eager_direct[di];
+            let v = if s[0] == ke && s[1] == kls && s[2] == kt {
+                V(s[3])
+            } else {
+                self.eager_depth += 1;
+                let v = self.eval(e, env, ls);
+                self.eager_depth -= 1;
+                self.eager_direct[di] = [ke, kls, kt, v.0];
+                v
+            };
+            self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+            return v;
+        }
         let (i, found) = Self::memo_find_or_add(
             &mut self.vargs,
             &mut self.eager_memo,

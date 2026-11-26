@@ -76,6 +76,9 @@ const SYN_T: usize = 1 << 12;
 /// Slots of `Nbe::eager_slots`.
 pub(super) const EAGER_SLOTS: usize = 1 << 14;
 
+/// Slots of `Nbe::eager_direct`.
+pub(super) const EAGER_DIRECT_SLOTS: usize = 1 << 16;
+
 /// Slots of `Nbe::prunes`.
 const PRUNES: usize = 1 << 12;
 
@@ -107,6 +110,9 @@ pub struct Nbe<'e> {
     pub(super) eager_slots: Vec<[u32; 4]>,
     /// Values of terms evaluated by `thunk` at once (`eager`).
     pub(super) eager_memo: memo::EnvMemo<1>,
+    /// `eager`'s direct-mapped memo: (term, substitution, values read,
+    /// value).
+    pub(super) eager_direct: Vec<[u32; 4]>,
     /// Lists of values read from environments (`read_tuple`).
     pub(super) tuples: memo::EnvMemo<0>,
     /// A direct-mapped front of `tuples`: (environment, range, holes (two
@@ -282,6 +288,7 @@ impl<'e> Nbe<'e> {
             big_table: HashTable::new(),
             eager_slots: vec![[val::NONE; 4]; EAGER_SLOTS],
             eager_memo: Default::default(),
+            eager_direct: vec![[val::NONE; 4]; EAGER_DIRECT_SLOTS],
             tuples: Default::default(),
             tuple_slots: vec![[val::NONE; 5]; memo::TUPLE_SLOTS],
             infer_memo: Default::default(),
@@ -486,6 +493,7 @@ impl<'e> Nbe<'e> {
         self.trim_holes_memo.fill([val::NONE; 4]);
         self.eager_slots.fill([val::NONE; 4]);
         self.eager_memo.clear();
+        self.eager_direct.fill([val::NONE; 4]);
         self.tuples.clear();
         self.tuple_slots.fill([val::NONE; 5]);
         self.infer_memo.clear();

@@ -63,6 +63,21 @@ pub struct Key {
     base: usize,
 }
 
+impl Key {
+    /// Hash, term, substitution and the id of the values read, if the key
+    /// holds the id (`READ_TUPLES`).
+    #[inline]
+    pub fn by_tuple(&self) -> Option<[u32; 4]> {
+        (self.head[2] == val::NONE).then_some([self.h, self.head[0], self.head[1], self.head[3]])
+    }
+
+    /// Drop the key, taking the values it read off `vargs`.
+    #[inline]
+    pub fn drop_in(self, vargs: &mut Vec<V>) {
+        vargs.truncate(self.base);
+    }
+}
+
 impl Nbe<'_> {
     /// The key of `e` in `env` under `ls`, reading the entries below its
     /// range but those `holes` sets (from bit 64 on, all are read); `None`
