@@ -359,14 +359,7 @@ impl Nbe<'_> {
                 return Ok(self.a.mk(Val::Sort(l)));
             }
             ExprNode::Const(n, lv) => {
-                if !self.st.list_has_param(lv) {
-                    return self.infer_closed(e, node, infer_only);
-                }
-                if ls == Ls::ID && !infer_only {
-                    return self.infer_param_constant(e, n, lv);
-                }
-                let lv = self.inst_list(lv, ls);
-                return self.infer_constant(n, lv, infer_only);
+                return self.infer_const_expr(e, n, lv, ls, infer_only);
             }
             ExprNode::NatSmall(..) => return self.nat_type(),
             ExprNode::NatBig(b) => {
@@ -494,9 +487,7 @@ impl Nbe<'_> {
         if cached && (infer_only || checked != 0) {
             return Ok(V(ty));
         }
-        // Constants have a cheap check on a miss and need no persistent fact.
-        let shared =
-            !infer_only && !matches!(node, ExprNode::Const(..)) && !self.st.is_local_expr(e);
+        let shared = !infer_only && !self.st.is_local_expr(e);
         let checked_before = shared && self.checked_closed.contains(&(e.0 as u64));
         let ty = if cached && checked_before {
             V(ty)
@@ -519,7 +510,6 @@ impl Nbe<'_> {
         infer_only: bool,
     ) -> R<V> {
         match node {
-            ExprNode::Const(n, lv) => self.infer_constant(n, lv, infer_only),
             ExprNode::App(f, a) => self.infer_app(f, a, env, ls, infer_only),
             ExprNode::Lam(..) if infer_only => Ok(self.a.mk(Val::PiInfer(e, env, ls))),
             ExprNode::Lam(..) => self.check_lambda(e, env, ls),
@@ -598,18 +588,39 @@ impl Nbe<'_> {
         }
     }
 
-    /// A checked constant with an identity substitution keeps its type
-    /// under the same universe parameters as the environment grows.
-    fn infer_param_constant(&mut self, e: ExprId, n: NameId, levels: LevelList) -> R<V> {
+    /// A constant's cache entry records whether its levels are closed.
+    /// Read that entry before inspecting the levels.
+    fn infer_const_expr(
+        &mut self,
+        e: ExprId,
+        n: NameId,
+        levels: LevelList,
+        ls: Ls,
+        infer_only: bool,
+    ) -> R<V> {
         let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - EAGER_SLOTS.ilog2())) as usize;
-        let key = self.lparams_key();
-        // The expression id distinguishes this layout from other entries.
-        let [expr, limit, params, ty] = self.infer_slots[i];
-        if expr == e.0 && limit <= self.limit && u64::from(params) == key {
-            return Ok(V(ty));
+        let [expr, limit, checked, ty] = self.infer_slots[i];
+        let check_identity = ls == Ls::ID && !infer_only;
+        if expr == e.0 {
+            if limit == NONE {
+                if infer_only || checked != 0 {
+                    return Ok(V(ty));
+                }
+            } else if check_identity
+                && limit <= self.limit
+                && u64::from(checked) == self.lparams_key()
+            {
+                return Ok(V(ty));
+            }
         }
-        let ty = self.infer_constant(n, levels, false)?;
-        if let Ok(params) = u32::try_from(key) {
+        if !self.st.list_has_param(levels) {
+            let ty = self.infer_constant(n, levels, infer_only)?;
+            self.infer_slots[i] = [e.0, NONE, u32::from(!infer_only), ty.0];
+            return Ok(ty);
+        }
+        let levels = self.inst_list(levels, ls);
+        let ty = self.infer_constant(n, levels, infer_only)?;
+        if check_identity && let Ok(params) = u32::try_from(self.lparams_key()) {
             self.infer_slots[i] = [e.0, self.limit, params, ty.0];
         }
         Ok(ty)
@@ -868,12 +879,7 @@ impl Nbe<'_> {
         while let ExprNode::Lam(bi, n, dom, body) = self.st.node(cur) {
             let s = self.infer_term(dom, env2, ls, false)?;
             self.ensure_sort(s)?;
-            let dv = self.thunk(dom, env2, ls);
-            let x = self.push_fvar(n, dv, None, bi);
-            opened.push(x);
-            let env3 = self.a.cons(env2, x);
-            self.ctx_push(env2, dom, ls, env3);
-            env2 = env3;
+            env2 = self.open_inferred_binder((bi, n, dom, body), env2, ls, &mut opened);
             cur = body;
         }
         self.infer_term(cur, env2, ls, false)?;
@@ -886,6 +892,32 @@ impl Nbe<'_> {
         Ok(self.a.mk(Val::PiInfer(e, env, ls)))
     }
 
+    /// Open a binder after checking its domain. An unused variable needs
+    /// only a placeholder if the body reads older variables.
+    fn open_inferred_binder(
+        &mut self,
+        (bi, name, dom, body): (BinderInfo, NameId, ExprId, ExprId),
+        env: Env,
+        ls: Ls,
+        opened: &mut Vec<V>,
+    ) -> Env {
+        let data = self.st.data(body);
+        if !data.has_loose_bvars() {
+            return Env::NIL;
+        }
+        if !data.may_use_bvar(0) {
+            // This environment does not describe a context of binders.
+            let hole = self.hole();
+            return self.a.cons(env, hole);
+        }
+        let dv = self.thunk(dom, env, ls);
+        let x = self.push_fvar(name, dv, None, bi);
+        opened.push(x);
+        let next = self.a.cons(env, x);
+        self.ctx_push(env, dom, ls, next);
+        next
+    }
+
     fn infer_pi(&mut self, e: ExprId, env: Env, ls: Ls, infer_only: bool) -> R<V> {
         let mut cur = e;
         let mut env2 = env;
@@ -894,12 +926,7 @@ impl Nbe<'_> {
         while let ExprNode::Pi(bi, n, dom, body) = self.st.node(cur) {
             let s = self.infer_term(dom, env2, ls, infer_only)?;
             us.push(self.ensure_sort(s)?);
-            let dv = self.thunk(dom, env2, ls);
-            let x = self.push_fvar(n, dv, None, bi);
-            opened.push(x);
-            let env3 = self.a.cons(env2, x);
-            self.ctx_push(env2, dom, ls, env3);
-            env2 = env3;
+            env2 = self.open_inferred_binder((bi, n, dom, body), env2, ls, &mut opened);
             cur = body;
         }
         let s = self.infer_term(cur, env2, ls, infer_only)?;
