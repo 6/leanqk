@@ -18,7 +18,7 @@ use crate::expr::{BinderInfo, ExprId, ExprNode};
 use crate::level::{LevelId, LevelList, LevelNode};
 use crate::name::{NameId, NameNode};
 
-use super::store::{IdMap, IdSet};
+use super::store::{IdMap, IdSet, is_local};
 use super::tc::{KErr, Mode, R, Tc, err};
 use super::univ;
 
@@ -102,24 +102,28 @@ impl Tc<'_> {
     /// Lean's `consume_type_annotations`: strip `optParam`, `autoParam`,
     /// `outParam` and `semiOutParam` (by name, as Lean does).
     fn consume_type_annotations(&self, mut e: ExprId) -> ExprId {
-        let names = &self.st.env.names;
-        let opt = names.find_dotted("optParam");
-        let auto = names.find_dotted("autoParam");
-        let out = names.find_dotted("outParam");
-        let semi = names.find_dotted("semiOutParam");
         loop {
-            let mut args = Vec::new();
-            let h = self.st.spine(e, &mut args);
-            let ExprNode::Const(n, _) = self.st.node(h) else {
+            let ExprNode::App(f, last) = self.st.node(e) else {
                 return e;
             };
-            let n = Some(n);
-            if ((n == opt || n == auto) && args.len() == 2)
-                || ((n == out || n == semi) && args.len() == 1)
-            {
-                e = args[0];
-            } else {
+            let (head, domain, two_args) = match self.st.node(f) {
+                ExprNode::App(head, first) => (head, first, true),
+                _ => (f, last, false),
+            };
+            let ExprNode::Const(name, _) = self.st.node(head) else {
                 return e;
+            };
+            if is_local(name.0) {
+                return e;
+            }
+            let NameNode::Str(NameId::ANON, name) = self.st.env.names.get(name) else {
+                return e;
+            };
+            match (two_args, self.st.str(name)) {
+                (true, "optParam" | "autoParam") | (false, "outParam" | "semiOutParam") => {
+                    e = domain;
+                }
+                _ => return e,
             }
         }
     }
@@ -195,62 +199,59 @@ impl Tc<'_> {
     }
 
     /// Lean's `check_uniform_ind_occs`.
-    fn check_uniform_ind_occs(&mut self, d: &IndDecl) -> R<()> {
+    fn check_uniform_ind_occs(
+        &mut self,
+        d: &IndDecl,
+        names: &[NameId],
+        occs: &mut IndOccurrences,
+    ) -> R<()> {
         let nparams = d.nparams;
         let lvls = self.param_levels(&d.lparams);
-        let names: Vec<NameId> = d.types.iter().map(|t| t.name).collect();
+        let mut seen = IdSet::<(ExprId, u32)>::default();
+        let mut stack = Vec::new();
+        let mut args = Vec::new();
         for t in &d.types {
             for &(cn, ct) in &t.ctors {
-                let mut seen = IdSet::<(ExprId, u32)>::default();
-                let mut stack = vec![(ct, 0u32)];
+                stack.push((ct, 0u32));
                 while let Some((e, off)) = stack.pop() {
-                    if !seen.insert((e, off)) {
+                    if !occs.contains(self, e, names) || !seen.insert((e, off)) {
                         continue;
                     }
-                    let mut args = Vec::new();
                     let h = self.st.spine(e, &mut args);
-                    let visit_children = match self.st.node(h) {
-                        ExprNode::Const(n, ls) if names.contains(&n) => {
-                            if args.len() > nparams as usize {
-                                true
-                            } else {
-                                let mut ok =
-                                    args.len() == nparams as usize && off >= nparams && ls == lvls;
-                                for (i, &a) in args.iter().enumerate() {
-                                    ok =
-                                        ok && self.st.node(a) == ExprNode::BVar(off - 1 - i as u32);
-                                }
-                                if !ok {
-                                    return err(format!(
-                                        "invalid occurrence of datatype '{}' being declared in '{}': it must be applied to the parameters and universe levels of the mutual declaration",
-                                        self.show(n),
-                                        self.show(cn)
-                                    ));
-                                }
-                                false
-                            }
+                    if let ExprNode::Const(n, ls) = self.st.node(h)
+                        && names.contains(&n)
+                    {
+                        let np = nparams as usize;
+                        if args.len() < np
+                            || off < nparams
+                            || ls != lvls
+                            || args[..np].iter().enumerate().any(|(i, &a)| {
+                                self.st.node(a) != ExprNode::BVar(off - 1 - i as u32)
+                            })
+                        {
+                            return err(format!(
+                                "invalid occurrence of datatype '{}' being declared in '{}': it must be applied to the parameters and universe levels of the mutual declaration",
+                                self.show(n),
+                                self.show(cn)
+                            ));
                         }
-                        _ => true,
-                    };
-                    if visit_children {
-                        match self.st.node(e) {
-                            ExprNode::App(f, a) => {
-                                stack.push((f, off));
-                                stack.push((a, off));
-                            }
-                            ExprNode::Lam(_, _, ty, b) | ExprNode::Pi(_, _, ty, b) => {
-                                stack.push((ty, off));
-                                stack.push((b, off + 1));
-                            }
-                            ExprNode::Let(h, b) => {
-                                let lb = self.st.let_binder(h);
-                                stack.push((lb.ty, off));
-                                stack.push((lb.value, off));
-                                stack.push((b, off + 1));
-                            }
-                            ExprNode::Proj(_, _, x) => stack.push((x, off)),
-                            _ => {}
+                        stack.extend(args[np..].iter().map(|&a| (a, off)));
+                        continue;
+                    }
+                    stack.extend(args.iter().map(|&a| (a, off)));
+                    match self.st.node(h) {
+                        ExprNode::Lam(_, _, ty, b) | ExprNode::Pi(_, _, ty, b) => {
+                            stack.push((ty, off));
+                            stack.push((b, off + 1));
                         }
+                        ExprNode::Let(h, b) => {
+                            let lb = self.st.let_binder(h);
+                            stack.push((lb.ty, off));
+                            stack.push((lb.value, off));
+                            stack.push((b, off + 1));
+                        }
+                        ExprNode::Proj(_, _, x) => stack.push((x, off)),
+                        _ => {}
                     }
                 }
             }
@@ -326,11 +327,14 @@ impl Tc<'_> {
             }
         }
         check_dup_lparams(self, &d.lparams)?;
-        self.check_uniform_ind_occs(d)?;
-        let nested = ElimNested::run(self, d)?;
+        let names: Vec<NameId> = d.types.iter().map(|t| t.name).collect();
+        let mut occs = IndOccurrences::default();
+        self.check_uniform_ind_occs(d, &names, &mut occs)?;
+        let nested = ElimNested::run(self, d, &names, &mut occs)?;
         let nnested = nested.aux.len() as u32;
         let mut add = AddInd::new(self, &nested.decl, nnested, naming);
         if nnested == 0 {
+            add.occs = occs;
             add.pre = pre.map(|p| -> &mut PreCheck<'_> { p });
         }
         let aux_decls = add.run()?;
@@ -351,6 +355,50 @@ fn check_dup_lparams(tc: &Tc<'_>, ps: &[NameId]) -> R<()> {
         }
     }
     Ok(())
+}
+
+/// Syntactic constant occurrences for one fixed set of inductive names.
+#[derive(Default)]
+struct IndOccurrences(IdMap<ExprId, bool>);
+
+impl IndOccurrences {
+    fn contains(&mut self, tc: &Tc<'_>, e: ExprId, names: &[NameId]) -> bool {
+        self.contains_at(tc, e, names, 0)
+    }
+
+    fn contains_at(&mut self, tc: &Tc<'_>, e: ExprId, names: &[NameId], depth: u32) -> bool {
+        let node = tc.st.node(e);
+        match node {
+            ExprNode::Const(n, _) => return names.contains(&n),
+            ExprNode::App(..)
+            | ExprNode::Pi(..)
+            | ExprNode::Lam(..)
+            | ExprNode::Let(..)
+            | ExprNode::Proj(..) => {}
+            _ => return false,
+        }
+        if let Some(&found) = self.0.get(&e) {
+            return found;
+        }
+        // Fall back to the iterative walk for deeply nested syntax.
+        let found = if depth == 64 {
+            tc.find_const(e, &|n| names.contains(&n))
+        } else {
+            let mut child = |c| self.contains_at(tc, c, names, depth + 1);
+            match node {
+                ExprNode::App(f, a) => child(f) || child(a),
+                ExprNode::Lam(_, _, t, b) | ExprNode::Pi(_, _, t, b) => child(t) || child(b),
+                ExprNode::Let(h, b) => {
+                    let lb = tc.st.let_binder(h);
+                    child(lb.ty) || child(lb.value) || child(b)
+                }
+                ExprNode::Proj(_, _, x) => child(x),
+                _ => unreachable!(),
+            }
+        };
+        self.0.insert(e, found);
+        found
+    }
 }
 
 struct RecInfo {
@@ -435,6 +483,7 @@ struct AddInd<'a, 'e> {
     params: Vec<ExprId>,
     ind_consts: Vec<ExprId>,
     ind_names: Vec<NameId>,
+    occs: IndOccurrences,
     elim_level: LevelId,
     elim_param: Option<NameId>,
     k_target: bool,
@@ -465,6 +514,7 @@ impl<'a, 'e> AddInd<'a, 'e> {
             params: Vec::new(),
             ind_consts: Vec::new(),
             ind_names: d.types.iter().map(|t| t.name).collect(),
+            occs: IndOccurrences::default(),
             elim_level: LevelId::ZERO,
             elim_param: naming.elim_param,
             k_target: false,
@@ -560,40 +610,30 @@ impl<'a, 'e> AddInd<'a, 'e> {
         self.ind_names.contains(&n)
     }
 
-    fn has_ind_occ(&self, e: ExprId) -> bool {
-        let names = &self.ind_names;
-        self.tc.find_const(e, &|n| names.contains(&n))
+    fn has_ind_occ(&mut self, e: ExprId) -> bool {
+        self.occs.contains(self.tc, e, &self.ind_names)
     }
 
-    fn is_rec(&self) -> bool {
+    fn recursion_flags(&mut self) -> (bool, bool) {
+        let mut recursive = false;
         for t in &self.types {
             for &(_, mut ct) in &t.ctors {
-                while let ExprNode::Pi(_, _, d, b) = self.tc.st.node(ct) {
-                    if self.has_ind_occ(d) {
-                        return true;
-                    }
-                    ct = b;
-                }
-            }
-        }
-        false
-    }
-
-    fn is_reflexive(&self) -> bool {
-        for ty in &self.types {
-            for &(_, mut t) in &ty.ctors {
                 // Opening the telescope only replaces bound variables with
-                // free variables. The domain's Pi shape and constant
-                // occurrences are already visible in the closed syntax.
-                while let ExprNode::Pi(_, _, dom, body) = self.tc.st.node(t) {
-                    if matches!(self.tc.st.node(dom), ExprNode::Pi(..)) && self.has_ind_occ(dom) {
-                        return true;
+                // free variables. Its shapes and constant occurrences are
+                // already visible in the closed syntax.
+                while let ExprNode::Pi(_, _, dom, body) = self.tc.st.node(ct) {
+                    let is_pi = matches!(self.tc.st.node(dom), ExprNode::Pi(..));
+                    if (is_pi || !recursive) && self.occs.contains(self.tc, dom, &self.ind_names) {
+                        if is_pi {
+                            return (true, true);
+                        }
+                        recursive = true;
                     }
-                    t = body;
+                    ct = body;
                 }
             }
         }
-        false
+        (recursive, false)
     }
 
     fn all_names(&mut self) -> crate::env::NameList {
@@ -602,8 +642,7 @@ impl<'a, 'e> AddInd<'a, 'e> {
     }
 
     fn declare_inductive_types(&mut self) -> R<()> {
-        let rec = self.is_rec();
-        let reflexive = self.is_reflexive();
+        let (rec, reflexive) = self.recursion_flags();
         let all = self.all_names();
         let lps = self.tc.st.push_names(&self.lparams.clone());
         for idx in 0..self.types.len() {
@@ -630,7 +669,7 @@ impl<'a, 'e> AddInd<'a, 'e> {
         Ok(())
     }
 
-    fn is_valid_ind_app_at(&self, t: ExprId, i: usize) -> bool {
+    fn is_valid_ind_app_at(&mut self, t: ExprId, i: usize) -> bool {
         let mut args = Vec::new();
         let h = self.tc.st.spine(t, &mut args);
         if h != self.ind_consts[i] || args.len() != self.nparams + self.nindices[i] as usize {
@@ -642,7 +681,7 @@ impl<'a, 'e> AddInd<'a, 'e> {
         args[self.nparams..].iter().all(|&a| !self.has_ind_occ(a))
     }
 
-    fn is_valid_ind_app(&self, t: ExprId) -> Option<usize> {
+    fn is_valid_ind_app(&mut self, t: ExprId) -> Option<usize> {
         (0..self.types.len()).find(|&i| self.is_valid_ind_app_at(t, i))
     }
 
@@ -839,7 +878,7 @@ impl<'a, 'e> AddInd<'a, 'e> {
         }
     }
 
-    fn get_i_indices(&self, t: ExprId) -> R<(usize, Vec<ExprId>)> {
+    fn get_i_indices(&mut self, t: ExprId) -> R<(usize, Vec<ExprId>)> {
         let Some(r) = self.is_valid_ind_app(t) else {
             return err("ill-formed inductive declaration: unexpected recursive occurrence");
         };
@@ -1194,8 +1233,13 @@ impl ElimNested {
         }
     }
 
-    fn run(tc: &mut Tc<'_>, d: &IndDecl) -> R<ElimNested> {
-        if NESTED_SCAN && !Self::may_nest(tc, d) {
+    fn run(
+        tc: &mut Tc<'_>,
+        d: &IndDecl,
+        names: &[NameId],
+        occs: &mut IndOccurrences,
+    ) -> R<ElimNested> {
+        if NESTED_SCAN && !Self::may_nest(tc, d, names, occs) {
             // Nothing to replace: the types as they are (rebuilt, they
             // would be the same terms).
             return Ok(ElimNested {
@@ -1240,7 +1284,7 @@ impl ElimNested {
     /// fail: a type or a constructor with fewer than the parameters, or an
     /// application of an inductive type (of the environment) to
     /// parameters that mention a type of the block.
-    fn may_nest(tc: &Tc<'_>, d: &IndDecl) -> bool {
+    fn may_nest(tc: &Tc<'_>, d: &IndDecl, names: &[NameId], occs: &mut IndOccurrences) -> bool {
         let np = d.nparams as usize;
         let pis = |mut e: ExprId| {
             let mut k = 0;
@@ -1255,7 +1299,6 @@ impl ElimNested {
         if pis(d.types[0].ty) < np {
             return true;
         }
-        let names: Vec<NameId> = d.types.iter().map(|t| t.name).collect();
         let mut seen = IdSet::<ExprId>::with_capacity_and_hasher(SEEN, Default::default());
         let mut stack = Vec::new();
         let mut args = Vec::new();
@@ -1268,24 +1311,25 @@ impl ElimNested {
             }
         }
         while let Some(e) = stack.pop() {
-            if !seen.insert(e) {
+            if !occs.contains(tc, e, names) || !seen.insert(e) {
                 continue;
             }
             match tc.st.node(e) {
-                ExprNode::App(f, a) => {
-                    stack.extend([f, a]);
-                    args.clear();
+                ExprNode::App(..) => {
                     let h = tc.st.spine(e, &mut args);
                     if let ExprNode::Const(n, _) = tc.st.node(h)
                         && let Some(DeclKind::Inductive { num_params, .. }) =
                             tc.find(n).map(|c| c.kind)
+                        && num_params != 0
                         && num_params as usize <= args.len()
                         && args[..num_params as usize]
                             .iter()
-                            .any(|&a| tc.find_const(a, &|n| names.contains(&n)))
+                            .any(|&a| occs.contains(tc, a, names))
                     {
                         return true;
                     }
+                    stack.extend(args.iter().copied());
+                    stack.push(h);
                 }
                 ExprNode::Lam(_, _, t, b) | ExprNode::Pi(_, _, t, b) => stack.extend([t, b]),
                 ExprNode::Let(h, b) => {
