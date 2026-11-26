@@ -47,6 +47,9 @@ const T_PI: u64 = 2;
 const T_LET: u64 = 3;
 const T_PROJ: u64 = 4;
 const T_ALIAS: u64 = 5;
+/// A stored application whose children do not fit [`ID_BITS`]: they are
+/// its side record (see [`Stored`]).
+const T_APPS: u64 = 6;
 const ID_BITS: u32 = 29;
 const ID_MASK: u64 = (1 << ID_BITS) - 1;
 /// The most expression ids the table takes.
@@ -733,19 +736,353 @@ impl Builder {
             return Ok(None);
         }
         self.promote_shared(env, append, threads)?;
-        // Interned records stay where they are, marked `DONE`; building
-        // a value takes their arena ids from there.
-        self.recs.shrink_to_fit();
-        self.side.shrink_to_fit();
-        self.roots.shrink_to_fit();
-        self.starts.shrink_to_fit();
-        Ok(Some(Box::new(Stored {
-            recs: self.recs,
-            side: self.side,
-            roots: self.roots,
-            starts: self.starts,
-        })))
+        #[cfg(test)]
+        let wide_test = tests::WIDE.get();
+        #[cfg(not(test))]
+        let wide_test = false;
+        let wide = env.exprs.len() >= 1 << ID_BITS || wide_test;
+        Ok(Some(Box::new(self.into_stored(threads, wide))))
     }
+
+    /// The records that values still need, renumbered in order (see
+    /// [`Stored`]): what is interned (most records, by now) and the
+    /// aliases go, and the children of what is left name an interned
+    /// expression by its arena id. `wide` if an arena id may not fit an
+    /// application record's field.
+    ///
+    /// Each record's slot is overwritten with where it went: an interned
+    /// one keeps its arena id, a kept one gets `FWD` and its index, and
+    /// both get the number of records kept below them (at [`J_AT`]), from
+    /// which a start's index follows. On one thread, one pass in order
+    /// does it (children come first, so theirs are known); on several, a
+    /// range of records each, the children are put right in a second pass.
+    fn into_stored(self, threads: usize, wide: bool) -> Stored {
+        let Builder {
+            mut recs,
+            side,
+            mut roots,
+            mut starts,
+            ..
+        } = self;
+        let n = recs.len();
+        let threads = threads.clamp(1, n.div_ceil(MIN_RANGE).max(1));
+        let (out, out_side) = if threads == 1 {
+            let mut out = vec![0u64; n];
+            let mut out_side = Vec::with_capacity(side.len());
+            let mut j = 0u64;
+            for i in 0..n {
+                let r = recs[i];
+                if r & DONE != 0 {
+                    recs[i] = r | j << J_AT;
+                    continue;
+                }
+                let t = tag(r);
+                if t == T_ALIAS {
+                    // What it stands for is interned or kept, and below it.
+                    let e = recs[(r & ID_MASK) as usize];
+                    recs[i] = e & !(J_MASK << J_AT) | j << J_AT;
+                    continue;
+                }
+                out[j as usize] = if t == T_APP && !wide {
+                    let f = recs[(r >> ID_BITS & ID_MASK) as usize];
+                    let a = recs[(r & ID_MASK) as usize];
+                    app_of_slots(f, a)
+                } else {
+                    stored(&side, r, wide, &mut out_side, |c| moved(recs[c as usize]))
+                };
+                recs[i] = FWD | j << J_AT | j;
+                j += 1;
+            }
+            out.truncate(j as usize);
+            (out, out_side)
+        } else {
+            into_stored_par(&mut recs, &side, threads, wide)
+        };
+        drop(side);
+        let slot = |i: u32| {
+            let e = recs[i as usize];
+            if e & (DONE | FWD) == 0 {
+                // An alias (see `into_stored_par`): its target.
+                recs[(e & ID_MASK) as usize]
+            } else {
+                e
+            }
+        };
+        for r in &mut roots {
+            *r = moved(slot(*r));
+        }
+        for s in &mut starts {
+            let e = recs[*s as usize];
+            *s = if e & (DONE | FWD) == 0 {
+                (e >> ALIAS_J_AT & J_MASK) as u32
+            } else {
+                (e >> J_AT & J_MASK) as u32
+            };
+        }
+        let mut out = out;
+        let mut out_side = out_side;
+        out.shrink_to_fit();
+        out_side.shrink_to_fit();
+        roots.shrink_to_fit();
+        starts.shrink_to_fit();
+        Stored {
+            recs: out,
+            side: out_side,
+            roots,
+            starts,
+        }
+    }
+}
+
+/// In a slot that [`Builder::into_stored`] has passed: the number of
+/// records kept below it (an alias's, at [`ALIAS_J_AT`]).
+const J_AT: u32 = 31;
+const ALIAS_J_AT: u32 = ID_BITS;
+const J_MASK: u64 = ID_MASK;
+
+/// A stored application of the records in passed slots `f` and `a`
+/// (interned or kept; arena ids fitting the fields): [`stored_app`] of
+/// their [`moved`] references, from the slots' bits.
+#[inline(always)]
+fn app_of_slots(f: u64, a: u64) -> u64 {
+    const _: () = assert!(APP_F_ARENA == DONE >> 5 && APP_A_ARENA == DONE >> 1);
+    T_APP << TAG
+        | (f >> 5 & APP_F_ARENA)
+        | (a >> 1 & APP_A_ARENA)
+        | (f & ID_MASK) << ID_BITS
+        | a & ID_MASK
+}
+
+/// A passed slot `e` (interned or kept) as a stored child.
+#[inline(always)]
+fn moved(e: u64) -> u32 {
+    (e as u32 & !ARENA) | ((e >> 32) as u32 & ARENA)
+}
+
+/// Where [`stored`] puts side records: their offset in the whole table.
+trait SideOut {
+    fn put(&mut self, words: &[u32]) -> u64;
+}
+
+impl SideOut for Vec<u32> {
+    #[inline(always)]
+    fn put(&mut self, words: &[u32]) -> u64 {
+        let o = self.len() as u64;
+        self.extend_from_slice(words);
+        o
+    }
+}
+
+/// A range's part of the side table, from offset `base` of the whole.
+struct SidePart<'a> {
+    words: &'a mut [u32],
+    used: usize,
+    base: u64,
+}
+
+impl SideOut for SidePart<'_> {
+    #[inline(always)]
+    fn put(&mut self, words: &[u32]) -> u64 {
+        let o = self.base + self.used as u64;
+        self.words[self.used..self.used + words.len()].copy_from_slice(words);
+        self.used += words.len();
+        o
+    }
+}
+
+/// The side words that record `r` (kept) takes when stored.
+#[inline(always)]
+fn stored_side_words(r: u64, wide: bool) -> usize {
+    match tag(r) {
+        T_APP if wide => 2,
+        T_APP => 0,
+        T_APPS => 2,
+        T_LET => 4,
+        _ => 3,
+    }
+}
+
+/// Record `r` (compound, not done) as a stored one, its side record put
+/// in `out_side`, its children's references given by `kid`.
+#[inline(always)]
+fn stored(
+    side: &[u32],
+    r: u64,
+    wide: bool,
+    out_side: &mut impl SideOut,
+    kid: impl Fn(u32) -> u32,
+) -> u64 {
+    let t = tag(r);
+    if t == T_APP {
+        let (f, a) = (
+            kid((r >> ID_BITS & ID_MASK) as u32),
+            kid((r & ID_MASK) as u32),
+        );
+        if wide {
+            return T_APPS << TAG | out_side.put(&[f, a]);
+        }
+        return stored_app(f, a);
+    }
+    let from = r as u32 as usize;
+    let o = match t {
+        T_LET => {
+            let f = &side[from..from + 4];
+            out_side.put(&[f[0], kid(f[1]), kid(f[2]), kid(f[3])])
+        }
+        T_PROJ => {
+            let f = &side[from..from + 3];
+            out_side.put(&[f[0], f[1], kid(f[2])])
+        }
+        _ => {
+            let f = &side[from..from + 3];
+            out_side.put(&[f[0], kid(f[1]), kid(f[2])])
+        }
+    };
+    r & !0xffff_ffff | o
+}
+
+/// A stored application of stored children `f` and `a` (fitting its
+/// fields).
+#[inline(always)]
+fn stored_app(f: u32, a: u32) -> u64 {
+    let bit = |c: u32, b: u64| if c & ARENA != 0 { b } else { 0 };
+    T_APP << TAG
+        | bit(f, APP_F_ARENA)
+        | bit(a, APP_A_ARENA)
+        | ((f & !ARENA) as u64) << ID_BITS
+        | (a & !ARENA) as u64
+}
+
+/// [`Builder::into_stored`] on `threads` threads, ranges of records each:
+/// a pass counts each range's kept records and side words; one copies
+/// them (children as export ids) into their place and passes their slots;
+/// one puts their children right. An alias's slot keeps what it stands
+/// for and gets its count at [`ALIAS_J_AT`].
+fn into_stored_par(
+    recs: &mut [u64],
+    side: &[u32],
+    threads: usize,
+    wide: bool,
+) -> (Vec<u64>, Vec<u32>) {
+    let n = recs.len();
+    let kept = |r: u64| r & DONE == 0 && tag(r) != T_ALIAS;
+    let per = n.div_ceil(threads * 4).max(1);
+    let mut counts = vec![(0usize, 0usize); n.div_ceil(per)];
+    par_each(
+        threads,
+        recs.chunks(per).zip(counts.iter_mut()),
+        |(rs, count)| {
+            for &r in rs {
+                if kept(r) {
+                    count.0 += 1;
+                    count.1 += stored_side_words(r, wide);
+                }
+            }
+        },
+    );
+    let mut out = vec![0u64; counts.iter().map(|c| c.0).sum()];
+    let mut out_side = vec![0u32; counts.iter().map(|c| c.1).sum()];
+    // Each range: its records, its part of the outputs and where they are.
+    let mut ranges = Vec::with_capacity(counts.len());
+    {
+        let (mut o, mut os) = (&mut out[..], &mut out_side[..]);
+        let (mut at, mut side_at) = (0usize, 0usize);
+        for (rs, &(k, sw)) in recs.chunks_mut(per).zip(&counts) {
+            let (oh, ot) = std::mem::take(&mut o).split_at_mut(k);
+            let (sh, st) = std::mem::take(&mut os).split_at_mut(sw);
+            ranges.push((rs, oh, sh, at, side_at));
+            (o, os) = (ot, st);
+            at += k;
+            side_at += sw;
+        }
+    }
+    let mut seconds = Vec::with_capacity(ranges.len());
+    let (tx, rx) = std::sync::mpsc::channel();
+    par_each(threads, ranges.into_iter(), |(rs, o, sh, at, side_at)| {
+        let mut part = SidePart {
+            words: sh,
+            used: 0,
+            base: side_at as u64,
+        };
+        let mut j = at as u64;
+        let mut k = 0;
+        for r in rs.iter_mut() {
+            if *r & DONE != 0 {
+                *r |= j << J_AT;
+            } else if tag(*r) == T_ALIAS {
+                *r |= j << ALIAS_J_AT;
+            } else {
+                o[k] = stored(side, *r, wide, &mut part, |c| c);
+                k += 1;
+                *r = FWD | j << J_AT | j;
+                j += 1;
+            }
+        }
+        tx.send((o, part.words)).expect("send");
+    });
+    drop(tx);
+    seconds.extend(rx);
+    let recs = &*recs;
+    let kid = |c: u32| {
+        let e = recs[c as usize];
+        moved(if e & (DONE | FWD) == 0 {
+            recs[(e & ID_MASK) as usize]
+        } else {
+            e
+        })
+    };
+    par_each(threads, seconds.into_iter(), |(o, sh)| {
+        let mut q = 0;
+        for r in o.iter_mut() {
+            let fields: &[usize] = match tag(*r) {
+                T_APP => {
+                    *r = stored_app(
+                        kid((*r >> ID_BITS & ID_MASK) as u32),
+                        kid((*r & ID_MASK) as u32),
+                    );
+                    continue;
+                }
+                T_APPS => &[0, 1],
+                T_LET => &[1, 2, 3],
+                T_PROJ => &[2],
+                _ => &[1, 2],
+            };
+            for &f in fields {
+                sh[q + f] = kid(sh[q + f]);
+            }
+            q += stored_side_words(*r, true);
+        }
+    });
+    (out, out_side)
+}
+
+/// The fewest records per thread that [`Builder::into_stored`] uses
+/// (fewer in the tests, so that small exports take several ranges).
+#[cfg(not(test))]
+const MIN_RANGE: usize = 1 << 18;
+#[cfg(test)]
+const MIN_RANGE: usize = 1 << 10;
+
+/// `f` on each item of `items`, on `threads` threads (taking the next
+/// item as each is done).
+fn par_each<T: Send>(threads: usize, items: impl Iterator<Item = T> + Send, f: impl Fn(T) + Sync) {
+    if threads <= 1 {
+        items.for_each(f);
+        return;
+    }
+    let items = std::sync::Mutex::new(items);
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                loop {
+                    let Some(x) = items.lock().expect("items").next() else {
+                        return;
+                    };
+                    f(x);
+                }
+            });
+        }
+    });
 }
 
 /// Node `n` in `sink`, its children being `ids` (in [`Node::kids`]'s
@@ -847,7 +1184,43 @@ impl super::run::Records for Out<'_> {
     }
 }
 
-/// Theorem values of an export: the records, by expression id.
+/// In a stored record, a child that is an interned expression: its arena
+/// id, with this bit (else it is a record's index).
+const ARENA: u32 = 1 << 31;
+/// In a stored application: its function, or its argument, is an arena id
+/// (the bits `NEEDED` and the one below `TAG` are free once read).
+const APP_F_ARENA: u64 = 1 << 58;
+const APP_A_ARENA: u64 = NEEDED;
+/// While [`Builder::into_stored`] runs: the record at this index is
+/// kept, as the stored record with the index in the low bits.
+const FWD: u64 = NEEDED;
+
+/// Stored record `r`, decoded: its children are records' indices or (with
+/// [`ARENA`]) arena ids.
+#[inline(always)]
+fn decode_stored(side: &[u32], r: u64) -> Node {
+    match tag(r) {
+        T_APP => {
+            const _: () =
+                assert!(APP_F_ARENA == (ARENA as u64) << 27 && APP_A_ARENA == (ARENA as u64) << 31);
+            Node::App(
+                (r >> ID_BITS & ID_MASK) as u32 | (r >> 27) as u32 & ARENA,
+                (r & ID_MASK) as u32 | (r >> 31) as u32 & ARENA,
+            )
+        }
+        T_APPS => {
+            let o = r as u32 as usize;
+            Node::App(side[o], side[o + 1])
+        }
+        _ => decode(side, r),
+    }
+}
+
+/// Theorem values of an export: the records they need, in the export's
+/// order but numbered densely (no interned record, alias or record that
+/// no value reaches), compound all; children as [`decode_stored`] says.
+/// A root is a record's index, or an arena id (with [`ARENA`]); a start,
+/// the index of the first record of its value's declaration.
 struct Stored {
     recs: Vec<u64>,
     side: Vec<u32>,
@@ -858,18 +1231,14 @@ struct Stored {
 /// Each thread's working space for [`Stored::decode`].
 #[derive(Default)]
 struct Scratch {
-    /// Per record of the value's own range, from its start: [`UNSEEN`],
-    /// [`WANTED`] or the sink's id.
+    /// Per record of the value's own range, from its start: the sink's
+    /// id.
     own: Vec<u32>,
     /// Older records (from other declarations): the sink's ids, and the
     /// stack that builds them.
     memo: HashMap<u32, ExprId>,
     stack: Vec<u32>,
 }
-
-/// Marks in [`Scratch::own`] (never ids: those are below [`LAZY_BASE`]).
-const UNSEEN: u32 = u32::MAX;
-const WANTED: u32 = u32::MAX - 1;
 
 thread_local! {
     static SCRATCH: RefCell<Scratch> = RefCell::default();
@@ -901,22 +1270,12 @@ impl LazyValues for Stored {
 }
 
 impl Stored {
-    /// The record an id stands for (an alias's target).
-    #[inline(always)]
-    fn real(&self, i: u32) -> u32 {
-        let r = self.recs[i as usize];
-        if r & DONE == 0 && tag(r) == T_ALIAS {
-            (r & ID_MASK) as u32
-        } else {
-            i
-        }
-    }
-
-    /// Value `root` (a real record), whose own records are those from
-    /// `start` on: in two passes over them, as the reader adds recent
-    /// records (see `Builder::promote_recent`). One down marks the records
-    /// it needs, one up builds them in order (children first). Older
-    /// records are built by [`Stored::build`].
+    /// Value `root`, whose own records are those from `start` on: built
+    /// in order (children first). Every one of them is part of the value:
+    /// what else its declaration's lines held is interned or gone (see
+    /// [`Builder::into_stored`]), and a declaration has one value. (Were
+    /// one not, it would only be built for nothing.) Older records are
+    /// built by [`Stored::build`].
     fn build_own(
         &self,
         root: u32,
@@ -924,49 +1283,18 @@ impl Stored {
         sink: &mut dyn TermSink,
         s: &mut Scratch,
     ) -> Result<ExprId, String> {
-        let recs = &self.recs;
-        if recs[root as usize] & DONE != 0 {
-            return Ok(sink.shared_expr(ExprId(recs[root as usize] as u32)));
+        if root & ARENA != 0 {
+            return Ok(sink.shared_expr(ExprId(root & !ARENA)));
         }
-        let n = (root - start) as usize + 1;
+        let (recs, side) = (&self.recs, &self.side);
         s.own.clear();
-        s.own.resize(n, UNSEEN);
-        s.own[n - 1] = WANTED;
-        let mut left = 1usize;
-        let mut j = root;
-        loop {
-            if s.own[(j - start) as usize] == WANTED {
-                left -= 1;
-                let (kids, k) = decode(&self.side, recs[j as usize]).kids();
-                for &c in &kids[..k] {
-                    let c = self.real(c);
-                    if c >= start && recs[c as usize] & DONE == 0 {
-                        let m = &mut s.own[(c - start) as usize];
-                        if *m == UNSEEN {
-                            *m = WANTED;
-                            left += 1;
-                        }
-                    }
-                }
-                if left == 0 {
-                    break;
-                }
-            }
-            // A marked record is left, below `j`.
-            j -= 1;
-        }
-        for x in j..=root {
-            if s.own[(x - start) as usize] != WANTED {
-                continue;
-            }
-            let n = decode(&self.side, recs[x as usize]);
+        for x in start..=root {
+            let n = decode_stored(side, recs[x as usize]);
             let (kids, k) = n.kids();
             let mut ids = [ExprId(0); 3];
             for (&c, id) in kids[..k].iter().zip(&mut ids) {
-                let c = self.real(c);
-                let r = recs[c as usize];
-                *id = if r & DONE != 0 {
-                    sink.shared_expr(ExprId(r as u32))
+                *id = if c & ARENA != 0 {
+                    sink.shared_expr(ExprId(c & !ARENA))
                 } else if c >= start {
                     ExprId(s.own[(c - start) as usize])
                 } else {
@@ -976,9 +1304,9 @@ impl Stored {
             // Records of the value's own declaration are taken as used by
             // it alone (one that a later value uses too is built there
             // again, by `build`, hash-consed).
-            s.own[(x - start) as usize] = make(sink, n, ids, true).0;
+            s.own.push(make(sink, n, ids, true).0);
         }
-        Ok(ExprId(s.own[n - 1]))
+        Ok(ExprId(*s.own.last().expect("the root")))
     }
 
     fn build(
@@ -989,14 +1317,12 @@ impl Stored {
         stack: &mut Vec<u32>,
     ) -> Result<ExprId, String> {
         let (recs, side) = (&self.recs, &self.side);
-        let real = |i: u32| self.real(i);
-        // The sink's id for expression `i`, if known.
-        let done = |memo: &HashMap<u32, ExprId>, sink: &mut dyn TermSink, i: u32| {
-            let r = recs[real(i) as usize];
-            if r & DONE != 0 {
-                return Some(sink.shared_expr(ExprId(r as u32)));
+        // The sink's id for child `c`, if known.
+        let done = |memo: &HashMap<u32, ExprId>, sink: &mut dyn TermSink, c: u32| {
+            if c & ARENA != 0 {
+                return Some(sink.shared_expr(ExprId(c & !ARENA)));
             }
-            memo.get(&real(i)).copied()
+            memo.get(&c).copied()
         };
         stack.push(root);
         while let Some(&top) = stack.last() {
@@ -1004,8 +1330,7 @@ impl Stored {
                 stack.pop();
                 continue;
             }
-            let top = real(top);
-            let n = decode(side, recs[top as usize]);
+            let n = decode_stored(side, recs[top as usize]);
             let (kids, k) = n.kids();
             let mut ready = true;
             for &c in &kids[..k] {
@@ -1032,6 +1357,64 @@ impl Stored {
 #[cfg(test)]
 mod tests {
     use crate::reader::{Options, read_file_with};
+
+    thread_local! {
+        /// Store applications as if arena ids did not fit their fields.
+        pub(super) static WIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// The kernel tests' exports and the prefix of `Init`'s (if `xz` can
+    /// unpack it), read with lazy proofs (stored either way, on one
+    /// thread or several), give the environment that reading them eagerly
+    /// gives.
+    #[test]
+    fn lazy_values_match_eager() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut paths: Vec<_> = std::fs::read_dir(root.join("tests/kernel/exports"))
+            .expect("exports")
+            .map(|e| e.expect("entry").path())
+            .collect();
+        let prefix =
+            std::env::temp_dir().join(format!("init-prefix-{}.ndjson", std::process::id()));
+        let unpacked = std::fs::File::create(&prefix).ok().is_some_and(|f| {
+            std::process::Command::new("xz")
+                .arg("-dc")
+                .arg(root.join("bench/arena/pgo/init-prefix.ndjson.xz"))
+                .stdout(f)
+                .status()
+                .is_ok_and(|s| s.success())
+        });
+        if unpacked {
+            paths.push(prefix.clone());
+        } else {
+            eprintln!("xz cannot unpack the Init prefix: checking the small exports only");
+        }
+        let mut lazy_values = 0;
+        for path in &paths {
+            let Ok((eager, _)) = read_file_with(path, &Options::default()) else {
+                continue;
+            };
+            for (wide, threads) in [(false, 1), (true, 1), (false, 4), (true, 4)] {
+                WIDE.set(wide);
+                let opts = Options {
+                    lazy_proofs: true,
+                    threads,
+                };
+                let (lazy, _) = read_file_with(path, &opts).expect("reads lazily too");
+                WIDE.set(false);
+                lazy_values += lazy.lazy_values();
+                let d = crate::compare::compare(&eager, &lazy);
+                assert!(
+                    d.only_a.is_empty() && d.only_b.is_empty() && d.differ.is_empty(),
+                    "{}, wide {wide}, {threads} threads: {:?}",
+                    path.display(),
+                    &d.differ[..d.differ.len().min(5)]
+                );
+            }
+        }
+        let _ = std::fs::remove_file(&prefix);
+        assert!(lazy_values > 0, "some values are lazy");
+    }
 
     /// With `NITROLEAN_EXPORT` set to an export file: reading it with lazy
     /// proofs gives the same environment as reading it eagerly (every
