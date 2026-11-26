@@ -4,7 +4,7 @@
 //! type and compares it with the Π, which makes the same comparisons).
 
 use crate::env::{DeclKind, Safety};
-use crate::expr::{BinderInfo, ExprId, ExprNode};
+use crate::expr::{BinderInfo, ExprData, ExprId, ExprNode};
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
@@ -69,14 +69,22 @@ impl Nbe<'_> {
                 let (ExprNode::Lam(_, _, _, b) | ExprNode::Pi(_, _, _, b)) = self.st.node(t) else {
                     unreachable!()
                 };
-                let env2 = self.a.cons(env, x);
+                let env2 = if self.st.has_loose_bvars(b) {
+                    self.a.cons(env, x)
+                } else {
+                    Env::NIL
+                };
                 Ok(self.eval(b, env2, ls))
             }
             Val::PiInfer(t, env, ls) => {
                 let ExprNode::Lam(_, _, _, b) = self.st.node(t) else {
                     unreachable!()
                 };
-                let env2 = self.a.cons(env, x);
+                let env2 = if self.st.has_loose_bvars(b) {
+                    self.a.cons(env, x)
+                } else {
+                    Env::NIL
+                };
                 self.infer_term(b, env2, ls, true)
             }
             _ => unreachable!(),
@@ -268,17 +276,19 @@ impl Nbe<'_> {
         else {
             return Err(self.proj_error(x, sname, idx));
         };
-        let mut args = Vec::new();
-        if !self.a.args(sp, &mut args)
+        if self.a.sp_has_proj(sp)
             || ctors.len() != 1
-            || args.len() != (num_params + num_indices) as usize
+            || self.a.sp_len(sp) != num_params + num_indices
         {
             return Err(self.proj_error(x, sname, idx));
         }
         let ctor = self.st.name_list(ctors)[0];
         let c_decl = self.get(ctor)?;
         let mut r = self.const_type(&c_decl, i_lvls);
-        for &a in args.iter().take(num_params as usize) {
+        for i in 0..num_params {
+            let Elim::Arg(a) = self.a.sp_elim(sp, i) else {
+                unreachable!()
+            };
             r = self.whnf(r)?;
             if !matches!(self.a.get(r), Val::Pi(..) | Val::PiInfer(..)) {
                 return Err(self.proj_error(x, sname, idx));
@@ -320,7 +330,17 @@ impl Nbe<'_> {
 
     /// The type of `e` in `env`; with `infer_only` false, also check `e`.
     pub fn infer_term(&mut self, e: ExprId, env: Env, ls: Ls, infer_only: bool) -> R<V> {
-        let node = self.st.node(e);
+        self.infer_node(e, self.st.node(e), env, ls, infer_only)
+    }
+
+    fn infer_node(
+        &mut self,
+        e: ExprId,
+        node: ExprNode,
+        env: Env,
+        ls: Ls,
+        infer_only: bool,
+    ) -> R<V> {
         match node {
             ExprNode::BVar(i) => {
                 return match self.a.lookup(env, i) {
@@ -365,7 +385,7 @@ impl Nbe<'_> {
         // A memo keyed by the term in its environment, without the entries
         // it does not use.
         let d = self.st.data(e);
-        let key = self.infer_key(e, env, ls);
+        let key = self.infer_key(e, d, env, ls);
         let c = self.ikey_ty(key);
         if c != super::val::NONE && (infer_only || self.ikey_checked(key)) {
             return Ok(V(c));
@@ -394,7 +414,7 @@ impl Nbe<'_> {
             if let Some(k) = k
                 && self.checked_closed.contains(&k)
             {
-                let r = self.infer_term(e, env, ls, true)?;
+                let r = self.infer_node(e, node, env, ls, true)?;
                 self.ikey_set_checked(key, d.has_level_param());
                 return Ok(r);
             }
@@ -403,7 +423,7 @@ impl Nbe<'_> {
             None
         };
         let r = match node {
-            ExprNode::App(..) => self.infer_app(e, env, ls, infer_only)?,
+            ExprNode::App(f, a) => self.infer_app(f, a, env, ls, infer_only)?,
             ExprNode::Lam(..) => self.check_lambda(e, env, ls)?,
             ExprNode::Pi(..) => self.infer_pi(e, env, ls, infer_only)?,
             ExprNode::Let(..) => self.infer_let(e, env, ls, infer_only)?,
@@ -428,7 +448,7 @@ impl Nbe<'_> {
 
     /// The key of `infer_term`'s memo for `e` in `env` under `ls`: by the
     /// entries `e` reads (`memo`), or else a thunk.
-    fn infer_key(&mut self, e: ExprId, env: Env, ls: Ls) -> IKey {
+    fn infer_key(&mut self, e: ExprId, d: ExprData, env: Env, ls: Ls) -> IKey {
         if INFER_MEMO {
             let sh = crate::hash::hash2(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
             let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
@@ -437,7 +457,7 @@ impl Nbe<'_> {
                 return IKey::Memo(s[3] as usize);
             }
             let holes = if self.key_is_trim(e) {
-                self.st.data(e).unused_low() as u64
+                d.unused_low() as u64
             } else {
                 // Where terms are inferred again and again, sharper.
                 !self.used_bvars(e)
@@ -450,7 +470,6 @@ impl Nbe<'_> {
                 return IKey::Memo(i);
             }
         }
-        let d = self.st.data(e);
         IKey::Thunk(if self.key_is_trim(e) {
             // The key is the term's thunk, likely made already.
             self.thunk_value(e, env, ls)
@@ -536,28 +555,21 @@ impl Nbe<'_> {
         Ok(self.const_type(&d, ls))
     }
 
-    fn is_eager_reduce(&self, e: ExprId) -> bool {
-        match self.ext.eager_reduce {
-            Some(n) => {
-                self.st.nargs(e) == 2
-                    && matches!(self.st.node(self.st.head(e)), ExprNode::Const(m, _) if m == n)
-            }
-            None => false,
-        }
-    }
-
-    fn infer_app(&mut self, e: ExprId, env: Env, ls: Ls, infer_only: bool) -> R<V> {
+    fn infer_app(&mut self, mut f: ExprId, a: ExprId, env: Env, ls: Ls, infer_only: bool) -> R<V> {
         // The arguments go on the `terms` stack, which calls below leave
-        // as they found it (or with more on top, after an error).
+        // as they found it. Inference reads them back from the top.
         let base = self.terms.len();
-        let mut f = e;
-        while let ExprNode::App(g, a) = self.st.node(f) {
-            self.terms.push(a);
-            f = g;
-        }
-        let n = self.terms.len() - base;
-        self.terms[base..].reverse();
-        let r = self.infer_app_args(f, base, n, env, ls, infer_only);
+        self.terms.push(a);
+        let head = loop {
+            match self.st.node(f) {
+                ExprNode::App(g, a) => {
+                    self.terms.push(a);
+                    f = g;
+                }
+                node => break node,
+            }
+        };
+        let r = self.infer_app_args(f, head, base, env, ls, infer_only);
         self.terms.truncate(base);
         r
     }
@@ -565,94 +577,123 @@ impl Nbe<'_> {
     fn infer_app_args(
         &mut self,
         f: ExprId,
+        head: ExprNode,
         base: usize,
-        n: usize,
         env: Env,
         ls: Ls,
         infer_only: bool,
     ) -> R<V> {
-        let mut ft = self.infer_term(f, env, ls, infer_only)?;
-        let mut k = base;
-        while k < base + n {
+        let mut k = self.terms.len();
+        let mut ft = self.infer_node(f, head, env, ls, infer_only)?;
+        while k > base {
             ft = self.ensure_pi(ft)?;
-            let Val::Pi(mut t, mut pi_env, pi_ls) = self.a.get(ft) else {
+            let Val::Pi(t, mut pi_env, pi_ls) = self.a.get(ft) else {
+                let Val::PiInfer(t, pi_env, pi_ls) = self.a.get(ft) else {
+                    unreachable!()
+                };
+                let ExprNode::Lam(_, _, d, b) = self.st.node(t) else {
+                    unreachable!()
+                };
+                k -= 1;
                 let a = self.terms[k];
-                let av = self.thunk(a, env, ls);
                 if !infer_only {
-                    let dom = self.binder_dom(ft);
-                    self.check_arg(a, env, ls, dom)?;
+                    self.check_arg(a, env, ls, (d, pi_env, pi_ls), false)?;
                 }
-                ft = self.instantiate(ft, av)?;
-                k += 1;
+                let pi_env = self.bind_arg(b, pi_env, a, env, ls);
+                ft = self.infer_term(b, pi_env, pi_ls, true)?;
                 continue;
             };
             // Through the Π binders of the term itself, without building
             // the values in between: the same values as instantiating one
             // binder at a time.
+            let mut binder = self.st.node(t);
             loop {
-                let ExprNode::Pi(_, _, d, b) = self.st.node(t) else {
+                let ExprNode::Pi(_, _, d, b) = binder else {
                     unreachable!()
                 };
+                k -= 1;
                 let a = self.terms[k];
                 if !infer_only {
-                    if SYN_DOM
-                        && !matches!(self.st.node(a), ExprNode::Lam(..))
-                        && !self.is_eager_reduce(a)
-                    {
-                        // The argument's type against the domain as a term
-                        // first: when they are alike, no value of the
-                        // domain is made.
-                        let at = self.infer_term(a, env, ls, false)?;
-                        if !self.syn_eq_term(at, d, pi_env, pi_ls) {
-                            let dom = self.thunk(d, pi_env, pi_ls);
-                            if !self.is_def_eq(at, dom)? {
-                                return Err(self.arg_mismatch(a, env, ls, dom)?);
-                            }
-                        }
-                    } else {
-                        let dom = self.thunk(d, pi_env, pi_ls);
-                        self.check_arg(a, env, ls, dom)?;
+                    self.check_arg(a, env, ls, (d, pi_env, pi_ls), SYN_DOM)?;
+                }
+                pi_env = self.bind_arg(b, pi_env, a, env, ls);
+                if k > base {
+                    binder = self.st.node(b);
+                    if matches!(binder, ExprNode::Pi(..)) {
+                        continue;
                     }
                 }
-                // The argument's value only if the codomain may read it.
-                let av = if self.st.data(b).may_use_bvar(0) {
-                    self.thunk(a, env, ls)
-                } else {
-                    self.hole()
-                };
-                pi_env = self.a.cons(pi_env, av);
-                k += 1;
-                if k < base + n && matches!(self.st.node(b), ExprNode::Pi(..)) {
-                    t = b;
-                } else {
-                    ft = self.eval(b, pi_env, pi_ls);
-                    break;
-                }
+                ft = self.eval(b, pi_env, pi_ls);
+                break;
             }
         }
         Ok(ft)
     }
 
-    /// Check the argument `a` against the domain `dom`.
-    fn check_arg(&mut self, a: ExprId, env: Env, ls: Ls, dom: V) -> R<()> {
-        let ok = if self.is_eager_reduce(a) {
+    /// Extend a binder environment for its body. A closed body needs no
+    /// environment; a body that only uses older entries needs a placeholder.
+    #[inline]
+    fn bind_arg(&mut self, body: ExprId, binder_env: Env, arg: ExprId, env: Env, ls: Ls) -> Env {
+        let data = self.st.data(body);
+        if !data.has_loose_bvars() {
+            return Env::NIL;
+        }
+        let v = if data.may_use_bvar(0) {
+            self.thunk(arg, env, ls)
+        } else {
+            self.hole()
+        };
+        self.a.cons(binder_env, v)
+    }
+
+    /// Check the argument `a` against its domain, trying syntax first for
+    /// ordinary Π binders when that comparison is enabled.
+    fn check_arg(
+        &mut self,
+        a: ExprId,
+        env: Env,
+        ls: Ls,
+        (d, pi_env, pi_ls): (ExprId, Env, Ls),
+        syn_dom: bool,
+    ) -> R<()> {
+        let node = self.st.node(a);
+        let eager = if let (ExprNode::App(f, _), Some(n)) = (node, self.ext.eager_reduce)
+            && let ExprNode::App(g, _) = self.st.node(f)
+        {
+            matches!(self.st.node(g), ExprNode::Const(m, _) if m == n)
+        } else {
+            false
+        };
+        if syn_dom && !matches!(node, ExprNode::Lam(..)) && !eager {
+            let at = self.infer_node(a, node, env, ls, false)?;
+            if self.syn_eq_term(at, d, pi_env, pi_ls) {
+                return Ok(());
+            }
+            let dom = self.thunk(d, pi_env, pi_ls);
+            if !self.is_def_eq(at, dom)? {
+                return Err(self.arg_mismatch(a, node, env, ls, dom)?);
+            }
+            return Ok(());
+        }
+        let dom = self.thunk(d, pi_env, pi_ls);
+        let ok = if eager {
             let saved = std::mem::replace(&mut self.eager, true);
-            let r = self.check_against(a, env, ls, dom);
+            let r = self.check_against_node(a, node, env, ls, dom);
             self.eager = saved;
             r?
         } else {
-            self.check_against(a, env, ls, dom)?
+            self.check_against_node(a, node, env, ls, dom)?
         };
         if !ok {
-            return Err(self.arg_mismatch(a, env, ls, dom)?);
+            return Err(self.arg_mismatch(a, node, env, ls, dom)?);
         }
         Ok(())
     }
 
-    /// The error of an argument `a` whose type is not `dom`.
-    fn arg_mismatch(&mut self, a: ExprId, env: Env, ls: Ls, dom: V) -> R<KErr> {
+    /// Format a failed argument comparison.
+    fn arg_mismatch(&mut self, a: ExprId, node: ExprNode, env: Env, ls: Ls, dom: V) -> R<KErr> {
         let av = self.thunk(a, env, ls);
-        let at = self.infer_term(a, env, ls, true)?;
+        let at = self.infer_node(a, node, env, ls, true)?;
         Ok(KErr::new(format!(
             "application type mismatch: argument {} has type {} but is expected to have type {}",
             self.pp(av),
@@ -666,17 +707,36 @@ impl Nbe<'_> {
     /// and compared.
     #[inline]
     pub fn check_against(&mut self, e: ExprId, env: Env, ls: Ls, expected: V) -> R<bool> {
-        if matches!(self.st.node(e), ExprNode::Lam(..)) {
-            return self.check_lambda_against(e, env, ls, expected);
+        self.check_against_node(e, self.st.node(e), env, ls, expected)
+    }
+
+    #[inline]
+    fn check_against_node(
+        &mut self,
+        e: ExprId,
+        node: ExprNode,
+        env: Env,
+        ls: Ls,
+        expected: V,
+    ) -> R<bool> {
+        if matches!(node, ExprNode::Lam(..)) {
+            return self.check_lambda_against(e, node, env, ls, expected);
         }
-        let t = self.infer_term(e, env, ls, false)?;
+        let t = self.infer_node(e, node, env, ls, false)?;
         self.is_def_eq(t, expected)
     }
 
     /// `check_against` of a λ.
     #[inline(never)]
-    fn check_lambda_against(&mut self, e: ExprId, env: Env, ls: Ls, expected: V) -> R<bool> {
-        if let ExprNode::Lam(bi, n, dom, body) = self.st.node(e) {
+    fn check_lambda_against(
+        &mut self,
+        e: ExprId,
+        node: ExprNode,
+        env: Env,
+        ls: Ls,
+        expected: V,
+    ) -> R<bool> {
+        if let ExprNode::Lam(bi, n, dom, body) = node {
             let ex = self.force(expected);
             let ex = if matches!(self.a.get(ex), Val::Pi(..) | Val::PiInfer(..)) {
                 Some(ex)
@@ -702,7 +762,7 @@ impl Nbe<'_> {
                 return r;
             }
         }
-        let t = self.infer_term(e, env, ls, false)?;
+        let t = self.infer_node(e, node, env, ls, false)?;
         self.is_def_eq(t, expected)
     }
 
