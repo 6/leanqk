@@ -228,6 +228,11 @@ pub trait TermSink {
     fn shared_expr(&mut self, e: ExprId) -> ExprId {
         e
     }
+    /// Whether [`TermSink::shared_name`] and [`TermSink::shared_expr`]
+    /// give back what they get (so a caller may skip them).
+    fn keeps_shared(&self) -> bool {
+        true
+    }
 }
 
 /// The source of lazily read values (the `.olean` loader's).

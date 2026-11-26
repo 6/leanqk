@@ -1259,8 +1259,11 @@ fn par_each<T: Send>(threads: usize, items: impl Iterator<Item = T> + Send, f: i
 
 /// Node `n` in `sink`, its children being `ids` (in [`Node::kids`]'s
 /// order); `owned` if no other value or interned term uses it (see
-/// [`TermSink::expr_owned`]).
-fn make(sink: &mut dyn TermSink, n: Node, ids: [ExprId; 3], owned: bool) -> ExprId {
+/// [`TermSink::expr_owned`]); `keep` if the sink keeps shared names
+/// ([`TermSink::keeps_shared`]).
+#[inline(always)]
+fn make(sink: &mut dyn TermSink, n: Node, ids: [ExprId; 3], owned: bool, keep: bool) -> ExprId {
+    let shared_name = |sink: &mut dyn TermSink, n| if keep { n } else { sink.shared_name(n) };
     let expr = |sink: &mut dyn TermSink, node| {
         if owned {
             sink.expr_owned(node)
@@ -1271,7 +1274,7 @@ fn make(sink: &mut dyn TermSink, n: Node, ids: [ExprId; 3], owned: bool) -> Expr
     match n {
         Node::App(..) => expr(sink, ExprNode::App(ids[0], ids[1])),
         Node::Bind { pi, bi, name, .. } => {
-            let name = sink.shared_name(name);
+            let name = shared_name(sink, name);
             let (t, b) = (ids[0], ids[1]);
             let node = if pi {
                 ExprNode::Pi(bi, name, t, b)
@@ -1281,7 +1284,7 @@ fn make(sink: &mut dyn TermSink, n: Node, ids: [ExprId; 3], owned: bool) -> Expr
             expr(sink, node)
         }
         Node::Let { name, nondep, .. } => {
-            let name = sink.shared_name(name);
+            let name = shared_name(sink, name);
             let binder = LetBinder {
                 name,
                 ty: ids[0],
@@ -1291,7 +1294,7 @@ fn make(sink: &mut dyn TermSink, n: Node, ids: [ExprId; 3], owned: bool) -> Expr
             sink.let_in(binder, ids[2])
         }
         Node::Proj(s, i, _) => {
-            let s = sink.shared_name(s);
+            let s = shared_name(sink, s);
             expr(sink, ExprNode::Proj(s, i, ids[0]))
         }
     }
@@ -1474,14 +1477,16 @@ impl Stored {
             return Ok(sink.shared_expr(ExprId(root & !ARENA)));
         }
         let (recs, side) = (&self.recs, &self.side);
+        let keep = sink.keeps_shared();
         s.own.clear();
-        for x in start..=root {
-            let n = decode_stored(side, recs[x as usize]);
+        for &r in &recs[start as usize..=root as usize] {
+            let n = decode_stored(side, r);
             let (kids, k) = n.kids();
             let mut ids = [ExprId(0); 3];
             for (&c, id) in kids[..k].iter().zip(&mut ids) {
                 *id = if c & ARENA != 0 {
-                    sink.shared_expr(ExprId(c & !ARENA))
+                    let a = ExprId(c & !ARENA);
+                    if keep { a } else { sink.shared_expr(a) }
                 } else if c >= start {
                     ExprId(s.own[(c - start) as usize])
                 } else {
@@ -1491,7 +1496,7 @@ impl Stored {
             // Records of the value's own declaration are taken as used by
             // it alone (one that a later value uses too is built there
             // again, by `build`, hash-consed).
-            s.own.push(make(sink, n, ids, true).0);
+            s.own.push(make(sink, n, ids, true, keep).0);
         }
         Ok(ExprId(*s.own.last().expect("the root")))
     }
@@ -1533,7 +1538,8 @@ impl Stored {
             for (&c, id) in kids[..k].iter().zip(&mut ids) {
                 *id = done(memo, sink, c).expect("built");
             }
-            let id = make(sink, n, ids, false);
+            let keep = sink.keeps_shared();
+            let id = make(sink, n, ids, false, keep);
             memo.insert(top, id);
             stack.pop();
         }

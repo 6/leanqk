@@ -40,6 +40,10 @@ impl IntoEnv<'_, '_> {
 }
 
 impl TermSink for IntoEnv<'_, '_> {
+    fn keeps_shared(&self) -> bool {
+        false
+    }
+
     fn shared_name(&mut self, n: NameId) -> NameId {
         self.back.name(n).unwrap_or(NameId(NONE))
     }
