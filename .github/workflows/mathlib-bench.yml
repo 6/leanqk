@@ -14,6 +14,11 @@ name: Mathlib benchmark
 # medians over the rounds and the ratios nitrolean / gruszka
 # (bench/mathlib-ci/report.sh); the artifact holds every row.
 #
+# hyperfine then times the same commands once more, timing only: one
+# warm-up and `hyperfine_runs` runs of each, in two groups (one thread or
+# worker, and four), one invocation per group (all runs of a command, then
+# the next). Its numbers go into the summary after the rounds'.
+#
 # Each job reports which instruction counters its machine offers (the
 # `probe` job on a machine of its own). GitHub's hosted runners are VMs of
 # several kinds: some expose hardware counters (an Intel Xeon 6975P-C on
@@ -46,6 +51,9 @@ on:
       rounds:
         description: Rounds of runs (medians are taken over them)
         default: "5"
+      hyperfine_runs:
+        description: Runs of each command for hyperfine (0 to skip it)
+        default: "3"
   # On a pull request that changes the benchmark: the rep25s slice.
   pull_request:
     paths:
@@ -218,6 +226,27 @@ jobs:
             warm; $m "gruszka alone (4 workers)" "$out" "'$W/gruszka/target/release/gruszka' '$W/in.susz' 4"
           done
 
+      # Timing only, after the rounds.
+      - name: Time with hyperfine
+        if: ${{ (inputs.hyperfine_runs || '3') != '0' }}
+        env:
+          RUNS: ${{ inputs.hyperfine_runs || '3' }}
+        run: |
+          # A pinned hyperfine: the summary reads its JSON.
+          cargo install hyperfine --version 1.18.0 --locked --root "$W/hyperfine"
+          export PATH=$W/hyperfine/bin:$PATH
+          nl=$PWD/target/release/nitrolean
+          g="env TMPDIR='$W' '$W/gruszka/scripts/arena-run' '$IN'"
+          hyperfine --warmup 1 --runs "$RUNS" --style basic \
+            --export-markdown "$RUNNER_TEMP/hyperfine-1.md" --export-json "$RUNNER_TEMP/hyperfine-1.json" \
+            -n "nitrolean -j1" "$nl check -j 1 '$IN'" \
+            -n "gruszka (susz pack + 1 worker)" "$g 1"
+          hyperfine --warmup 1 --runs "$RUNS" --style basic \
+            --export-markdown "$RUNNER_TEMP/hyperfine-4.md" --export-json "$RUNNER_TEMP/hyperfine-4.json" \
+            -n "nitrolean -j4" "$nl check -j 4 '$IN'" \
+            -n "gruszka (susz pack + 4 workers)" "$g 4" \
+            -n "gruszka alone (4 workers)" "'$W/gruszka/target/release/gruszka' '$W/in.susz' 4"
+
       - name: Report
         if: always()
         run: |
@@ -234,6 +263,19 @@ jobs:
             echo
             bench/mathlib-ci/report.sh "$out" || ok=$?
             echo
+            if ls "$RUNNER_TEMP"/hyperfine-*.json > /dev/null 2>&1; then
+              echo "### hyperfine (wall time only)"
+              echo
+              echo "Relative: the median over the smallest median of its group."
+              echo
+              echo "| command | runs | mean s | ± σ | median s | min s | max s | relative |"
+              echo "|---|--:|--:|--:|--:|--:|--:|--:|"
+              for f in "$RUNNER_TEMP"/hyperfine-*.json; do
+                jq -r '(.results | map(.median) | min) as $best | .results[] |
+                  "| \(.command) | \(.times | length) | \(.mean * 1000 | round / 1000) | \(.stddev * 1000 | round / 1000) | \(.median * 1000 | round / 1000) | \(.min * 1000 | round / 1000) | \(.max * 1000 | round / 1000) | \(.median / $best * 1000 | round / 1000) |"' "$f"
+              done
+              echo
+            fi
             cat "$RUNNER_TEMP/probe.md"
           } > "$RUNNER_TEMP/summary.md"
           cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
@@ -248,6 +290,8 @@ jobs:
           name: mathlib-bench-${{ runner.arch }}
           path: |
             ${{ runner.temp }}/mathlib-bench.tsv
+            ${{ runner.temp }}/hyperfine-*.json
+            ${{ runner.temp }}/hyperfine-*.md
             ${{ runner.temp }}/summary.md
             ${{ runner.temp }}/probe.md
             ${{ runner.temp }}/input.md
