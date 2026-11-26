@@ -990,22 +990,18 @@ impl Nbe<'_> {
         matches!(self.a.get(e), Val::Const(n, ls, Sp::NIL) if Some(n) == self.ext.bool_true && ls == LevelList::EMPTY)
     }
 
-    /// The last elimination of a neutral, if it is a projection: the
-    /// structure and the field.
-    fn proj_parts(&mut self, v: V) -> Option<(V, crate::name::NameId, u32)> {
-        let (head, sp) = match self.a.get(v) {
-            Val::Const(n, l, sp) => (Val::Const(n, l, Sp::NIL), sp),
-            Val::FVar(k, sp) => (Val::FVar(k, Sp::NIL), sp),
+    /// The spine and field of a neutral ending in a projection.
+    fn proj_tail(&self, head: Val) -> Option<(Sp, u32, crate::name::NameId, u32)> {
+        let sp = match head {
+            Val::Const(_, _, sp) | Val::FVar(_, sp) => sp,
             _ => return None,
         };
         if sp == Sp::NIL {
             return None;
         }
-        match self.a.sp_last_elim(sp) {
-            Elim::Proj(s, i) => {
-                let pre = self.a.sp_prefix(sp, self.a.sp_len(sp) - 1);
-                Some((self.with_spine(head, pre), s, i))
-            }
+        let prefix_len = self.a.sp_len(sp) - 1;
+        match self.a.sp_elim(sp, prefix_len) {
+            Elim::Proj(s, i) => Some((sp, prefix_len, s, i)),
             _ => None,
         }
     }
@@ -1042,7 +1038,8 @@ impl Nbe<'_> {
         if let Some(r) = self.lazy_delta_reduction(&mut tn, &mut sn)? {
             return Ok(r);
         }
-        match (self.a.get(tn), self.a.get(sn)) {
+        let (th, sh) = (self.a.get(tn), self.a.get(sn));
+        match (th, sh) {
             (Val::Const(a, la, Sp::NIL), Val::Const(b, lb, Sp::NIL))
                 if a == b && self.is_def_eq_levels(la, lb) =>
             {
@@ -1051,12 +1048,15 @@ impl Nbe<'_> {
             (Val::FVar(a, Sp::NIL), Val::FVar(b, Sp::NIL)) if a == b => return Ok(true),
             _ => {}
         }
-        if let Some((tx, sa, ia)) = self.proj_parts(tn)
-            && let Some((sx, sb, ib)) = self.proj_parts(sn)
+        if let Some((tsp, tlen, sa, ia)) = self.proj_tail(th)
+            && let Some((ssp, slen, sb, ib)) = self.proj_tail(sh)
             && sa == sb
             && ia == ib
         {
-            let (mut tc, mut sc) = (tx, sx);
+            let tpre = self.a.sp_prefix(tsp, tlen);
+            let mut tc = self.with_spine(th, tpre);
+            let spre = self.a.sp_prefix(ssp, slen);
+            let mut sc = self.with_spine(sh, spre);
             if self.lazy_delta_proj_reduction(&mut tc, &mut sc, sa, ia)? {
                 return Ok(true);
             }
