@@ -18,7 +18,7 @@ use crate::expr::{BinderInfo, ExprId, ExprNode};
 use crate::level::{LevelId, LevelList, LevelNode};
 use crate::name::{NameId, NameNode};
 
-use super::store::{IdMap, IdSet};
+use super::store::{IdMap, IdSet, is_local};
 use super::tc::{KErr, Mode, R, Tc, err};
 use super::univ;
 
@@ -102,24 +102,28 @@ impl Tc<'_> {
     /// Lean's `consume_type_annotations`: strip `optParam`, `autoParam`,
     /// `outParam` and `semiOutParam` (by name, as Lean does).
     fn consume_type_annotations(&self, mut e: ExprId) -> ExprId {
-        let names = &self.st.env.names;
-        let opt = names.find_dotted("optParam");
-        let auto = names.find_dotted("autoParam");
-        let out = names.find_dotted("outParam");
-        let semi = names.find_dotted("semiOutParam");
         loop {
-            let mut args = Vec::new();
-            let h = self.st.spine(e, &mut args);
-            let ExprNode::Const(n, _) = self.st.node(h) else {
+            let ExprNode::App(f, last) = self.st.node(e) else {
                 return e;
             };
-            let n = Some(n);
-            if ((n == opt || n == auto) && args.len() == 2)
-                || ((n == out || n == semi) && args.len() == 1)
-            {
-                e = args[0];
-            } else {
+            let (head, domain, two_args) = match self.st.node(f) {
+                ExprNode::App(head, first) => (head, first, true),
+                _ => (f, last, false),
+            };
+            let ExprNode::Const(name, _) = self.st.node(head) else {
                 return e;
+            };
+            if is_local(name.0) {
+                return e;
+            }
+            let NameNode::Str(NameId::ANON, name) = self.st.env.names.get(name) else {
+                return e;
+            };
+            match (two_args, self.st.str(name)) {
+                (true, "optParam" | "autoParam") | (false, "outParam" | "semiOutParam") => {
+                    e = domain;
+                }
+                _ => return e,
             }
         }
     }
