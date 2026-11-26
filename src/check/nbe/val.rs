@@ -481,6 +481,21 @@ impl Arena {
         self.sps[sp.0 as usize] & HAS_PROJ_BIT != 0
     }
 
+    /// The length of the application-only prefix of a spine.
+    pub(super) fn sp_arg_prefix(&self, sp: Sp) -> u32 {
+        let len = self.sp_len(sp);
+        if !self.sp_has_proj(sp) {
+            return len;
+        }
+        let start = sp.0 as usize + 1;
+        self.sps[start..start + 2 * len as usize]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .position(|&[_, tag]| tag != NONE)
+            .expect("spine has a projection") as u32
+    }
+
     /// Elimination `i` of `sp`, from the first.
     #[inline]
     pub fn sp_elim(&self, sp: Sp, i: u32) -> Elim {

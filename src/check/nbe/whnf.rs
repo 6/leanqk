@@ -93,25 +93,15 @@ impl Nbe<'_> {
                 None => return Ok(v),
             }
         }
-        let mut es = self.take_elims();
-        self.a.elims(sp, &mut es);
-        let p = es
-            .iter()
-            .position(|e| matches!(e, Elim::Proj(..)))
-            .unwrap_or(es.len());
-        let mut args = Vec::with_capacity(p);
-        for e in &es[..p] {
-            let Elim::Arg(a) = *e else { unreachable!() };
-            args.push(a);
-        }
-        let r = if let Some(r) = self.reduce_recursor(c, l, &args, cheap_rec, cheap_proj)? {
-            let r = self.apply_elims(r, &es[p..]);
-            self.whnf_core(r, cheap_rec, cheap_proj)?
-        } else if p < es.len() {
-            let Elim::Proj(s, i) = es[p] else {
+        let p = self.a.sp_arg_prefix(sp);
+        if let Some(r) = self.reduce_recursor(c, l, sp, p, cheap_rec, cheap_proj)? {
+            let r = self.apply_sp_suffix(r, sp, p);
+            self.whnf_core(r, cheap_rec, cheap_proj)
+        } else if p < self.a.sp_len(sp) {
+            let Elim::Proj(s, i) = self.a.sp_elim(sp, p) else {
                 unreachable!()
             };
-            let pre = self.a.sp_prefix(sp, p as u32);
+            let pre = self.a.sp_prefix(sp, p);
             let x = self.a.mk(Val::Const(c, l, pre));
             let x = if cheap_proj {
                 self.whnf_core(x, cheap_rec, cheap_proj)?
@@ -120,16 +110,29 @@ impl Nbe<'_> {
             };
             match self.reduce_proj_core(x, s, i)? {
                 Some(f) => {
-                    let r = self.apply_elims(f, &es[p + 1..]);
-                    self.whnf_core(r, cheap_rec, cheap_proj)?
+                    let r = self.apply_sp_suffix(f, sp, p + 1);
+                    self.whnf_core(r, cheap_rec, cheap_proj)
                 }
-                None => v,
+                None => Ok(v),
             }
         } else {
-            v
-        };
-        self.put_elims(es);
-        Ok(r)
+            Ok(v)
+        }
+    }
+
+    fn apply_sp_suffix(&mut self, mut f: V, sp: Sp, start: u32) -> V {
+        for i in start..self.a.sp_len(sp) {
+            f = self.apply_elim(f, self.a.sp_elim(sp, i));
+        }
+        f
+    }
+
+    fn apply_sp_args(&mut self, f: V, sp: Sp, start: u32, end: u32) -> V {
+        let base = self.vargs.len();
+        self.a.extend_sp_args(sp, start, end, &mut self.vargs);
+        let r = self.apply_n(f, base);
+        self.vargs.truncate(base);
+        r
     }
 
     /// Lean's `reduce_proj_core`, on a struct already in whnf.
@@ -152,17 +155,18 @@ impl Nbe<'_> {
         &mut self,
         c: NameId,
         l: LevelList,
-        args: &[V],
+        sp: Sp,
+        arg_count: u32,
         cheap_rec: bool,
         cheap_proj: bool,
     ) -> R<Option<V>> {
-        if let Some(r) = self.quot_reduce_rec(c, args)? {
+        if let Some(r) = self.quot_reduce_rec(c, sp, arg_count)? {
             return Ok(Some(r));
         }
-        self.inductive_reduce_rec(c, l, args, cheap_rec, cheap_proj)
+        self.inductive_reduce_rec(c, l, sp, arg_count, cheap_rec, cheap_proj)
     }
 
-    fn quot_reduce_rec(&mut self, f: NameId, args: &[V]) -> R<Option<V>> {
+    fn quot_reduce_rec(&mut self, f: NameId, sp: Sp, arg_count: u32) -> R<Option<V>> {
         let Some(q) = self.ext.quot.as_ref() else {
             return Ok(None);
         };
@@ -181,19 +185,18 @@ impl Nbe<'_> {
             }) => {}
             _ => return Ok(None),
         }
-        if args.len() <= mk_pos {
+        if arg_count <= mk_pos {
             return Ok(None);
         }
-        let mk = self.whnf(args[mk_pos])?;
+        let mk = self.whnf(self.a.sp_arg(sp, mk_pos))?;
         let Val::Const(n, _, msp) = self.a.get(mk) else {
             return Ok(None);
         };
-        let mut margs = Vec::new();
-        if n != qmk || !self.a.args(msp, &mut margs) || margs.len() != 3 {
+        if n != qmk || self.a.sp_has_proj(msp) || self.a.sp_len(msp) != 3 {
             return Ok(None);
         }
-        let r = self.apply(args[arg_pos], margs[2]);
-        Ok(Some(self.apply_all(r, &args[mk_pos + 1..])))
+        let r = self.apply(self.a.sp_arg(sp, arg_pos), self.a.sp_arg(msp, 2));
+        Ok(Some(self.apply_sp_args(r, sp, mk_pos + 1, arg_count)))
     }
 
     pub(super) fn major_induct(&mut self, rec: NameId, d: &Decl) -> Option<NameId> {
@@ -372,7 +375,8 @@ impl Nbe<'_> {
         &mut self,
         rec_name: NameId,
         rec_lvls: LevelList,
-        args: &[V],
+        sp: Sp,
+        arg_count: u32,
         cheap_rec: bool,
         cheap_proj: bool,
     ) -> R<Option<V>> {
@@ -391,14 +395,14 @@ impl Nbe<'_> {
         else {
             return Ok(None);
         };
-        let major_idx = (num_params + num_motives + num_minors + num_indices) as usize;
-        if major_idx >= args.len() {
+        let major_idx = num_params + num_motives + num_minors + num_indices;
+        if major_idx >= arg_count {
             return Ok(None);
         }
         let Some(induct) = self.major_induct(rec_name, &d) else {
             return Ok(None);
         };
-        let mut major = args[major_idx];
+        let mut major = self.a.sp_arg(sp, major_idx);
         if k {
             major = self.ctor_when_k(induct, num_params, major)?;
         }
@@ -426,12 +430,8 @@ impl Nbe<'_> {
         else {
             return Ok(None);
         };
-        let mut margs = Vec::new();
-        if !self.a.args(msp, &mut margs) {
-            return Ok(None);
-        }
-        let nfields = rule.nfields as usize;
-        if nfields > margs.len() {
+        let mlen = self.a.sp_len(msp);
+        if self.a.sp_has_proj(msp) || rule.nfields > mlen {
             return Ok(None);
         }
         if self.st.list(rec_lvls).len() != d.level_params.len() {
@@ -439,10 +439,10 @@ impl Nbe<'_> {
         }
         let ls = self.decl_ls(&d, rec_lvls);
         let mut rhs = self.eval(rule.rhs, super::val::Env::NIL, ls);
-        let pmm = (num_params + num_motives + num_minors) as usize;
-        rhs = self.apply_all(rhs, &args[..pmm]);
-        rhs = self.apply_all(rhs, &margs[margs.len() - nfields..]);
-        rhs = self.apply_all(rhs, &args[major_idx + 1..]);
+        let pmm = num_params + num_motives + num_minors;
+        rhs = self.apply_sp_args(rhs, sp, 0, pmm);
+        rhs = self.apply_sp_args(rhs, msp, mlen - rule.nfields, mlen);
+        rhs = self.apply_sp_args(rhs, sp, major_idx + 1, arg_count);
         Ok(Some(rhs))
     }
 
