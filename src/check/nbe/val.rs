@@ -286,8 +286,20 @@ pub struct Arena {
     conses: Box<[[u32; 3]; CONSES]>,
     /// Neutrals applied to one or two arguments (`neutral_of`).
     apps: Box<[[u32; 4]; APPS]>,
+    /// Neutrals projected (`neutral_proj`): (neutral, structure, field,
+    /// result).
+    projs: Box<[[u32; 4]; PROJS]>,
     /// Far variables found (`lookup`): (environment, index, value).
     fars: Box<[std::cell::Cell<[u32; 3]>; FARS]>,
+}
+
+/// The neutral `head` with the spine `sp` in place of its own.
+fn with_sp(head: Val, sp: Sp) -> Val {
+    match head {
+        Val::Const(n, l, _) => Val::Const(n, l, sp),
+        Val::FVar(k, _) => Val::FVar(k, sp),
+        _ => unreachable!(),
+    }
 }
 
 /// Slots of `Arena::heads`.
@@ -295,6 +307,9 @@ const HEADS: usize = 1 << 12;
 
 /// Slots of `Arena::conses`.
 const CONSES: usize = 1 << 14;
+
+/// Slots of `Arena::projs`.
+const PROJS: usize = 1 << 12;
 
 /// Slots of `Arena::apps`.
 const APPS: usize = 1 << 14;
@@ -342,6 +357,7 @@ impl Arena {
             nutable: Table::new(),
             conses: table(NONE),
             apps: table(NONE),
+            projs: table(NONE),
             fars: (0..FARS)
                 .map(|_| std::cell::Cell::new([NONE; 3]))
                 .collect::<Box<[_]>>()
@@ -380,6 +396,7 @@ impl Arena {
         self.nutable.clear();
         self.conses.as_flattened_mut().fill(NONE);
         self.apps.as_flattened_mut().fill(NONE);
+        self.projs.as_flattened_mut().fill(NONE);
         for f in self.fars.iter() {
             f.set([NONE; 3]);
         }
@@ -645,6 +662,24 @@ impl Arena {
         }
         let r = self.neutral(head, xs);
         self.apps[i] = [f.0, x0, x1, r.0];
+        r
+    }
+
+    /// The neutral `v` (of value `head`, a `Const` or `FVar`) projected
+    /// to field `i` of `s`, by a direct-mapped front.
+    pub fn neutral_proj(&mut self, v: V, head: Val, s: NameId, i: u32) -> V {
+        let (Val::Const(_, _, sp) | Val::FVar(_, sp)) = head else {
+            unreachable!()
+        };
+        let j = (crate::hash::hash_front(v.0 as u64 | (i as u64) << 32, s.0 as u64) >> 52) as usize
+            & (PROJS - 1);
+        let e = self.projs[j];
+        if e[0] == v.0 && e[1] == s.0 && e[2] == i {
+            return V(e[3]);
+        }
+        let sp = self.snoc(sp, Elim::Proj(s, i));
+        let r = self.mk(with_sp(head, sp));
+        self.projs[j] = [v.0, s.0, i, r.0];
         r
     }
 

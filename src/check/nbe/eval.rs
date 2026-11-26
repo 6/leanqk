@@ -510,16 +510,10 @@ impl Nbe<'_> {
                 if let Some(f) = self.ctor_field(v, s, i) {
                     return self.force(f);
                 }
-                let Val::Const(n, l, sp) = self.a.get(v) else {
-                    unreachable!()
-                };
-                let sp = self.a.snoc(sp, Elim::Proj(s, i));
-                self.a.mk(Val::Const(n, l, sp))
+                let h = self.a.get(v);
+                self.a.neutral_proj(v, h, s, i)
             }
-            Val::FVar(k, sp) => {
-                let sp = self.a.snoc(sp, Elim::Proj(s, i));
-                self.a.mk(Val::FVar(k, sp))
-            }
+            h @ Val::FVar(..) => self.a.neutral_proj(v, h, s, i),
             Val::Str(_) => match self.string_lit_to_constructor(v) {
                 Ok(c) => self.proj(c, s, i),
                 Err(_) => {
