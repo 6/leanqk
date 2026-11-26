@@ -244,6 +244,21 @@ impl Nbe<'_> {
         self.eager_miss(e, env, ls, si)
     }
 
+    /// `eval`, remembered by the exact term, environment and levels in
+    /// `eager`'s direct slots (a lossy table: a value lost is made again,
+    /// the same).
+    pub(super) fn eval_slot(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        let sh = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
+        let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
+        let s = self.eager_slots[si];
+        if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
+            return V(s[3]);
+        }
+        let v = self.eval(e, env, ls);
+        self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+        v
+    }
+
     /// `eager` past its front (slot `si`): out of line, as it evaluates.
     #[inline(never)]
     fn eager_miss(&mut self, e: ExprId, env: Env, ls: Ls, si: usize) -> V {
