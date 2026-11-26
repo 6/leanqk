@@ -1379,8 +1379,7 @@ impl Nbe<'_> {
                 return s[7] != 0;
             }
             *budget -= 1;
-            let r = self.syn_eq_t(f_l, e_l, l_l, f_r, e_r, l_r, depth, budget)
-                && self.syn_eq_t(a_l, e_l, l_l, a_r, e_r, l_r, depth, budget);
+            let r = self.syn_eq_t_apps(f_l, a_l, e_l, l_l, f_r, a_r, e_r, l_r, depth, budget);
             if r || *budget > 0 {
                 let mut e = [0; 8];
                 e[..7].copy_from_slice(&key);
@@ -1390,6 +1389,42 @@ impl Nbe<'_> {
             return r;
         }
         self.syn_eq_t_node(t_l, e_l, l_l, t_r, e_r, l_r, depth, budget)
+    }
+
+    /// Compare arguments as we follow paired application heads. The caller
+    /// can memoize the outer pair. Identical prefixes go through the term ID
+    /// shortcut, which also checks the context they use.
+    #[allow(clippy::too_many_arguments)]
+    fn syn_eq_t_apps(
+        &mut self,
+        mut f_l: crate::expr::ExprId,
+        mut a_l: crate::expr::ExprId,
+        e_l: Env,
+        l_l: super::val::Ls,
+        mut f_r: crate::expr::ExprId,
+        mut a_r: crate::expr::ExprId,
+        e_r: Env,
+        l_r: super::val::Ls,
+        depth: SynDepth,
+        budget: &mut u32,
+    ) -> bool {
+        loop {
+            if !self.syn_eq_t(a_l, e_l, l_l, a_r, e_r, l_r, depth, budget) {
+                return false;
+            }
+            if f_l == f_r || *budget == 0 {
+                break;
+            }
+            let (ExprNode::App(g_l, b_l), ExprNode::App(g_r, b_r)) =
+                (self.st.node(f_l), self.st.node(f_r))
+            else {
+                break;
+            };
+            *budget -= 1;
+            (f_l, a_l) = (g_l, b_l);
+            (f_r, a_r) = (g_r, b_r);
+        }
+        self.syn_eq_t(f_l, e_l, l_l, f_r, e_r, l_r, depth, budget)
     }
 
     /// For one term under the same binders and universe substitution, only
@@ -1488,8 +1523,7 @@ impl Nbe<'_> {
         }
         match (n_l, n_r) {
             (ExprNode::App(f_l, a_l), ExprNode::App(f_r, a_r)) => {
-                self.syn_eq_t(f_l, e_l, l_l, f_r, e_r, l_r, depth, budget)
-                    && self.syn_eq_t(a_l, e_l, l_l, a_r, e_r, l_r, depth, budget)
+                self.syn_eq_t_apps(f_l, a_l, e_l, l_l, f_r, a_r, e_r, l_r, depth, budget)
             }
             (ExprNode::Lam(_, _, a_l, b_l), ExprNode::Lam(_, _, a_r, b_r))
             | (ExprNode::Pi(_, _, a_l, b_l), ExprNode::Pi(_, _, a_r, b_r)) => {
