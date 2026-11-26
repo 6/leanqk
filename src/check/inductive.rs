@@ -74,7 +74,7 @@ impl Tc<'_> {
 
     /// Whether `e` mentions a constant satisfying `pred`.
     fn find_const(&self, e: ExprId, pred: &dyn Fn(NameId) -> bool) -> bool {
-        let mut seen = IdSet::<ExprId>::default();
+        let mut seen = IdSet::<ExprId>::with_capacity_and_hasher(SEEN, Default::default());
         let mut stack = vec![e];
         while let Some(e) = stack.pop() {
             if !seen.insert(e) {
@@ -262,7 +262,7 @@ impl Tc<'_> {
         let Some(pre) = self.st.env.names.find(NameNode::Str(NameId::ANON, s)) else {
             return Ok(());
         };
-        let mut seen = IdSet::<ExprId>::default();
+        let mut seen = IdSet::<ExprId>::with_capacity_and_hasher(SEEN, Default::default());
         let mut stack = vec![e];
         while let Some(e) = stack.pop() {
             if !seen.insert(e) {
@@ -369,6 +369,11 @@ const CHECK_RECURSORS: bool = false;
 /// Whether a constructor's fields (and a recursive field's telescope) are
 /// made once for the recursors' types and rules: each binds them.
 const FIELDS_ONCE: bool = true;
+
+/// Room made at once in the visited sets of the traversals here: most
+/// terms they walk are small, and a set grown from empty rehashes at
+/// every doubling.
+const SEEN: usize = 64;
 
 /// Whether `ElimNested::run` first looks for what it would replace, and
 /// leaves a block with nothing to replace as it is.
@@ -1209,7 +1214,7 @@ impl ElimNested {
             return true;
         }
         let names: Vec<NameId> = d.types.iter().map(|t| t.name).collect();
-        let mut seen = IdSet::<ExprId>::default();
+        let mut seen = IdSet::<ExprId>::with_capacity_and_hasher(SEEN, Default::default());
         let mut stack = Vec::new();
         let mut args = Vec::new();
         for t in &d.types {
