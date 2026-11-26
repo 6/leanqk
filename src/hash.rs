@@ -228,6 +228,99 @@ impl Table {
     }
 }
 
+/// A hash-consing table for ids that fit in `ID_BITS` bits. Each slot
+/// holds a truncated hash tag and an id. Growth reconstructs full
+/// hashes from the keys because their high bits set the initial slots.
+pub struct Table32<const ID_BITS: u32> {
+    slots: Box<[u32]>,
+    shift: u32,
+    len: usize,
+}
+
+impl<const ID_BITS: u32> Table32<ID_BITS> {
+    const ID_MASK: u32 = (1 << ID_BITS) - 1;
+
+    pub fn new() -> Self {
+        const { assert!(ID_BITS > 0 && ID_BITS <= 30) };
+        Self::with_slots(MIN_SLOTS)
+    }
+
+    fn with_slots(n: usize) -> Self {
+        Self {
+            slots: vec![0; n].into_boxed_slice(),
+            shift: 32 - n.trailing_zeros(),
+            len: 0,
+        }
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.slots.len()
+    }
+
+    #[inline(always)]
+    fn tag(h: u32) -> u32 {
+        (h | 1) << ID_BITS
+    }
+
+    #[inline]
+    #[allow(unsafe_code)]
+    pub fn find_or_slot(&self, h: u32, mut eq: impl FnMut(u32) -> bool) -> Result<u32, Slot> {
+        let tag = Self::tag(h);
+        let mut i = (h >> self.shift) as usize;
+        let mask = self.slots.len() - 1;
+        loop {
+            // SAFETY: The first index uses the high bits for the capacity.
+            // Every subsequent index is masked into that same range.
+            let v = unsafe { *self.slots.get_unchecked(i) };
+            if v == 0 {
+                return Err(Slot(i));
+            }
+            let id = v & Self::ID_MASK;
+            if v & !Self::ID_MASK == tag && eq(id) {
+                return Ok(id);
+            }
+            i = (i + 1) & mask;
+        }
+    }
+
+    #[inline]
+    #[allow(unsafe_code)]
+    pub fn insert_at(&mut self, slot: Slot, h: u32, id: u32, hash_key: impl FnMut(u32) -> u32) {
+        debug_assert!(slot.0 < self.slots.len() && self.slots[slot.0] == 0);
+        debug_assert!(id <= Self::ID_MASK);
+        // SAFETY: The slot came from this table, with no intervening insert.
+        unsafe { *self.slots.get_unchecked_mut(slot.0) = Self::tag(h) | id };
+        self.len += 1;
+        if self.len * 2 > self.slots.len() {
+            self.grow(hash_key);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow(&mut self, mut hash_key: impl FnMut(u32) -> u32) {
+        let old = std::mem::replace(self, Self::with_slots(self.slots.len() * 2));
+        let mask = self.slots.len() - 1;
+        for &v in old.slots.iter() {
+            if v != 0 {
+                let mut i = (hash_key(v & Self::ID_MASK) >> self.shift) as usize;
+                while self.slots[i] != 0 {
+                    i = (i + 1) & mask;
+                }
+                self.slots[i] = v;
+            }
+        }
+        self.len = old.len;
+    }
+
+    pub fn clear(&mut self) {
+        if self.len != 0 {
+            self.slots.fill(0);
+            self.len = 0;
+        }
+    }
+}
+
 /// An open-addressing set of `u64` keys for one thread: linear probing
 /// over the keys themselves at a load of at most 3/4, the slot picked by
 /// the top bits of [`hash1`]. `u64::MAX` marks an empty slot; the key
@@ -386,6 +479,24 @@ mod tests {
         assert_eq!(t.find(hash(5), |x| x == 5), None);
         t.insert_new(hash(5), 5);
         assert_eq!(t.find(hash(5), |x| x == 5), Some(5));
+    }
+
+    #[test]
+    fn compact_table_keeps_colliding_tags_through_growth() {
+        let mut t = Table32::<23>::new();
+        let hash = |id: u32| id.reverse_bits() | 42;
+        for id in 0..33 {
+            let h = hash(id);
+            let slot = t.find_or_slot(h, |x| x == id).unwrap_err();
+            t.insert_at(slot, h, id, hash);
+        }
+        assert!(t.capacity() > MIN_SLOTS);
+        for id in 0..33 {
+            assert_eq!(t.find_or_slot(hash(id), |x| x == id).ok(), Some(id));
+        }
+        assert!(t.find_or_slot(hash(0), |x| x == 100).is_err());
+        t.clear();
+        assert!(t.find_or_slot(hash(32), |x| x == 32).is_err());
     }
 
     #[test]

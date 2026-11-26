@@ -11,7 +11,7 @@
 
 use crate::env::NameList;
 use crate::expr::ExprId;
-use crate::hash::{Table, hash2};
+use crate::hash::{Table, Table32, hash2};
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 use crate::strings::StrId;
@@ -78,6 +78,11 @@ pub(super) fn spread(h: u32) -> u64 {
 #[inline]
 fn h32(h: u64) -> u32 {
     (h >> 32) as u32 ^ h as u32
+}
+
+#[inline]
+fn env_hash(env: Env, v: V) -> u64 {
+    crate::hash::hash_front(env.0 as u64 | 2 << 40, v.0 as u64)
 }
 
 /// `v[i]`, with the bound checked in debug builds only: ids index the
@@ -267,7 +272,7 @@ pub struct Arena {
     /// Scratch words for building a spine.
     sp_buf: Vec<u32>,
     envs: Vec<EnvRec>,
-    envtable: Table,
+    envtable: Table32<{ LIMIT.ilog2() }>,
     lss: Vec<LsNode>,
     lstable: Table,
     /// Recently made constants and sorts with no arguments, by a hash of
@@ -328,7 +333,7 @@ impl Arena {
                 len: 0,
                 jump: Env::NIL,
             }],
-            envtable: Table::new(),
+            envtable: Table32::new(),
             lss: vec![LsNode {
                 params: NameList::default(),
                 levels: LevelList::EMPTY,
@@ -400,7 +405,7 @@ impl Arena {
             + self.thunks.len() * 16
             + self.nutable.capacity() * 8
             + self.conses.len() * 12
-            + self.envtable.capacity() * 8
+            + self.envtable.capacity() * size_of::<u32>()
     }
 
     // ---- values ----
@@ -861,14 +866,13 @@ impl Arena {
 
     #[inline]
     pub fn cons(&mut self, env: Env, v: V) -> Env {
-        let i = (crate::hash::hash_front(env.0 as u64 | 2 << 40, v.0 as u64) >> 50) as usize
-            & (CONSES - 1);
+        let i = (env_hash(env, v) >> 50) as usize & (CONSES - 1);
         let s = self.conses[i];
         if s[0] == env.0 && s[1] == v.0 {
             return Env(s[2]);
         }
         // The table's hash only past the front.
-        let h = crate::hash::hash_front(env.0 as u64 | 2 << 40, v.0 as u64);
+        let h = env_hash(env, v);
         let r = self.cons_find(env, v, h32(h));
         self.conses[i] = [env.0, v.0, r.0];
         r
@@ -892,7 +896,6 @@ impl Arena {
         if id >= LIMIT {
             out_of_room();
         }
-        envtable.insert_at(slot, h, id);
         let p = envs[env.0 as usize];
         let fv = p.len & HAS_FVAR_BIT != 0 || recs[v.0 as usize].flags & HAS_FVAR != 0;
         let len = ((p.len & LEN_BITS) + 1) | if fv { HAS_FVAR_BIT } else { 0 };
@@ -901,6 +904,10 @@ impl Arena {
         let ljj = envs[j.jump.0 as usize].len & LEN_BITS;
         let jump = if lp - lj == lj - ljj { j.jump } else { env };
         envs.push(EnvRec { node, len, jump });
+        envtable.insert_at(slot, h, id, |id| {
+            let EnvNode { prev, v } = at(envs, id as usize).node;
+            h32(env_hash(prev, v))
+        });
         Env(id)
     }
 
