@@ -1131,9 +1131,12 @@ impl Nbe<'_> {
 
     /// Lean's `check_constant_val` for a declaration's type.
     pub fn check_type(&mut self, ty: ExprId) -> R<()> {
+        self.check_type_sort(ty).map(|_| ())
+    }
+
+    pub(in crate::check) fn check_type_sort(&mut self, ty: ExprId) -> R<LevelId> {
         let s = self.infer_term(ty, Env::NIL, Ls::ID, false)?;
-        self.ensure_sort(s)?;
-        Ok(())
+        self.ensure_sort(s)
     }
 
     pub fn check_is_prop(&mut self, ty: ExprId) -> R<bool> {

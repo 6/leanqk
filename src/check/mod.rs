@@ -579,9 +579,9 @@ fn use_nbe(d: &Decl) -> bool {
 fn check_single_nbe(tc: &mut Tc<'_>, nb: &mut Nbe<'_>, d: &Decl) -> R<()> {
     check_dup_lparams(tc, d)?;
     nb.lparams = tc.st.lparams(d).to_vec();
-    nb.check_type(d.ty)?;
+    let sort = nb.check_type_sort(d.ty)?;
     if let DeclKind::Theorem { .. } = d.kind
-        && !nb.check_is_prop(d.ty)?
+        && !univ::normalizes_to_zero(&nb.st, sort)
     {
         return err(format!("theorem type is not Prop: {}", tc.pp(d.ty)));
     }
