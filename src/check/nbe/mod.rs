@@ -69,8 +69,7 @@ const KEEP_VALUES: usize = 1 << 16;
 /// not read (`prune`).
 const PRUNE: bool = true;
 
-/// Slots of `Nbe::syn_t` (direct-mapped: (left term, environment and
-/// substitution, right ones, depth, outcome)).
+/// Slots of the direct-mapped structural comparison memo `Nbe::syn_t`.
 const SYN_T: usize = 1 << 12;
 
 /// Slots of `Nbe::eager_slots`.
@@ -139,7 +138,7 @@ pub struct Nbe<'e> {
     /// Terms with universe parameters marked checked in this declaration.
     level_checked: Vec<V>,
     fresh: bool,
-    /// Structural comparisons of terms in environments, by `syn_eq_t`.
+    /// Structural comparisons of term pairs and value–term pairs.
     syn_t: Box<[[u32; 8]; SYN_T]>,
     level_eq: IdMap<(LevelId, LevelId), bool>,
     major_induct: IdMap<NameId, NameId>,
