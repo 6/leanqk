@@ -27,8 +27,19 @@ impl Nbe<'_> {
         self.fvars[k as usize].val
     }
 
+    #[inline]
     pub fn whnf_core(&mut self, v: V, cheap_rec: bool, cheap_proj: bool) -> R<V> {
+        if self.a.r(v).core_normal() {
+            return Ok(v);
+        }
+        self.whnf_core_slow(v, cheap_rec, cheap_proj)
+    }
+
+    fn whnf_core_slow(&mut self, v: V, cheap_rec: bool, cheap_proj: bool) -> R<V> {
         let v = self.force(v);
+        if self.a.r(v).core_normal() {
+            return Ok(v);
+        }
         match self.a.get(v) {
             Val::Const(_, _, sp) if sp != Sp::NIL => {}
             Val::FVar(k, sp) => {
@@ -37,7 +48,10 @@ impl Nbe<'_> {
                         let r = self.apply_spine(x, sp);
                         self.whnf_core(r, cheap_rec, cheap_proj)
                     }
-                    None => Ok(v),
+                    None => {
+                        self.a.rm(v).set_whnf_normal();
+                        Ok(v)
+                    }
                 };
             }
             _ => return Ok(v),
@@ -61,8 +75,15 @@ impl Nbe<'_> {
         let Val::Const(c, l, sp) = self.a.get(v) else {
             unreachable!()
         };
-        if !self.a.sp_has_proj(sp) && !self.may_reduce_rec(c) {
-            return Ok(v);
+        if !self.a.sp_has_proj(sp) && !self.is_quot_recursor(c) {
+            match self.find(c) {
+                Some(d) if matches!(d.kind, DeclKind::Recursor { .. }) => {}
+                Some(_) => {
+                    self.a.rm(v).set_core_normal();
+                    return Ok(v);
+                }
+                None => return Ok(v),
+            }
         }
         let mut es = self.take_elims();
         self.a.elims(sp, &mut es);
@@ -112,20 +133,11 @@ impl Nbe<'_> {
         Ok(self.ctor_field(c, s, i))
     }
 
-    /// Whether `c` is a recursor or a quotient's lift or induction.
-    fn may_reduce_rec(&self, c: NameId) -> bool {
-        if let Some(q) = self.ext.quot.as_ref()
-            && (c == q.lift || c == q.ind)
-        {
-            return true;
-        }
-        matches!(
-            self.find(c),
-            Some(Decl {
-                kind: DeclKind::Recursor { .. },
-                ..
-            })
-        )
+    fn is_quot_recursor(&self, c: NameId) -> bool {
+        self.ext
+            .quot
+            .as_ref()
+            .is_some_and(|q| c == q.lift || c == q.ind)
     }
 
     fn reduce_recursor(
@@ -744,22 +756,28 @@ impl Nbe<'_> {
         }
     }
 
+    #[inline]
     pub fn whnf(&mut self, v: V) -> R<V> {
+        if self.a.r(v).whnf_normal() {
+            return Ok(v);
+        }
+        self.whnf_slow(v)
+    }
+
+    fn whnf_slow(&mut self, v: V) -> R<V> {
         let v = self.force(v);
-        match self.a.get(v) {
-            Val::Sort(_)
-            | Val::Pi(..)
-            | Val::PiInfer(..)
-            | Val::Lam(..)
-            | Val::Nat(..)
-            | Val::NatBig(_)
-            | Val::Str(_) => return Ok(v),
-            Val::FVar(k, _) if self.let_value(k).is_none() => return Ok(v),
-            _ => {}
+        if self.a.r(v).whnf_normal() {
+            return Ok(v);
         }
         let c = self.a.r(v).whnf;
         if c != super::val::NONE {
             return Ok(V(c));
+        }
+        if let Val::FVar(k, _) = self.a.get(v)
+            && self.let_value(k).is_none()
+        {
+            self.a.rm(v).set_whnf_normal();
+            return Ok(v);
         }
         self.whnf_from(v, true)
     }

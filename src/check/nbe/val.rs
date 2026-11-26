@@ -152,6 +152,28 @@ pub struct Rec {
 
 const HAS_FVAR: u8 = 1;
 const CHECKED: u8 = 2;
+const CORE_NORMAL: u8 = 4;
+const WHNF_NORMAL: u8 = 8;
+
+impl Rec {
+    #[inline]
+    pub(super) fn core_normal(&self) -> bool {
+        self.flags & CORE_NORMAL != 0
+    }
+
+    #[inline]
+    pub(super) fn whnf_normal(&self) -> bool {
+        self.flags & WHNF_NORMAL != 0
+    }
+
+    pub(super) fn set_core_normal(&mut self) {
+        self.flags |= CORE_NORMAL;
+    }
+
+    pub(super) fn set_whnf_normal(&mut self) {
+        self.flags |= CORE_NORMAL | WHNF_NORMAL;
+    }
+}
 
 /// The most values, spines or environments one declaration may build.
 /// Past it the evaluating checker gives up on the declaration (by
@@ -403,27 +425,32 @@ impl Arena {
         }
         slot.insert((id, h));
         vals.push(val);
+        let flags = match val {
+            Val::Lam(_, e, _) | Val::Pi(_, e, _) | Val::PiInfer(_, e, _) => {
+                CORE_NORMAL | WHNF_NORMAL | self.env_flags(e)
+            }
+            Val::Sort(_) | Val::Nat(..) | Val::NatBig(_) | Val::Str(_) => CORE_NORMAL | WHNF_NORMAL,
+            Val::Thunk(_, e, _) => self.env_flags(e),
+            Val::Const(..) => CORE_NORMAL,
+            Val::FVar(..) => HAS_FVAR,
+        };
         self.recs.push(Rec {
-            flags: 0,
+            flags,
             forced: NONE,
             whnf_core: NONE,
             whnf: NONE,
             ty: NONE,
             delta: NONE,
         });
-        let fv = match val {
-            Val::Sort(_) | Val::Nat(..) | Val::NatBig(_) | Val::Str(_) => false,
-            Val::Lam(_, e, _) | Val::Pi(_, e, _) | Val::PiInfer(_, e, _) | Val::Thunk(_, e, _) => {
-                self.envs[e.0 as usize].len & HAS_FVAR_BIT != 0
-            }
-            Val::Const(_, _, sp) => self.sps[sp.0 as usize] & HAS_FVAR_BIT != 0,
-            Val::FVar(..) => true,
-        };
-        if fv {
-            self.recs[id as usize].flags = HAS_FVAR;
-        }
-
         V(id)
+    }
+
+    fn env_flags(&self, e: Env) -> u8 {
+        if self.envs[e.0 as usize].len & HAS_FVAR_BIT != 0 {
+            HAS_FVAR
+        } else {
+            0
+        }
     }
 
     // ---- spines ----
