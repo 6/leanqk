@@ -30,7 +30,7 @@ pub use val::OutOfRoom;
 use hashbrown::HashTable;
 use num_bigint::BigUint;
 
-use crate::env::{Decl, DeclKind};
+use crate::env::{Decl, DeclKind, NameList};
 use crate::expr::{BinderInfo, ExprId, ExprNode};
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
@@ -763,22 +763,29 @@ impl<'e> Nbe<'e> {
     }
 
     /// The substitution of `d`'s universe parameters by `ls`.
+    #[inline(always)]
     pub fn decl_ls(&mut self, d: &Decl, ls: LevelList) -> Ls {
         let params = d.level_params;
         if params.is_empty() {
             return Ls::ID;
         }
         self.decl_ls_cache.get_or_insert(params, ls, || {
-            if super::univ::OWN_LEVELS
-                && self
-                    .st
-                    .is_own_levels(self.st.name_list(params), self.st.list(ls))
-            {
-                return Ls::ID;
-            }
-            let params = self.param_classes.class(&self.st, params);
-            self.a.mk_ls(params, ls)
+            Self::decl_ls_new(&self.st, &mut self.param_classes, &mut self.a, params, ls)
         })
+    }
+
+    #[inline(never)]
+    fn decl_ls_new(
+        st: &Store<'_>,
+        param_classes: &mut lsub::ParamClasses,
+        arena: &mut Arena,
+        params: NameList,
+        ls: LevelList,
+    ) -> Ls {
+        if univ::OWN_LEVELS && st.is_own_levels(st.name_list(params), st.list(ls)) {
+            return Ls::ID;
+        }
+        arena.mk_ls(param_classes.class(st, params), ls)
     }
 
     // ---- literals ----
