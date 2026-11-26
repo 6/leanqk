@@ -1118,6 +1118,11 @@ impl Nbe<'_> {
         } else {
             None
         };
+        let start = self.ticks;
+        if self.stable_queries.is_some() && self.stable_eq_hit(t, s) {
+            self.pset(t, s, EQ);
+            return Ok(true);
+        }
         let ft = self.force(t);
         let fs = self.force(s);
         let r = if ft == fs {
@@ -1139,6 +1144,9 @@ impl Nbe<'_> {
         };
         if let Some(k) = named {
             self.name_eq.insert(k, r);
+        }
+        if r && self.stable_queries.is_some() {
+            self.record_stable_eq(t, s, start);
         }
         self.pset(t, s, if r { EQ } else { NEQ });
         Ok(r)

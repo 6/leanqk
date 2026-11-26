@@ -21,6 +21,7 @@ mod infer;
 mod lsub;
 mod memo;
 mod readback;
+mod stable_queries;
 pub mod val;
 mod whnf;
 
@@ -136,6 +137,7 @@ pub struct Nbe<'e> {
     lazy_values: IdMap<ExprId, ExprId>,
     /// What is known of pairs of values (`conv::EQ` and the other bits).
     pairs: conv::PairCache,
+    stable_queries: Option<Box<stable_queries::Queries>>,
     /// Terms with universe parameters marked checked in this declaration.
     level_checked: Vec<V>,
     fresh: bool,
@@ -306,6 +308,7 @@ impl<'e> Nbe<'e> {
             const_value: IdMap::default(),
             lazy_values: IdMap::default(),
             pairs: conv::PairCache::default(),
+            stable_queries: None,
             level_checked: Vec::new(),
             fresh: true,
             syn_t: val::table(val::NONE),
@@ -372,6 +375,15 @@ impl<'e> Nbe<'e> {
             + map(&self.bvar_use)
             + self.checked_closed.capacity() * (size_of::<u64>() + 1)
             + map(&self.ctxs)
+    }
+
+    /// The driver owns this checker for one immutable environment and
+    /// rebuilds it on a metadata retry or a rewind of the visible prefix.
+    pub(super) fn for_worker(st: Store<'e>, ext: &'e Ext, jobs: usize, share: usize) -> Self {
+        let mut checker = Self::new(st, ext);
+        checker.set_cache_share(share);
+        checker.stable_queries = stable_queries::Queries::for_worker(jobs);
+        checker
     }
 
     /// Start on a declaration checked against the first `limit` blocks.
@@ -509,7 +521,8 @@ impl<'e> Nbe<'e> {
         self.eval_probe = false;
     }
 
-    /// Forget everything.
+    /// Drop the evaluator arena and its local memos. Closed facts for
+    /// earlier prefixes may survive in a worker's bounded cache.
     pub fn reset(&mut self, limit: u32) {
         self.end_scopes();
         self.st.reset_nat_unfold_work();
@@ -546,6 +559,9 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.level_checked);
         self.a.clear();
         self.decl_ls_cache.clear();
+        if let Some(cache) = &mut self.stable_queries {
+            cache.reset();
+        }
         self.prunes.fill([val::NONE; 3]);
         self.trim_holes_memo.fill([val::NONE; 4]);
         self.eager_slots.fill([val::NONE; 4]);

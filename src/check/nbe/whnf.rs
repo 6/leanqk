@@ -858,7 +858,26 @@ impl Nbe<'_> {
             self.a.rm(v).set_whnf_normal();
             return Ok(v);
         }
+        if self.stable_queries.is_some() && !self.eval_probe && !self.a.has_fvar(v) {
+            return self.whnf_stable(v);
+        }
         self.whnf_from(v, true)
+    }
+
+    fn whnf_stable(&mut self, v: V) -> R<V> {
+        // A cached reduct may expose another reduction in the larger
+        // environment. Always continue normalizing it there.
+        if let Some(reduct) = self.stable_reduct(v) {
+            let n = self.whnf_from(reduct, true)?;
+            self.a.rm(v).whnf = n.0;
+            return Ok(n);
+        }
+        let start = self.ticks;
+        let n = self.whnf_from(v, true)?;
+        if n != v {
+            self.record_stable_reduct(v, n, start);
+        }
+        Ok(n)
     }
 
     /// `whnf` of `v`, by the closed-term evaluator too if `eval`.
