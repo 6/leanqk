@@ -257,7 +257,9 @@ impl Nbe<'_> {
     }
 
     /// `read_tuple` past its front: the record is written at the end of
-    /// `tuples` as it is read, and dropped if it is there already.
+    /// `tuples` as it is read, and dropped if it is there already. Out of
+    /// line, so that a call met in the front costs no frame for it.
+    #[inline(never)]
     fn read_tuple_in_place(&mut self, env: Env, n: u32, holes: u64) -> u32 {
         let TupleMemo { table, words } = &mut self.tuples;
         let base = words.len();
