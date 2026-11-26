@@ -161,10 +161,23 @@ impl Nbe<'_> {
     fn thunk_other(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         match self.st.node(e) {
             ExprNode::BVar(_) => self.bottom(Sp::NIL),
+            ExprNode::Const(n, lv) => {
+                let ls = if self.st.data(e).has_level_param() {
+                    ls
+                } else {
+                    Ls::ID
+                };
+                self.eval_const(n, lv, ls)
+            }
+            ExprNode::Lam(..) | ExprNode::Pi(..) => {
+                let ls = if self.st.data(e).has_level_param() {
+                    ls
+                } else {
+                    Ls::ID
+                };
+                self.eval_binder(e, env, ls)
+            }
             ExprNode::Sort(_)
-            | ExprNode::Const(..)
-            | ExprNode::Lam(..)
-            | ExprNode::Pi(..)
             | ExprNode::NatSmall(..)
             | ExprNode::NatBig(_)
             | ExprNode::Str(_)
