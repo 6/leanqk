@@ -868,12 +868,7 @@ impl Nbe<'_> {
         while let ExprNode::Lam(bi, n, dom, body) = self.st.node(cur) {
             let s = self.infer_term(dom, env2, ls, false)?;
             self.ensure_sort(s)?;
-            let dv = self.thunk(dom, env2, ls);
-            let x = self.push_fvar(n, dv, None, bi);
-            opened.push(x);
-            let env3 = self.a.cons(env2, x);
-            self.ctx_push(env2, dom, ls, env3);
-            env2 = env3;
+            env2 = self.open_inferred_binder((bi, n, dom, body), env2, ls, &mut opened);
             cur = body;
         }
         self.infer_term(cur, env2, ls, false)?;
@@ -886,6 +881,32 @@ impl Nbe<'_> {
         Ok(self.a.mk(Val::PiInfer(e, env, ls)))
     }
 
+    /// Open a binder after checking its domain. An unused variable needs
+    /// only a placeholder if the body reads older variables.
+    fn open_inferred_binder(
+        &mut self,
+        (bi, name, dom, body): (BinderInfo, NameId, ExprId, ExprId),
+        env: Env,
+        ls: Ls,
+        opened: &mut Vec<V>,
+    ) -> Env {
+        let data = self.st.data(body);
+        if !data.has_loose_bvars() {
+            return Env::NIL;
+        }
+        if !data.may_use_bvar(0) {
+            // This environment does not describe a context of binders.
+            let hole = self.hole();
+            return self.a.cons(env, hole);
+        }
+        let dv = self.thunk(dom, env, ls);
+        let x = self.push_fvar(name, dv, None, bi);
+        opened.push(x);
+        let next = self.a.cons(env, x);
+        self.ctx_push(env, dom, ls, next);
+        next
+    }
+
     fn infer_pi(&mut self, e: ExprId, env: Env, ls: Ls, infer_only: bool) -> R<V> {
         let mut cur = e;
         let mut env2 = env;
@@ -894,12 +915,7 @@ impl Nbe<'_> {
         while let ExprNode::Pi(bi, n, dom, body) = self.st.node(cur) {
             let s = self.infer_term(dom, env2, ls, infer_only)?;
             us.push(self.ensure_sort(s)?);
-            let dv = self.thunk(dom, env2, ls);
-            let x = self.push_fvar(n, dv, None, bi);
-            opened.push(x);
-            let env3 = self.a.cons(env2, x);
-            self.ctx_push(env2, dom, ls, env3);
-            env2 = env3;
+            env2 = self.open_inferred_binder((bi, n, dom, body), env2, ls, &mut opened);
             cur = body;
         }
         let s = self.infer_term(cur, env2, ls, infer_only)?;
