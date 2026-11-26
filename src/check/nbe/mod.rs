@@ -605,8 +605,8 @@ impl<'e> Nbe<'e> {
         }
         shrink(&mut self.bigs);
         shrink(&mut self.big_table);
-        shrink(&mut self.level_cache);
-        shrink(&mut self.list_cache);
+        self.level_cache.clear();
+        self.list_cache.clear();
         shrink(&mut self.const_type);
         shrink(&mut self.const_value);
         self.pairs.clear();
@@ -713,12 +713,9 @@ impl<'e> Nbe<'e> {
         self.inst_level_new(l, ls)
     }
 
-    /// Fetch an evicted substitution result or instantiate the level.
+    /// Instantiate an uncached level.
     #[inline(never)]
     fn inst_level_new(&mut self, l: LevelId, ls: Ls) -> LevelId {
-        if let Some(r) = self.level_cache.get_evicted((l, ls)) {
-            return r;
-        }
         let node = self.a.ls(ls);
         self.level_cache
             .instantiate_uncached(&mut self.st, l, ls, node)
@@ -735,22 +732,16 @@ impl<'e> Nbe<'e> {
         self.inst_list_new(ll, ls)
     }
 
-    /// Fetch an evicted substitution result or instantiate the list.
+    /// Instantiate an uncached level list.
     #[inline(never)]
     fn inst_list_new(&mut self, ll: LevelList, ls: Ls) -> LevelList {
-        if let Some(r) = self.list_cache.get_evicted((ll, ls)) {
-            return r;
-        }
         let node = self.a.ls(ls);
         let cache = &mut self.level_cache;
         let r = univ::map_level_list(&mut self.st, ll, |st, l| {
             if !st.level_has_param(l) {
                 return l;
             }
-            if let Some(result) = cache
-                .get_direct((l, ls))
-                .or_else(|| cache.get_evicted((l, ls)))
-            {
+            if let Some(result) = cache.get_direct((l, ls)) {
                 return result;
             }
             cache.instantiate_uncached(st, l, ls, node)
