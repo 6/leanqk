@@ -300,7 +300,7 @@ impl Nbe<'_> {
                 let env2 = self.a.cons(env, a);
                 self.eval(body, env2, ls)
             }
-            h @ (Val::Const(..) | Val::FVar(..)) => self.a.neutral(h, &[a]),
+            h @ (Val::Const(..) | Val::FVar(..)) => self.a.neutral_of(f, h, &[a]),
             _ => {
                 let sp = self.a.snoc(Sp::NIL, Elim::Arg(a));
                 self.bottom(sp)
@@ -337,7 +337,7 @@ impl Nbe<'_> {
                     f = self.eval(body, env, ls);
                 }
                 h @ (Val::Const(..) | Val::FVar(..)) => {
-                    return self.a.neutral(h, &self.vargs[i..end]);
+                    return self.a.neutral_of(f, h, &self.vargs[i..end]);
                 }
                 _ => {
                     let sp = self.a.snoc_args(Sp::NIL, &self.vargs[i..end]);
