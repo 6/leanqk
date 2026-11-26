@@ -70,7 +70,7 @@ impl Nbe<'_> {
         let h = self.eval(f, env, ls);
         let vbase = self.vargs.len();
         for k in (base..self.terms.len()).rev() {
-            let a = self.terms[k];
+            let a = *super::val::at(&self.terms, k);
             let av = self.thunk(a, env, ls);
             self.vargs.push(av);
         }
@@ -331,7 +331,7 @@ impl Nbe<'_> {
                     while i < end
                         && let ExprNode::Lam(_, _, _, b) = self.st.node(body)
                     {
-                        env = self.a.cons(env, self.vargs[i]);
+                        env = self.a.cons(env, *super::val::at(&self.vargs, i));
                         body = b;
                         i += 1;
                     }

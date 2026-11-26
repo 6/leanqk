@@ -731,7 +731,7 @@ impl<'e> Nbe<'e> {
         let val::Val::FVar(k, _) = self.a.get(x) else {
             unreachable!()
         };
-        let f = self.fvars[k as usize];
+        let f = *val::at(&self.fvars, k as usize);
         if let Some(n) = self.open_count.get_mut(&f.key) {
             *n -= 1;
         }
@@ -811,7 +811,7 @@ impl<'e> Nbe<'e> {
             let v = if j < 32 && holes >> j & 1 != 0 {
                 hole
             } else {
-                self.vargs[base + j]
+                *val::at(&self.vargs, base + j)
             };
             r = self.a.cons(r, v);
         }
@@ -846,7 +846,7 @@ impl<'e> Nbe<'e> {
                 let v = if holes >> j & 1 != 0 {
                     hole
                 } else {
-                    self.vargs[base + j]
+                    *val::at(&self.vargs, base + j)
                 };
                 r = self.a.cons(r, v);
             }
@@ -872,7 +872,7 @@ impl<'e> Nbe<'e> {
         }
         let mut r = val::Env::NIL;
         for k in (base..self.vargs.len()).rev() {
-            r = self.a.cons(r, self.vargs[k]);
+            r = self.a.cons(r, *val::at(&self.vargs, k));
         }
         self.vargs.truncate(base);
         self.trim_cache[i] = [env.0, n, r.0];
