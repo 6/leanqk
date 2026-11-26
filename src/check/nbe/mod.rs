@@ -122,9 +122,6 @@ pub struct Nbe<'e> {
     /// A direct-mapped front of `infer_memo`: (term, environment,
     /// substitution, entry).
     pub(super) infer_slots: Box<[[u32; 4]; EAGER_SLOTS]>,
-    /// Entries of `infer_memo` checked under the declaration's universe
-    /// parameters, as `level_checked`.
-    pub(super) level_checked_memo: Vec<usize>,
     level_cache: lsub::Lsub<LevelId>,
     list_cache: lsub::Lsub<LevelList>,
     /// Universe parameter lists by their names (see `lsub::ParamClasses`).
@@ -296,7 +293,6 @@ impl<'e> Nbe<'e> {
             tuple_slots: val::table(val::NONE),
             infer_memo: Default::default(),
             infer_slots: val::table(val::NONE),
-            level_checked_memo: Vec::new(),
             level_cache: Default::default(),
             list_cache: Default::default(),
             param_classes: Default::default(),
@@ -408,9 +404,6 @@ impl<'e> Nbe<'e> {
         self.open_count.clear();
         for v in self.level_checked.drain(..) {
             self.a.clear_checked(v);
-        }
-        for i in self.level_checked_memo.drain(..) {
-            self.infer_memo.set(i, 1, 0);
         }
         self.fresh = self.a.is_empty();
     }
@@ -540,7 +533,6 @@ impl<'e> Nbe<'e> {
         self.tuple_slots.fill([val::NONE; 5]);
         self.infer_memo.clear();
         self.infer_slots.fill([val::NONE; 4]);
-        self.level_checked_memo.clear();
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;

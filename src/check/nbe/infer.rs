@@ -454,7 +454,7 @@ impl Nbe<'_> {
                 let i = entry as usize;
                 let words = self.infer_memo.get(i);
                 let ty = words[0];
-                if ty != NONE && (infer_only || words[1] != 0) {
+                if ty != NONE && (infer_only || self.infer_memo_checked(words[1])) {
                     if !infer_only && !has_level_param {
                         self.infer_slots[slot] = [e.0, key_env.0, NONE, ty];
                     }
@@ -662,11 +662,16 @@ impl Nbe<'_> {
         }
     }
 
-    fn ikey_checked(&self, k: IKey) -> bool {
+    fn ikey_checked(&mut self, k: IKey) -> bool {
         match k {
-            IKey::Memo(i) => self.infer_memo.get(i)[1] != 0,
+            IKey::Memo(i) => self.infer_memo_checked(self.infer_memo.get(i)[1]),
             IKey::Thunk(t) => self.a.checked(t),
         }
+    }
+
+    #[inline]
+    fn infer_memo_checked(&mut self, scope: u32) -> bool {
+        scope == u32::MAX || (scope != 0 && u64::from(scope) == self.lparams_key())
     }
 
     /// Mark `k` checked; under the declaration's universe parameters only
@@ -674,10 +679,16 @@ impl Nbe<'_> {
     fn ikey_set_checked(&mut self, k: IKey, levels: bool) {
         match k {
             IKey::Memo(i) => {
-                self.infer_memo.set(i, 1, 1);
-                if levels {
-                    self.level_checked_memo.push(i);
-                }
+                let scope = if levels {
+                    let key = self.lparams_key();
+                    if key >= u64::from(u32::MAX) {
+                        return;
+                    }
+                    key as u32
+                } else {
+                    u32::MAX
+                };
+                self.infer_memo.set(i, 1, scope);
             }
             IKey::Thunk(t) => {
                 self.a.set_checked(t);
