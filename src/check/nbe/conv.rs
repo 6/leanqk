@@ -1311,11 +1311,11 @@ impl Nbe<'_> {
             return false;
         }
         // Terms are DAGs: remember what was compared at the same depth.
-        let memo = k_l == d
+        if k_l == d
             && k_r == d
-            && matches!(self.st.node(t_l), ExprNode::App(..))
-            && matches!(self.st.node(t_r), ExprNode::App(..));
-        if memo {
+            && let ExprNode::App(f_l, a_l) = self.st.node(t_l)
+            && let ExprNode::App(f_r, a_r) = self.st.node(t_r)
+        {
             let key = [t_l.0, e_l.0, l_l.0, t_r.0, e_r.0, l_r.0, d];
             let h = crate::hash::hash2(
                 (t_l.0 as u64) << 32 | t_r.0 as u64,
@@ -1330,7 +1330,9 @@ impl Nbe<'_> {
             if s[..7] == key {
                 return s[7] != 0;
             }
-            let r = self.syn_eq_t_node(t_l, e_l, l_l, k_l, t_r, e_r, l_r, k_r, d, budget);
+            *budget -= 1;
+            let r = self.syn_eq_t(f_l, e_l, l_l, k_l, f_r, e_r, l_r, k_r, d, budget)
+                && self.syn_eq_t(a_l, e_l, l_l, k_l, a_r, e_r, l_r, k_r, d, budget);
             if r || *budget > 0 {
                 let mut e = [0; 8];
                 e[..7].copy_from_slice(&key);
