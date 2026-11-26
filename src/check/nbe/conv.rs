@@ -73,9 +73,8 @@ impl PairCache {
     }
 }
 
-/// Steps a failed structural comparison must have taken to be remembered
-/// (`SYN_FAIL`): a cheaper one is cheaper to try again than to remember.
-const SYN_FAIL_MIN: u32 = 4;
+/// Minimum work to memoize a failed value comparison or a mixed comparison.
+const SYN_MEMO_MIN: u32 = 4;
 
 fn compare_hints(h_l: Hints, h_r: Hints) -> i32 {
     match (h_l, h_r) {
@@ -1235,7 +1234,7 @@ impl Nbe<'_> {
         };
         if r {
             self.pset(t, s, SYN_OK);
-        } else if *budget > 0 && start - *budget >= SYN_FAIL_MIN {
+        } else if *budget > 0 && start - *budget >= SYN_MEMO_MIN {
             self.pset(t, s, SYN_FAIL);
         }
         r
@@ -1376,7 +1375,26 @@ impl Nbe<'_> {
         *budget -= 1;
         let (n_l, n_r) = (self.st.node(t_l), self.st.node(t_r));
         match (n_l, n_r) {
-            (ExprNode::BVar(i), ExprNode::BVar(j)) if i < d || j < d => return i == j,
+            (ExprNode::BVar(i), ExprNode::BVar(j)) => {
+                if i < d || j < d {
+                    return i == j;
+                }
+                if i < k_l || *budget == 0 {
+                    return false;
+                }
+                let Some(x) = self.a.lookup(e_l, i - k_l) else {
+                    return false;
+                };
+                // Charge for the right variable as in the mixed comparison.
+                *budget -= 1;
+                if j < k_r {
+                    return false;
+                }
+                return match self.a.lookup(e_r, j - k_r) {
+                    Some(y) => self.syn_eq_v(x, y, budget),
+                    None => false,
+                };
+            }
             (ExprNode::BVar(i), _) if i >= d => {
                 if i < k_l {
                     return false;
@@ -1493,8 +1511,8 @@ impl Nbe<'_> {
             return self.syn_eq_vt_node(x, t, node, e, l, k, budget, flip);
         }
 
-        // The term-pair memo uses binder depths; the sentinel reserves a
-        // separate key space for a value compared with an open term.
+        // Term pairs have a binder depth bounded by SYN_BUDGET in word 6.
+        // Reserve u32::MAX there for value–term pairs.
         let key = [x.0, t.0, e.0, l.0, k, u32::from(flip), u32::MAX];
         let h = crate::hash::hash2(
             u64::from(x.0) << 32 | u64::from(t.0),
@@ -1507,7 +1525,7 @@ impl Nbe<'_> {
         }
         let before = *budget;
         let equal = self.syn_eq_vt_node(x, t, node, e, l, k, budget, flip);
-        if before - *budget >= SYN_FAIL_MIN && (equal || *budget > 0) {
+        if before - *budget >= SYN_MEMO_MIN && (equal || *budget > 0) {
             let mut entry = [0; 8];
             entry[..7].copy_from_slice(&key);
             entry[7] = u32::from(equal);
