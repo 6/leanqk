@@ -543,9 +543,13 @@ impl Nbe<'_> {
         if self.a.sp_has_proj(sp) {
             return None;
         }
+        self.delta_decl(n, ls).map(|d| (d, ls, sp))
+    }
+
+    fn delta_decl(&self, n: NameId, ls: LevelList) -> Option<Decl> {
         let d = self.find(n)?;
         Self::decl_value(&d)?;
-        (self.st.list(ls).len() == d.level_params.len()).then_some((d, ls, sp))
+        (self.st.list(ls).len() == d.level_params.len()).then_some(d)
     }
 
     pub fn unfold_definition(&mut self, v: V) -> Option<V> {
@@ -653,6 +657,10 @@ impl Nbe<'_> {
         if ls != LevelList::EMPTY || self.a.sp_has_proj(sp) {
             return Ok(None);
         }
+        self.reduce_nat_app(n, sp)
+    }
+
+    fn reduce_nat_app(&mut self, n: NameId, sp: Sp) -> R<Option<V>> {
         match self.a.sp_len(sp) {
             1 if Some(n) == self.ext.nat_succ => {
                 let Elim::Arg(a) = self.a.sp_elim(sp, 0) else {
@@ -866,14 +874,28 @@ impl Nbe<'_> {
             if rec.whnf != NONE {
                 break V(rec.whnf);
             }
-            let t_l = self.whnf_core(t, false, false)?;
-            if self.a.r(t_l).whnf_normal() {
+            let t_l = if rec.core_normal() {
+                t
+            } else {
+                let r = self.whnf_core_non_normal(t, false, false)?;
+                if self.a.r(r).whnf_normal() {
+                    break r;
+                }
+                r
+            };
+            let Val::Const(name, ls, sp) = self.a.get(t_l) else {
+                break t_l;
+            };
+            if self.a.sp_has_proj(sp) {
                 break t_l;
             }
-            if let Some(n) = self.reduce_nat(t_l)? {
+            if ls == LevelList::EMPTY
+                && self.ext.nat.is_some()
+                && let Some(n) = self.reduce_nat_app(name, sp)?
+            {
                 break n;
             }
-            let Some((d, ls, sp)) = self.delta_head(t_l) else {
+            let Some(d) = self.delta_decl(name, ls) else {
                 break t_l;
             };
             if first {
