@@ -285,7 +285,7 @@ pub struct Arena {
     thunks: Box<[[u32; 4]; THUNKS]>,
     /// Neutrals by head and spine contents, so that applying a neutral to
     /// arguments finds the result with one probe.
-    nutable: Table,
+    nutable: Table32<{ LIMIT.ilog2() }>,
     /// Environments by their last entry and the rest (direct-mapped, in
     /// front of `envtable`): (rest, entry, environment).
     conses: Box<[[u32; 3]; CONSES]>,
@@ -359,7 +359,7 @@ impl Arena {
                 .try_into()
                 .expect("HEADS slots"),
             thunks: table(NONE),
-            nutable: Table::new(),
+            nutable: Table32::new(),
             conses: table(NONE),
             apps: table(NONE),
             projs: table(NONE),
@@ -420,7 +420,7 @@ impl Arena {
             + self.sptable.capacity() * 8
             + self.envs.capacity() * 17
             + self.thunks.len() * 16
-            + self.nutable.capacity() * 8
+            + self.nutable.capacity() * size_of::<u32>()
             + self.conses.len() * 12
             + self.envtable.capacity() * size_of::<u32>()
     }
@@ -707,24 +707,7 @@ impl Arena {
     /// else made, with `sp` as its spine if given (else a copy). Applied
     /// neutrals are made here only, so that one probe finds them.
     fn neutral_in(&mut self, head: Val, k: usize, n: usize, xs: &[V], sp: Option<Sp>) -> V {
-        let (tag, a, b) = match head {
-            Val::Const(n, l, _) => (0u64, n.0, l.0),
-            Val::FVar(k, _) => (1u64, k, 0),
-            _ => unreachable!(),
-        };
-        let mut h = crate::hash::hash_front(tag | (a as u64) << 32, b as u64);
-        // One step per elimination (its two words).
-        for w in at_slice(&self.sps, k, k + 2 * n).as_chunks::<2>().0 {
-            let x = w[0] as u64 | (w[1] as u64) << 32;
-            h = (h.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
-        }
-        for x in xs {
-            let x = x.0 as u64 | (NONE as u64) << 32;
-            h = (h.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
-        }
-        let h = h32(h);
-        #[cfg(test)]
-        let h = if tests::COLLIDE.get() { 7 } else { h };
+        let h = Self::neutral_hash(head, at_slice(&self.sps, k, k + 2 * n), xs);
         let Self {
             vals,
             sps,
@@ -788,8 +771,16 @@ impl Arena {
         if id >= LIMIT {
             out_of_room();
         }
-        nutable.insert_at(slot, h, id);
         vals.push(val);
+        nutable.insert_at(slot, h, id, |id| {
+            let head = *at(vals, id as usize);
+            let (Val::Const(_, _, sp) | Val::FVar(_, sp)) = head else {
+                unreachable!()
+            };
+            let k = sp.0 as usize;
+            let n = (*at(sps, k) & LEN_BITS) as usize;
+            Self::neutral_hash(head, at_slice(sps, k + 1, k + 1 + 2 * n), &[])
+        });
         let fv = matches!(head, Val::FVar(..)) || sps[sp.0 as usize] & HAS_FVAR_BIT != 0;
         recs.push(Rec {
             flags: if fv { HAS_FVAR } else { 0 },
@@ -800,6 +791,30 @@ impl Arena {
             delta: NONE,
         });
         V(id)
+    }
+
+    #[inline]
+    fn neutral_hash(head: Val, spine: &[u32], xs: &[V]) -> u32 {
+        #[cfg(test)]
+        if tests::COLLIDE.get() {
+            return 7;
+        }
+        let (tag, a, b) = match head {
+            Val::Const(n, l, _) => (0u64, n.0, l.0),
+            Val::FVar(k, _) => (1u64, k, 0),
+            _ => unreachable!(),
+        };
+        let mut h = crate::hash::hash_front(tag | (a as u64) << 32, b as u64);
+        // One step per elimination (its two words).
+        for w in spine.as_chunks::<2>().0 {
+            let x = w[0] as u64 | (w[1] as u64) << 32;
+            h = (h.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
+        }
+        for x in xs {
+            let x = x.0 as u64 | (NONE as u64) << 32;
+            h = (h.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
+        }
+        h32(h)
     }
 
     /// `sp` followed by the arguments `xs`.
@@ -1063,6 +1078,22 @@ mod tests {
         for proj_first in [true, false] {
             let (p, q) = proj_and_arg(proj_first);
             assert_ne!(p, q, "proj_first: {proj_first}");
+        }
+    }
+
+    #[test]
+    fn neutral_keys_survive_table_growth() {
+        let mut a = Arena::new();
+        let x = a.sort(LevelId::ZERO);
+        let base = a.snoc(Sp::NIL, Elim::Proj(NameId(1), 0));
+        let complete = a.snoc(base, Elim::Arg(x));
+        let capacity = a.nutable.capacity();
+        let values: Vec<_> = (0..40)
+            .map(|k| a.neutral(Val::FVar(k, base), &[x]))
+            .collect();
+        assert!(a.nutable.capacity() > capacity);
+        for (k, v) in values.into_iter().enumerate() {
+            assert_eq!(a.mk(Val::FVar(k as u32, complete)), v);
         }
     }
 }
