@@ -83,6 +83,24 @@ fn h32(h: u64) -> u32 {
     (h >> 32) as u32 ^ h as u32
 }
 
+/// `v[i]`, with the bound checked in debug builds only: ids index the
+/// arena that made them (and caches holding ids are cleared with it).
+#[inline(always)]
+#[allow(unsafe_code)]
+fn at<T>(v: &[T], i: usize) -> &T {
+    debug_assert!(i < v.len(), "arena index {i} out of bounds");
+    // SAFETY: as above, `i` is below the length.
+    unsafe { v.get_unchecked(i) }
+}
+
+#[inline(always)]
+#[allow(unsafe_code)]
+fn at_mut<T>(v: &mut [T], i: usize) -> &mut T {
+    debug_assert!(i < v.len(), "arena index {i} out of bounds");
+    // SAFETY: as `at`.
+    unsafe { v.get_unchecked_mut(i) }
+}
+
 impl Val {
     #[inline]
     fn hash(&self) -> u32 {
@@ -342,28 +360,28 @@ impl Arena {
 
     #[inline]
     pub fn get(&self, v: V) -> Val {
-        self.vals[v.0 as usize]
+        *at(&self.vals, v.0 as usize)
     }
 
     /// What is known about `v`.
     #[inline]
     pub fn r(&self, v: V) -> &Rec {
-        &self.recs[v.0 as usize]
+        at(&self.recs, v.0 as usize)
     }
 
     #[inline]
     pub fn rm(&mut self, v: V) -> &mut Rec {
-        &mut self.recs[v.0 as usize]
+        at_mut(&mut self.recs, v.0 as usize)
     }
 
     #[inline]
     pub fn has_fvar(&self, v: V) -> bool {
-        self.recs[v.0 as usize].flags & HAS_FVAR != 0
+        at(&self.recs, v.0 as usize).flags & HAS_FVAR != 0
     }
 
     #[inline]
     pub fn checked(&self, v: V) -> bool {
-        self.recs[v.0 as usize].flags & CHECKED != 0
+        at(&self.recs, v.0 as usize).flags & CHECKED != 0
     }
 
     #[inline]
@@ -461,7 +479,7 @@ impl Arena {
     }
 
     fn env_flags(&self, e: Env) -> u32 {
-        if self.envs[e.0 as usize].len & HAS_FVAR_BIT != 0 {
+        if at(&self.envs, e.0 as usize).len & HAS_FVAR_BIT != 0 {
             HAS_FVAR
         } else {
             0
@@ -472,13 +490,13 @@ impl Arena {
 
     #[inline]
     pub fn sp_len(&self, sp: Sp) -> u32 {
-        self.sps[sp.0 as usize] & LEN_BITS
+        *at(&self.sps, sp.0 as usize) & LEN_BITS
     }
 
     /// Whether `sp` has a projection.
     #[inline]
     pub fn sp_has_proj(&self, sp: Sp) -> bool {
-        self.sps[sp.0 as usize] & HAS_PROJ_BIT != 0
+        *at(&self.sps, sp.0 as usize) & HAS_PROJ_BIT != 0
     }
 
     /// The length of the application-only prefix of a spine.
@@ -500,7 +518,7 @@ impl Arena {
     #[inline]
     pub fn sp_elim(&self, sp: Sp, i: u32) -> Elim {
         let k = sp.0 as usize + 1 + 2 * i as usize;
-        let (a, b) = (self.sps[k], self.sps[k + 1]);
+        let (a, b) = (*at(&self.sps, k), *at(&self.sps, k + 1));
         if b == NONE {
             Elim::Arg(V(a))
         } else {
@@ -513,7 +531,7 @@ impl Arena {
     pub(super) fn sp_arg(&self, sp: Sp, i: u32) -> V {
         let k = sp.0 as usize + 1 + 2 * i as usize;
         debug_assert!(i < self.sp_len(sp) && self.sps[k + 1] == NONE);
-        V(self.sps[k])
+        V(*at(&self.sps, k))
     }
 
     /// Append an application-only range of a spine.
@@ -771,7 +789,7 @@ impl Arena {
 
     #[inline]
     pub fn env_len(&self, e: Env) -> u32 {
-        self.envs[e.0 as usize].len & LEN_BITS
+        at(&self.envs, e.0 as usize).len & LEN_BITS
     }
 
     #[inline]
@@ -823,35 +841,35 @@ impl Arena {
 
     #[inline]
     pub fn env_head(&self, e: Env) -> V {
-        self.envs[e.0 as usize].node.v
+        at(&self.envs, e.0 as usize).node.v
     }
 
     #[inline]
     pub fn env_tail(&self, e: Env) -> Env {
-        self.envs[e.0 as usize].node.prev
+        at(&self.envs, e.0 as usize).node.prev
     }
 
     /// The value of bound variable `i` (0 is the innermost).
     #[inline]
     pub fn lookup(&self, env: Env, i: u32) -> Option<V> {
-        let mut r = self.envs[env.0 as usize];
+        let mut r = *at(&self.envs, env.0 as usize);
         let len = r.len & LEN_BITS;
         if i >= len {
             return None;
         }
         if i < 8 {
             for _ in 0..i {
-                r = self.envs[r.node.prev.0 as usize];
+                r = *at(&self.envs, r.node.prev.0 as usize);
             }
             return Some(r.node.v);
         }
         let target = len - i;
         while r.len & LEN_BITS != target {
-            let j = self.envs[r.jump.0 as usize];
+            let j = *at(&self.envs, r.jump.0 as usize);
             r = if j.len & LEN_BITS >= target {
                 j
             } else {
-                self.envs[r.node.prev.0 as usize]
+                *at(&self.envs, r.node.prev.0 as usize)
             };
         }
         Some(r.node.v)
