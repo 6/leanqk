@@ -366,6 +366,10 @@ pub type PreCheck<'p> = dyn FnMut(ExprId, &[NameId], u32) -> bool + 'p;
 /// well-typed, and must be the export's own (`compare_decl`).
 const CHECK_RECURSORS: bool = false;
 
+/// Whether a constructor's fields (and a recursive field's telescope) are
+/// made once for the recursors' types and rules: each binds them.
+const FIELDS_ONCE: bool = true;
+
 /// Whether `ElimNested::run` first looks for what it would replace, and
 /// leaves a block with nothing to replace as it is.
 const NESTED_SCAN: bool = true;
@@ -392,6 +396,10 @@ struct AddInd<'a, 'e> {
     rec_infos: Vec<RecInfo>,
     rec_names: Vec<NameId>,
     out: Vec<Decl>,
+    /// `ctor_fields` with recursive fields, by constructor type.
+    fields: IdMap<ExprId, (Vec<ExprId>, Vec<ExprId>, ExprId)>,
+    /// `rec_field_telescope`, by recursive field.
+    teles: IdMap<ExprId, (Vec<ExprId>, ExprId)>,
 }
 
 impl<'a, 'e> AddInd<'a, 'e> {
@@ -418,6 +426,8 @@ impl<'a, 'e> AddInd<'a, 'e> {
             rec_infos: Vec::new(),
             rec_names: Vec::new(),
             out: Vec::new(),
+            fields: IdMap::default(),
+            teles: IdMap::default(),
         }
     }
 
@@ -788,8 +798,22 @@ impl<'a, 'e> AddInd<'a, 'e> {
         Ok((r, args[self.nparams..].to_vec()))
     }
 
-    /// Fields and recursive fields of a constructor, as fresh locals.
-    fn ctor_fields(
+    /// Fields and recursive fields of a constructor, as locals: with
+    /// `want_rec`, made once per constructor type (`FIELDS_ONCE`), as the
+    /// terms they go into bind them.
+    fn ctor_fields(&mut self, t: ExprId, want_rec: bool) -> R<(Vec<ExprId>, Vec<ExprId>, ExprId)> {
+        if FIELDS_ONCE && want_rec {
+            if let Some(r) = self.fields.get(&t) {
+                return Ok(r.clone());
+            }
+            let r = self.ctor_fields_new(t, true)?;
+            self.fields.insert(t, r.clone());
+            return Ok(r);
+        }
+        self.ctor_fields_new(t, want_rec)
+    }
+
+    fn ctor_fields_new(
         &mut self,
         mut t: ExprId,
         want_rec: bool,
@@ -815,6 +839,18 @@ impl<'a, 'e> AddInd<'a, 'e> {
 
     /// The telescope of a recursive field's type: its arguments and result.
     fn rec_field_telescope(&mut self, u_i: ExprId) -> R<(Vec<ExprId>, ExprId)> {
+        if FIELDS_ONCE {
+            if let Some(r) = self.teles.get(&u_i) {
+                return Ok(r.clone());
+            }
+            let r = self.rec_field_telescope_new(u_i)?;
+            self.teles.insert(u_i, r.clone());
+            return Ok(r);
+        }
+        self.rec_field_telescope_new(u_i)
+    }
+
+    fn rec_field_telescope_new(&mut self, u_i: ExprId) -> R<(Vec<ExprId>, ExprId)> {
         let ty = self.tc.infer(u_i)?;
         let mut t = self.tc.whnf(ty)?;
         let mut xs = Vec::new();
