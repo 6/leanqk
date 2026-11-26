@@ -202,7 +202,7 @@ impl Nbe<'_> {
         let eq = |&i: &u32| {
             let i = i as usize;
             *val::at(keys, i) == k.h
-                && *val::at_slice(keys, i + 1, i + 7) == k.head
+                && (0..6).all(|j| *val::at(keys, i + 1 + j) == k.head[j])
                 && val::at_slice(keys, i + 7, i + 7 + cnt)
                     .iter()
                     .zip(vals)

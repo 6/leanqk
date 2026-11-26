@@ -557,7 +557,7 @@ impl<'e> Nbe<'e> {
             slot.set((n.0, i));
             i
         };
-        (i < self.limit).then(|| self.st.decls[i as usize])
+        (i < self.limit).then(|| *val::at(self.st.decls, i as usize))
     }
 
     pub fn get(&self, n: NameId) -> R<Decl> {
