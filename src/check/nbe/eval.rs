@@ -364,15 +364,11 @@ impl Nbe<'_> {
         if induct != s {
             return None;
         }
-        let k = (num_params + i) as usize;
-        if k >= self.a.sp_len(sp) as usize {
+        let k = num_params + i;
+        if k >= self.a.sp_len(sp) || self.a.sp_has_proj(sp) {
             return None;
         }
-        let mut args = Vec::new();
-        if !self.a.args(sp, &mut args) {
-            return None;
-        }
-        args.get(k).copied()
+        Some(self.a.sp_arg(sp, k))
     }
 
     /// The projection `v.i` of the structure `s`: the field if `v` is a
