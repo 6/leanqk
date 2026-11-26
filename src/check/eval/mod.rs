@@ -227,8 +227,6 @@ impl State {
     }
 }
 
-/// A constant is memoized while at least one lookup in `MEMO_RATIO` hits,
-/// judged after `MEMO_TRIAL` lookups.
 /// Whether a decision `Decidable.intro p b h` is answered without reading
 /// back its proof `h`, as `isTrue` and `isFalse` are (`decided`).
 const DECIDED_INTRO: bool = true;
@@ -240,6 +238,8 @@ const DECIDED_INTRO: bool = true;
 /// the run start again keeping proofs.
 const EAGER_PROOF_TERMS: bool = false;
 
+/// A constant is memoized while at least one lookup in `MEMO_RATIO` hits,
+/// judged after `MEMO_TRIAL` lookups.
 const MEMO_TRIAL: u32 = 256;
 const MEMO_RATIO: u32 = 32;
 
