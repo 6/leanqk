@@ -267,7 +267,7 @@ pub struct Arena {
     /// Recently made constants and sorts with no arguments, by a hash of
     /// their name and levels (direct-mapped, in front of `vtable`): the
     /// value of a constant is made at every occurrence.
-    heads: Vec<(u32, u32, V)>,
+    heads: Box<[(u32, u32, V); HEADS]>,
     /// The thunks of terms by their environment before it is trimmed
     /// (direct-mapped, in front of trimming and `vtable`): (term,
     /// environment, substitution, thunk).
@@ -318,7 +318,10 @@ impl Arena {
                 levels: LevelList::EMPTY,
             }],
             lstable: HashTable::new(),
-            heads: vec![(NONE, NONE, V(NONE)); HEADS],
+            heads: vec![(NONE, NONE, V(NONE)); HEADS]
+                .into_boxed_slice()
+                .try_into()
+                .expect("HEADS slots"),
             thunks: table(NONE),
             nutable: HashTable::new(),
             conses: table(NONE),
@@ -404,12 +407,12 @@ impl Arena {
 
     #[inline]
     pub fn set_checked(&mut self, v: V) {
-        self.recs[v.0 as usize].flags |= CHECKED;
+        at_mut(&mut self.recs, v.0 as usize).flags |= CHECKED;
     }
 
     #[inline]
     pub fn clear_checked(&mut self, v: V) {
-        self.recs[v.0 as usize].flags &= !CHECKED;
+        at_mut(&mut self.recs, v.0 as usize).flags &= !CHECKED;
     }
 
     /// `mk(Val::Const(n, l, Sp::NIL))`.
@@ -524,7 +527,7 @@ impl Arena {
             return len;
         }
         let start = sp.0 as usize + 1;
-        self.sps[start..start + 2 * len as usize]
+        at_slice(&self.sps, start, start + 2 * len as usize)
             .as_chunks::<2>()
             .0
             .iter()
@@ -556,7 +559,7 @@ impl Arena {
     pub(super) fn extend_sp_args(&self, sp: Sp, start: u32, end: u32, out: &mut Vec<V>) {
         debug_assert!(start <= end && end <= self.sp_len(sp));
         let k = sp.0 as usize + 1;
-        let words = &self.sps[k + 2 * start as usize..k + 2 * end as usize];
+        let words = at_slice(&self.sps, k + 2 * start as usize, k + 2 * end as usize);
         out.extend(words.as_chunks::<2>().0.iter().map(|&[a, tag]| {
             debug_assert_eq!(tag, NONE);
             V(a)
@@ -577,7 +580,7 @@ impl Arena {
         let mut buf = std::mem::take(&mut self.sp_buf);
         buf.clear();
         let k = sp.0 as usize + 1;
-        buf.extend_from_slice(&self.sps[k..k + 2 * n as usize]);
+        buf.extend_from_slice(at_slice(&self.sps, k, k + 2 * n as usize));
         let r = self.intern_sp(&buf);
         self.sp_buf = buf;
         r
@@ -737,7 +740,7 @@ impl Arena {
         buf.clear();
         let k = sp.0 as usize + 1;
         let n = self.sp_len(sp) as usize;
-        buf.extend_from_slice(&self.sps[k..k + 2 * n]);
+        buf.extend_from_slice(at_slice(&self.sps, k, k + 2 * n));
         buf
     }
 
@@ -799,7 +802,12 @@ impl Arena {
         }
         let k = sp.0 as usize + 1;
         let n = self.sp_len(sp) as usize;
-        out.extend(self.sps[k..k + 2 * n].iter().step_by(2).map(|&a| V(a)));
+        out.extend(
+            at_slice(&self.sps, k, k + 2 * n)
+                .iter()
+                .step_by(2)
+                .map(|&a| V(a)),
+        );
         true
     }
 
@@ -897,7 +905,7 @@ impl Arena {
     pub fn env_values(&self, mut env: Env, out: &mut Vec<V>) {
         out.clear();
         while env != Env::NIL {
-            let n = self.envs[env.0 as usize].node;
+            let n = at(&self.envs, env.0 as usize).node;
             out.push(n.v);
             env = n.prev;
         }
@@ -906,7 +914,7 @@ impl Arena {
     // ---- universe substitutions ----
 
     pub fn ls(&self, l: Ls) -> LsNode {
-        self.lss[l.0 as usize]
+        *at(&self.lss, l.0 as usize)
     }
 
     pub fn mk_ls(&mut self, params: NameList, levels: LevelList) -> Ls {
