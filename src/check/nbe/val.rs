@@ -823,12 +823,14 @@ impl Arena {
 
     #[inline]
     pub fn cons(&mut self, env: Env, v: V) -> Env {
-        let h = hash2(env.0 as u64 | 2 << 40, v.0 as u64);
-        let i = (h >> 50) as usize & (CONSES - 1);
+        let i = (crate::hash::hash_front(env.0 as u64 | 2 << 40, v.0 as u64) >> 50) as usize
+            & (CONSES - 1);
         let s = self.conses[i];
         if s[0] == env.0 && s[1] == v.0 {
             return Env(s[2]);
         }
+        // The table's hash only past the front.
+        let h = hash2(env.0 as u64 | 2 << 40, v.0 as u64);
         let r = self.cons_find(env, v, h32(h));
         self.conses[i] = [env.0, v.0, r.0];
         r
