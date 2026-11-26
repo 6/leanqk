@@ -69,25 +69,26 @@ impl Nbe<'_> {
                 let (ExprNode::Lam(_, _, _, b) | ExprNode::Pi(_, _, _, b)) = self.st.node(t) else {
                     unreachable!()
                 };
-                let env2 = if self.st.has_loose_bvars(b) {
-                    self.a.cons(env, x)
-                } else {
-                    Env::NIL
-                };
+                let env2 = self.bind_value(b, env, x);
                 Ok(self.eval(b, env2, ls))
             }
             Val::PiInfer(t, env, ls) => {
                 let ExprNode::Lam(_, _, _, b) = self.st.node(t) else {
                     unreachable!()
                 };
-                let env2 = if self.st.has_loose_bvars(b) {
-                    self.a.cons(env, x)
-                } else {
-                    Env::NIL
-                };
+                let env2 = self.bind_value(b, env, x);
                 self.infer_term(b, env2, ls, true)
             }
             _ => unreachable!(),
+        }
+    }
+
+    #[inline]
+    fn bind_value(&mut self, body: ExprId, env: Env, arg: V) -> Env {
+        if self.st.has_loose_bvars(body) {
+            self.a.cons(env, arg)
+        } else {
+            Env::NIL
         }
     }
 
@@ -234,6 +235,9 @@ impl Nbe<'_> {
         if sp == Sp::NIL {
             return Ok(t);
         }
+        if !self.a.sp_has_proj(sp) {
+            return self.apply_type_args(t, sp);
+        }
         let mut last_proj = None;
         for i in 0..self.a.sp_len(sp) {
             match self.a.sp_elim(sp, i) {
@@ -266,6 +270,40 @@ impl Nbe<'_> {
             }
         }
         Ok(t)
+    }
+
+    /// Walk ordinary Π binders in an application-only spine without
+    /// allocating a value for each intermediate binder.
+    fn apply_type_args(&mut self, mut ty: V, sp: Sp) -> R<V> {
+        let end = self.a.sp_len(sp);
+        let mut i = 0;
+        while i < end {
+            let pi = self.ensure_pi(ty)?;
+            let Val::Pi(e, mut env, ls) = pi else {
+                let arg = self.a.sp_arg(sp, i);
+                ty = self.instantiate_binder(pi, arg)?;
+                i += 1;
+                continue;
+            };
+            let mut binder = self.st.node(e);
+            loop {
+                let ExprNode::Pi(_, _, _, body) = binder else {
+                    unreachable!()
+                };
+                let arg = self.a.sp_arg(sp, i);
+                env = self.bind_value(body, env, arg);
+                i += 1;
+                if i < end {
+                    binder = self.st.node(body);
+                    if matches!(binder, ExprNode::Pi(..)) {
+                        continue;
+                    }
+                }
+                ty = self.eval(body, env, ls);
+                break;
+            }
+        }
+        Ok(ty)
     }
 
     fn proj_error(&mut self, x: V, s: NameId, i: u32) -> KErr {
