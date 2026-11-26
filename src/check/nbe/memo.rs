@@ -257,7 +257,9 @@ impl Nbe<'_> {
     }
 
     /// `read_tuple` past its front: the record is written at the end of
-    /// `tuples` as it is read, and dropped if it is there already.
+    /// `tuples` as it is read, and dropped if it is there already. Out of
+    /// line, so that a call met in the front costs no frame for it.
+    #[inline(never)]
     fn read_tuple_in_place(&mut self, env: Env, n: u32, holes: u64) -> u32 {
         let TupleMemo { table, words } = &mut self.tuples;
         let base = words.len();
@@ -281,9 +283,9 @@ impl Nbe<'_> {
         let slot = match table.find_or_slot(h, |i| {
             let i = i as usize;
             // Equal ranges and hole masks give equal numbers of values.
-            val::at_slice(words, i, i + head.len()) == head
-                && val::at_slice(words, i + head.len(), i + len)
-                    == val::at_slice(words, base + head.len(), end)
+            // Word by word: a call to compare memory costs more than the
+            // loop for records this short.
+            (0..len).all(|j| *val::at(words, i + j) == *val::at(words, base + j))
         }) {
             Ok(i) => {
                 words.truncate(base);
