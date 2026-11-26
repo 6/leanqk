@@ -7,7 +7,7 @@
 
 use std::mem;
 
-use crate::expr::{ExprId, ExprNode};
+use crate::expr::{ExprData, ExprId, ExprNode};
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
@@ -19,18 +19,76 @@ fn lookup_param(ps: &[NameId], ls: &[LevelId], n: NameId) -> Option<LevelId> {
     ls.get(i).copied()
 }
 
-/// What a traversal does at the leaves.
+/// The metadata needed to skip a subtree, and the effect on its leaves.
+trait Rewrite: Copy {
+    fn affects(self, data: ExprData, off: u32) -> bool;
+
+    fn bvar(self, _store: &mut Store<'_>, e: ExprId, _i: u32, _off: u32) -> ExprId {
+        e
+    }
+
+    fn fvar(self, _store: &mut Store<'_>, e: ExprId, _off: u32) -> ExprId {
+        e
+    }
+}
+
 #[derive(Clone, Copy)]
-enum Op<'a> {
-    /// `#(off + i) ↦ s[i]` for `i < s.len()` (or `s[len - 1 - i]` if `rev`);
-    /// larger indices drop by `s.len()`.
-    Inst { s: &'a [ExprId], rev: bool },
-    /// `fvars[i] ↦ #(off + len - 1 - i)`.
-    Abstract { fvars: &'a [ExprId] },
-    /// Indices at least `off + s` move up by `d`.
-    Lift { s: u32, d: u32 },
-    /// Indices at least `off + s` move down by `d` (they must be `>= off + s + d`).
-    Lower { s: u32, d: u32 },
+struct Instantiate<'a> {
+    args: &'a [ExprId],
+    rev: bool,
+}
+
+impl Rewrite for Instantiate<'_> {
+    fn affects(self, data: ExprData, off: u32) -> bool {
+        data.loose_bvar_range() > off
+    }
+
+    fn bvar(self, store: &mut Store<'_>, _e: ExprId, i: u32, off: u32) -> ExprId {
+        let slot = i - off;
+        let len = self.args.len();
+        if slot >= len as u32 {
+            return store.bvar(i - len as u32);
+        }
+        let slot = slot as usize;
+        let v = self.args[if self.rev { len - 1 - slot } else { slot }];
+        if off > 0 && store.has_loose_bvars(v) {
+            store.lift_loose(v, 0, off)
+        } else {
+            v
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Abstract<'a>(&'a [ExprId]);
+
+impl Rewrite for Abstract<'_> {
+    fn affects(self, data: ExprData, _off: u32) -> bool {
+        data.has_fvar()
+    }
+
+    fn fvar(self, store: &mut Store<'_>, e: ExprId, off: u32) -> ExprId {
+        match self.0.iter().rev().position(|&f| f == e) {
+            Some(i) => store.bvar(off + i as u32),
+            None => e,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Shift<const UP: bool> {
+    cutoff: u32,
+    amount: u32,
+}
+
+impl<const UP: bool> Rewrite for Shift<UP> {
+    fn affects(self, data: ExprData, off: u32) -> bool {
+        data.loose_bvar_range() > off + self.cutoff
+    }
+
+    fn bvar(self, store: &mut Store<'_>, _e: ExprId, i: u32, _off: u32) -> ExprId {
+        store.bvar(if UP { i + self.amount } else { i - self.amount })
+    }
 }
 
 impl Store<'_> {
@@ -47,71 +105,33 @@ impl Store<'_> {
         self.memo = m;
     }
 
-    fn skip(&self, e: ExprId, off: u32, op: Op<'_>) -> bool {
-        let d = self.data(e);
-        match op {
-            Op::Inst { .. } => d.loose_bvar_range() <= off,
-            Op::Lift { s, .. } | Op::Lower { s, .. } => d.loose_bvar_range() <= off + s,
-            Op::Abstract { .. } => !d.has_fvar(),
-        }
-    }
-
+    #[inline(always)]
     fn walk(
         &mut self,
         e: ExprId,
         off: u32,
-        op: Op<'_>,
+        op: impl Rewrite,
         memo: &mut IdMap<(ExprId, u32), ExprId>,
     ) -> ExprId {
-        if self.skip(e, off, op) {
-            return e;
+        if op.affects(self.data(e), off) {
+            self.rewrite(e, off, op, memo)
+        } else {
+            e
         }
+    }
+
+    // The node's metadata has already passed the operation's subtree check.
+    fn rewrite(
+        &mut self,
+        e: ExprId,
+        off: u32,
+        op: impl Rewrite,
+        memo: &mut IdMap<(ExprId, u32), ExprId>,
+    ) -> ExprId {
         let node = self.node(e);
         match node {
-            ExprNode::BVar(i) => {
-                return match op {
-                    Op::Inst { s, rev } => {
-                        let n = s.len() as u32;
-                        if i < off {
-                            e
-                        } else if i - off < n {
-                            let k = (i - off) as usize;
-                            let v = if rev { s[s.len() - 1 - k] } else { s[k] };
-                            if off > 0 && self.has_loose_bvars(v) {
-                                self.lift_loose(v, 0, off)
-                            } else {
-                                v
-                            }
-                        } else {
-                            self.bvar(i - n)
-                        }
-                    }
-                    Op::Lift { s, d } => {
-                        if i >= off + s {
-                            self.bvar(i + d)
-                        } else {
-                            e
-                        }
-                    }
-                    Op::Lower { s, d } => {
-                        if i >= off + s {
-                            self.bvar(i - d)
-                        } else {
-                            e
-                        }
-                    }
-                    Op::Abstract { .. } => e,
-                };
-            }
-            ExprNode::FVar(_) => {
-                if let Op::Abstract { fvars } = op {
-                    let n = fvars.len();
-                    if let Some(p) = fvars.iter().rposition(|&f| f == e) {
-                        return self.bvar(off + (n - 1 - p) as u32);
-                    }
-                }
-                return e;
-            }
+            ExprNode::BVar(i) => return op.bvar(self, e, i, off),
+            ExprNode::FVar(_) => return op.fvar(self, e, off),
             ExprNode::Sort(_)
             | ExprNode::Const(..)
             | ExprNode::NatSmall(..)
@@ -155,12 +175,12 @@ impl Store<'_> {
         r
     }
 
-    fn run(&mut self, e: ExprId, op: Op<'_>) -> ExprId {
-        if self.skip(e, 0, op) {
+    fn run(&mut self, e: ExprId, op: impl Rewrite) -> ExprId {
+        if !op.affects(self.data(e), 0) {
             return e;
         }
         let mut memo = self.take_memo();
-        let r = self.walk(e, 0, op, &mut memo);
+        let r = self.rewrite(e, 0, op, &mut memo);
         self.put_memo(memo);
         r
     }
@@ -170,7 +190,13 @@ impl Store<'_> {
         if s.is_empty() {
             return e;
         }
-        self.run(e, Op::Inst { s, rev: false })
+        self.run(
+            e,
+            Instantiate {
+                args: s,
+                rev: false,
+            },
+        )
     }
 
     /// Lean's `instantiate_rev(e, n, s)`: `#i ↦ s[n - 1 - i]`.
@@ -178,14 +204,14 @@ impl Store<'_> {
         if s.is_empty() {
             return e;
         }
-        self.run(e, Op::Inst { s, rev: true })
+        self.run(e, Instantiate { args: s, rev: true })
     }
 
     pub fn instantiate1(&mut self, e: ExprId, v: ExprId) -> ExprId {
         self.run(
             e,
-            Op::Inst {
-                s: &[v],
+            Instantiate {
+                args: &[v],
                 rev: false,
             },
         )
@@ -196,7 +222,7 @@ impl Store<'_> {
         if fvars.is_empty() {
             return e;
         }
-        self.run(e, Op::Abstract { fvars })
+        self.run(e, Abstract(fvars))
     }
 
     pub fn lift_loose(&mut self, e: ExprId, s: u32, d: u32) -> ExprId {
@@ -204,24 +230,30 @@ impl Store<'_> {
             return e;
         }
         // A fresh memo: this may run inside another traversal.
-        let op = Op::Lift { s, d };
-        if self.skip(e, 0, op) {
+        let op = Shift::<true> {
+            cutoff: s,
+            amount: d,
+        };
+        if !op.affects(self.data(e), 0) {
             return e;
         }
         let mut memo = IdMap::default();
-        self.walk(e, 0, op, &mut memo)
+        self.rewrite(e, 0, op, &mut memo)
     }
 
     pub fn lower_loose(&mut self, e: ExprId, s: u32, d: u32) -> ExprId {
         if d == 0 {
             return e;
         }
-        let op = Op::Lower { s, d };
-        if self.skip(e, 0, op) {
+        let op = Shift::<false> {
+            cutoff: s,
+            amount: d,
+        };
+        if !op.affects(self.data(e), 0) {
             return e;
         }
         let mut memo = IdMap::default();
-        self.walk(e, 0, op, &mut memo)
+        self.rewrite(e, 0, op, &mut memo)
     }
 
     /// Whether `#i` occurs loose in `e`.
