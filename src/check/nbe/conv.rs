@@ -143,13 +143,18 @@ impl Nbe<'_> {
         if a == b {
             return true;
         }
-        let la: Vec<LevelId> = self.st.list(a).to_vec();
-        let lb: Vec<LevelId> = self.st.list(b).to_vec();
-        la.len() == lb.len()
-            && la
-                .iter()
-                .zip(&lb)
-                .all(|(&x, &y)| self.is_def_eq_level(x, y))
+        let len = self.st.list(a).len();
+        if len != self.st.list(b).len() {
+            return false;
+        }
+        for i in 0..len {
+            let x = self.st.list(a)[i];
+            let y = self.st.list(b)[i];
+            if !self.is_def_eq_level(x, y) {
+                return false;
+            }
+        }
+        true
     }
 
     /// What is known of `t` and `s` (bits `EQ` and the others).
