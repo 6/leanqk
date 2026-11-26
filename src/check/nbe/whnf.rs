@@ -83,18 +83,30 @@ impl Nbe<'_> {
         let Val::Const(c, l, sp) = self.a.get(v) else {
             unreachable!()
         };
-        if !self.a.sp_has_proj(sp) && !self.is_quot_recursor(c) {
-            match self.find(c) {
-                Some(d) if matches!(d.kind, DeclKind::Recursor { .. }) => {}
-                Some(_) => {
+        let has_proj = self.a.sp_has_proj(sp);
+        let d = self.find(c);
+        let is_rec = d.as_ref().is_some_and(|d| match d.kind {
+            DeclKind::Recursor { .. } => true,
+            DeclKind::Quot { .. } => self.is_quot_recursor(c),
+            _ => false,
+        });
+        if !is_rec {
+            if !has_proj {
+                if d.is_some() {
                     self.a.rm(v).set_core_normal();
-                    return Ok(v);
                 }
-                None => return Ok(v),
+                return Ok(v);
+            }
+            // Cheap projection leaves this prefix headed by c, so only a
+            // constructor prefix can supply the field.
+            if cheap_proj && d.is_some_and(|d| !matches!(d.kind, DeclKind::Constructor { .. })) {
+                return Ok(v);
             }
         }
         let p = self.a.sp_arg_prefix(sp);
-        if let Some(r) = self.reduce_recursor(c, l, sp, p, cheap_rec, cheap_proj)? {
+        if let Some(d) = d.filter(|_| is_rec)
+            && let Some(r) = self.reduce_recursor(&d, l, sp, p, cheap_rec, cheap_proj)?
+        {
             let r = self.apply_sp_suffix(r, sp, p);
             self.whnf_core(r, cheap_rec, cheap_proj)
         } else if p < self.a.sp_len(sp) {
@@ -103,6 +115,10 @@ impl Nbe<'_> {
             };
             let pre = self.a.sp_prefix(sp, p);
             let x = self.a.mk(Val::Const(c, l, pre));
+            if !is_rec && d.is_some() {
+                // The prefix has only arguments and its head cannot reduce in core.
+                self.a.rm(x).set_core_normal();
+            }
             let x = if cheap_proj {
                 self.whnf_core(x, cheap_rec, cheap_proj)?
             } else {
@@ -153,17 +169,17 @@ impl Nbe<'_> {
 
     fn reduce_recursor(
         &mut self,
-        c: NameId,
+        d: &Decl,
         l: LevelList,
         sp: Sp,
         arg_count: u32,
         cheap_rec: bool,
         cheap_proj: bool,
     ) -> R<Option<V>> {
-        if let Some(r) = self.quot_reduce_rec(c, sp, arg_count)? {
-            return Ok(Some(r));
+        if matches!(d.kind, DeclKind::Quot { .. }) {
+            return self.quot_reduce_rec(d.name, sp, arg_count);
         }
-        self.inductive_reduce_rec(c, l, sp, arg_count, cheap_rec, cheap_proj)
+        self.inductive_reduce_rec(d, l, sp, arg_count, cheap_rec, cheap_proj)
     }
 
     fn quot_reduce_rec(&mut self, f: NameId, sp: Sp, arg_count: u32) -> R<Option<V>> {
@@ -178,13 +194,6 @@ impl Nbe<'_> {
             return Ok(None);
         };
         let qmk = q.mk;
-        match self.find(f) {
-            Some(Decl {
-                kind: DeclKind::Quot { .. },
-                ..
-            }) => {}
-            _ => return Ok(None),
-        }
         if arg_count <= mk_pos {
             return Ok(None);
         }
@@ -373,16 +382,13 @@ impl Nbe<'_> {
 
     fn inductive_reduce_rec(
         &mut self,
-        rec_name: NameId,
+        d: &Decl,
         rec_lvls: LevelList,
         sp: Sp,
         arg_count: u32,
         cheap_rec: bool,
         cheap_proj: bool,
     ) -> R<Option<V>> {
-        let Some(d) = self.find(rec_name) else {
-            return Ok(None);
-        };
         let DeclKind::Recursor {
             num_params,
             num_indices,
@@ -399,14 +405,14 @@ impl Nbe<'_> {
         if major_idx >= arg_count {
             return Ok(None);
         }
-        let Some(induct) = self.major_induct(rec_name, &d) else {
+        let Some(induct) = self.major_induct(d.name, d) else {
             return Ok(None);
         };
         let mut major = self.a.sp_arg(sp, major_idx);
         if k {
             major = self.ctor_when_k(induct, num_params, major)?;
         }
-        major = self.ctor_when_structure(&d, induct, major)?;
+        major = self.ctor_when_structure(d, induct, major)?;
         major = self.rec_whnf(major, cheap_rec, cheap_proj)?;
         match self.a.get(major) {
             Val::Nat(..) | Val::NatBig(_) => {
@@ -437,7 +443,7 @@ impl Nbe<'_> {
         if self.st.list(rec_lvls).len() != d.level_params.len() {
             return Ok(None);
         }
-        let ls = self.decl_ls(&d, rec_lvls);
+        let ls = self.decl_ls(d, rec_lvls);
         let mut rhs = self.eval(rule.rhs, super::val::Env::NIL, ls);
         let pmm = num_params + num_motives + num_minors;
         rhs = self.apply_sp_args(rhs, sp, 0, pmm);
