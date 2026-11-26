@@ -32,6 +32,11 @@ enum IKey {
     Thunk(V),
 }
 
+enum LambdaExpected {
+    Value(V),
+    Pi(ExprNode, Env, Ls),
+}
+
 impl Nbe<'_> {
     // ---- binders ----
 
@@ -955,6 +960,17 @@ impl Nbe<'_> {
         (d, pi_env, pi_ls): (ExprId, Env, Ls),
         eager: bool,
     ) -> R<()> {
+        if matches!(node, ExprNode::Lam(..))
+            && !eager
+            && let pi @ ExprNode::Pi(..) = self.st.node(d)
+        {
+            let expected = LambdaExpected::Pi(pi, pi_env, pi_ls);
+            if self.check_lambda_against(a, node, env, ls, expected)? {
+                return Ok(());
+            }
+            let dom = self.thunk(d, pi_env, pi_ls);
+            return Err(self.arg_mismatch(a, node, env, ls, dom)?);
+        }
         let dom = self.thunk(d, pi_env, pi_ls);
         let ok = if eager {
             let saved = std::mem::replace(&mut self.eager, true);
@@ -1000,7 +1016,7 @@ impl Nbe<'_> {
         expected: V,
     ) -> R<bool> {
         if matches!(node, ExprNode::Lam(..)) {
-            return self.check_lambda_against(e, node, env, ls, expected);
+            return self.check_lambda_against(e, node, env, ls, LambdaExpected::Value(expected));
         }
         let t = self.infer_node(e, node, env, ls, false)?;
         self.is_def_eq(t, expected)
@@ -1014,26 +1030,25 @@ impl Nbe<'_> {
         mut node: ExprNode,
         mut env: Env,
         ls: Ls,
-        mut expected: V,
+        mut expected: LambdaExpected,
     ) -> R<bool> {
         let base = env;
         let result = (|| {
-            let mut pending = None;
             while let ExprNode::Lam(bi, n, dom, body) = node {
-                let (pi_node, pi_env, pi_ls) = if let Some(pi) = pending.take() {
-                    pi
-                } else {
-                    let ex = self.force(expected);
-                    let mut binder = self.a.get(ex);
-                    if !matches!(binder, Val::Pi(..) | Val::PiInfer(..)) {
-                        let w = self.whnf(ex)?;
-                        binder = self.a.get(w);
+                let (pi_node, pi_env, pi_ls) = match expected {
+                    LambdaExpected::Pi(node, env, ls) => (node, env, ls),
+                    LambdaExpected::Value(v) => {
+                        let ex = self.force(v);
+                        let mut binder = self.a.get(ex);
+                        if !matches!(binder, Val::Pi(..) | Val::PiInfer(..)) {
+                            let w = self.whnf(ex)?;
+                            binder = self.a.get(w);
+                        }
+                        let (Val::Pi(t, env, ls) | Val::PiInfer(t, env, ls)) = binder else {
+                            break;
+                        };
+                        (self.st.node(t), env, ls)
                     }
-                    let (Val::Pi(t, pi_env, pi_ls) | Val::PiInfer(t, pi_env, pi_ls)) = binder
-                    else {
-                        break;
-                    };
-                    (self.st.node(t), pi_env, pi_ls)
                 };
                 let (ExprNode::Pi(_, _, pi_dom, pi_body) | ExprNode::Lam(_, _, pi_dom, pi_body)) =
                     pi_node
@@ -1067,18 +1082,21 @@ impl Nbe<'_> {
                 e = body;
                 node = self.st.node(body);
                 let pi_env = self.bind_value(pi_body, pi_env, x);
-                if matches!(pi_node, ExprNode::Lam(..)) {
-                    expected = self.infer_term(pi_body, pi_env, pi_ls, true)?;
+                expected = if matches!(pi_node, ExprNode::Lam(..)) {
+                    LambdaExpected::Value(self.infer_term(pi_body, pi_env, pi_ls, true)?)
                 } else if matches!(node, ExprNode::Lam(..))
-                    && let next_pi @ ExprNode::Pi(..) = self.st.node(pi_body)
+                    && let pi @ ExprNode::Pi(..) = self.st.node(pi_body)
                 {
                     // The next comparison only needs the closure. Trimming
                     // and interning the Π would preserve these same bindings.
-                    pending = Some((next_pi, pi_env, pi_ls));
+                    LambdaExpected::Pi(pi, pi_env, pi_ls)
                 } else {
-                    expected = self.eval(pi_body, pi_env, pi_ls);
-                }
+                    LambdaExpected::Value(self.eval(pi_body, pi_env, pi_ls))
+                };
             }
+            let LambdaExpected::Value(expected) = expected else {
+                unreachable!()
+            };
             let t = self.infer_node(e, node, env, ls, false)?;
             self.is_def_eq(t, expected)
         })();
