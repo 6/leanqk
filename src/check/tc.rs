@@ -170,7 +170,7 @@ impl<'e> Tc<'e> {
             return Some(*d);
         }
         let env = self.st.env;
-        let i = env.by_name.get(&n)?;
+        let &i = env.by_name.get(&n)?;
         if i < self.limit || self.extra.contains(&n) {
             Some(self.st.decls[i as usize])
         } else {

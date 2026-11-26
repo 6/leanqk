@@ -605,13 +605,16 @@ pub fn compare(a: &Env, b: &Env) -> Diff {
     // name (see `olean::build`), by name.
     let mut shadows: hashbrown::HashMap<NameId, Vec<usize>> = hashbrown::HashMap::new();
     for (j, d) in b.decls.iter().enumerate() {
-        if b.by_name.get(&d.name) != Some(j as u32) {
+        if b.by_name.get(&d.name) != Some(&(j as u32)) {
             shadows.entry(d.name).or_default().push(j);
             found[j] = true;
         }
     }
     for d in &a.decls {
-        let Some((n, j)) = tr.name(d.name).and_then(|n| Some((n, b.by_name.get(&n)?))) else {
+        let Some((n, j)) = tr
+            .name(d.name)
+            .and_then(|n| Some((n, b.by_name.get(&n).copied()?)))
+        else {
             diff.only_a.push(a.names.display(d.name).to_string());
             continue;
         };

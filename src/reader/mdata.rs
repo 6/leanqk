@@ -186,7 +186,7 @@ impl State {
                 Node::Const(n) => {
                     let inner = args.len();
                     let total = inner + outside;
-                    let Some(i) = self.env.by_name.get(&n) else {
+                    let Some(&i) = self.env.by_name.get(&n) else {
                         return Ok(false);
                     };
                     let DeclKind::Inductive { num_params, .. } = self.env.decls[i as usize].kind
