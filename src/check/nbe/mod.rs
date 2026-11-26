@@ -652,7 +652,7 @@ impl<'e> Nbe<'e> {
         let i = if k == n.0 {
             i
         } else {
-            let &i = env.by_name.get(&n)?;
+            let i = env.by_name.get(&n)?;
             slot.set((n.0, i));
             i
         };

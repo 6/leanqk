@@ -222,7 +222,7 @@ enum Source {
 fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: usize) -> u8 {
     let start = Instant::now();
     let mut prefix = None;
-    let (env, rs, os) = match src {
+    let (mut env, rs, os) = match src {
         Source::Olean(opts) => match olean::load(&file.to_string_lossy(), opts) {
             Ok((env, st)) => (env, None, Some(st)),
             Err(e) => {
@@ -260,6 +260,7 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: us
             }
         }
     };
+    env.finish_loading();
     let elapsed = start.elapsed();
     let c = env.counts();
     let mut out = String::new();

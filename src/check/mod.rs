@@ -892,7 +892,10 @@ fn check_inductive_block(
         };
         let kind = compare_decl(tc, g, x)?;
         if kind != x.kind {
-            corrections.push((env.by_name[&x.name] as usize, kind));
+            corrections.push((
+                env.by_name.get(&x.name).expect("declaration name") as usize,
+                kind,
+            ));
         }
     }
     if generated.len() != decls.len() {

@@ -262,6 +262,126 @@ enum Lazy<'a> {
     Missing,
 }
 
+/// Declaration index by name. While names are added it is a flat array over
+/// name ids (names are dense small integers), so a lookup is one load.
+/// [`NameIndex::freeze`] then packs it to 16 bits a name: declarations are
+/// numbered nearly in the order their names are, so within a group of
+/// [`GROUP`] name ids the indices lie in a short range, and an entry is its
+/// offset from the group's least index (0: no declaration). Offsets that do
+/// not fit go to a side map. About 8.5 MB for Mathlib's 4.3M names, against
+/// 17 MB flat, and a lookup is still one load of the entry (the bases are a
+/// few KB).
+#[derive(Default)]
+pub(crate) struct NameIndex {
+    v: Vec<u32>,
+    small: Vec<u16>,
+    bases: Vec<u32>,
+    far: HashMap<u32, u32>,
+}
+
+/// Name ids per base in a frozen index.
+const GROUP_BITS: u32 = 12;
+const FAR: u16 = u16::MAX;
+
+impl NameIndex {
+    const NONE: u32 = u32::MAX;
+
+    #[inline]
+    pub(crate) fn get(&self, n: &NameId) -> Option<u32> {
+        if self.small.is_empty() {
+            return self
+                .v
+                .get(n.0 as usize)
+                .copied()
+                .filter(|&x| x != Self::NONE);
+        }
+        let e = *self.small.get(n.0 as usize)?;
+        if e == 0 {
+            None
+        } else if e == FAR {
+            self.far.get(&n.0).copied()
+        } else {
+            Some(self.bases[(n.0 >> GROUP_BITS) as usize] + u32::from(e) - 1)
+        }
+    }
+
+    #[inline]
+    pub(crate) fn contains_key(&self, n: &NameId) -> bool {
+        self.get(n).is_some()
+    }
+
+    pub(crate) fn insert(&mut self, n: NameId, i: u32) -> Option<u32> {
+        if !self.small.is_empty() {
+            self.thaw();
+        }
+        let k = n.0 as usize;
+        if k >= self.v.len() {
+            // In 256K-entry steps: names are dense, so rounding up to a
+            // power of two would touch up to twice the memory needed.
+            self.v.resize((k + 1).next_multiple_of(1 << 18), Self::NONE);
+        }
+        let old = std::mem::replace(&mut self.v[k], i);
+        (old != Self::NONE).then_some(old)
+    }
+
+    /// Packs the index once no more names are added. Lookups give the same
+    /// answers; adding a name later unpacks it again.
+    pub(crate) fn freeze(&mut self) {
+        if !self.small.is_empty() || self.v.is_empty() {
+            return;
+        }
+        let mut small = vec![0u16; self.v.len()];
+        let mut bases = Vec::with_capacity((self.v.len() >> GROUP_BITS) + 1);
+        let mut far = HashMap::new();
+        for (g, chunk) in self.v.chunks(1 << GROUP_BITS).enumerate() {
+            let base = chunk
+                .iter()
+                .copied()
+                .filter(|&x| x != Self::NONE)
+                .min()
+                .unwrap_or(0);
+            bases.push(base);
+            for (j, &x) in chunk.iter().enumerate() {
+                if x == Self::NONE {
+                    continue;
+                }
+                let k = (g << GROUP_BITS) + j;
+                let off = x - base + 1;
+                if off < u32::from(FAR) {
+                    small[k] = off as u16;
+                } else {
+                    small[k] = FAR;
+                    far.insert(k as u32, x);
+                }
+            }
+        }
+        self.small = small;
+        self.bases = bases;
+        self.far = far;
+        self.v = Vec::new();
+    }
+
+    fn thaw(&mut self) {
+        let mut v = vec![Self::NONE; self.small.len()];
+        for (k, x) in v.iter_mut().enumerate() {
+            if let Some(i) = self.get(&NameId(k as u32)) {
+                *x = i;
+            }
+        }
+        self.v = v;
+        self.small = Vec::new();
+        self.bases = Vec::new();
+        self.far = HashMap::new();
+    }
+
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.v.capacity() * 4
+            + self.small.capacity() * 2
+            + self.bases.capacity() * 4
+            + self.far.capacity() * 9
+    }
+}
+
 #[derive(Default)]
 pub struct Env {
     pub meta: Meta,
@@ -272,7 +392,7 @@ pub struct Env {
     pub blocks: Vec<Block>,
     pub(crate) name_pool: Vec<NameId>,
     pub(crate) rule_pool: Vec<RecRule>,
-    pub(crate) by_name: HashMap<NameId, u32>,
+    pub(crate) by_name: NameIndex,
     pub(crate) lazy: Option<Box<dyn LazyValues>>,
     pub(crate) mdata_errors: HashMap<NameId, &'static str>,
     /// The inductive types and constructors whose exported type contains
@@ -347,7 +467,7 @@ impl Env {
 
     /// The declaration named `n`, if any.
     pub fn find(&self, n: NameId) -> Option<&Decl> {
-        self.by_name.get(&n).map(|&i| &self.decls[i as usize])
+        self.by_name.get(&n).map(|i| &self.decls[i as usize])
     }
 
     /// The declaration with the dotted name `s`, if any.
@@ -369,6 +489,12 @@ impl Env {
         start.checked_add(len)?;
         self.rule_pool.extend_from_slice(rs);
         Some(RuleList { start, len })
+    }
+
+    /// Packs the name index once no more declarations are added (lookups
+    /// answer as before; a later addition unpacks it).
+    pub fn finish_loading(&mut self) {
+        self.by_name.freeze();
     }
 
     pub fn counts(&self) -> DeclCounts {
@@ -397,7 +523,38 @@ impl Env {
             + self.blocks.capacity() * size_of::<Block>()
             + self.name_pool.capacity() * 4
             + self.rule_pool.capacity() * size_of::<RecRule>()
-            + self.by_name.capacity() * 9
+            + self.by_name.heap_bytes()
             + self.lazy.as_ref().map_or(0, |l| l.heap_bytes())
+    }
+}
+
+#[cfg(test)]
+mod name_index_tests {
+    use super::*;
+
+    #[test]
+    fn frozen_index_answers_as_the_flat_one() {
+        let mut ix = NameIndex::default();
+        let ids: Vec<u32> = (0..20000u32)
+            .filter(|i| i % 7 == 0 || i % 31 == 5)
+            .collect();
+        for (j, &i) in ids.iter().enumerate() {
+            // Mostly in order, with some far away.
+            let idx = if i % 1001 == 0 {
+                400_000 + j as u32
+            } else {
+                j as u32
+            };
+            assert_eq!(ix.insert(NameId(i), idx), None);
+        }
+        assert_eq!(ix.insert(NameId(0), 9), Some(400_000));
+        let want: Vec<Option<u32>> = (0..30000u32).map(|i| ix.get(&NameId(i))).collect();
+        ix.freeze();
+        assert!(!ix.small.is_empty() && !ix.far.is_empty());
+        let got: Vec<Option<u32>> = (0..30000u32).map(|i| ix.get(&NameId(i))).collect();
+        assert_eq!(want, got);
+        assert!(ix.get(&NameId(u32::MAX)).is_none());
+        assert_eq!(ix.insert(NameId(7), 1), want[7]);
+        assert_eq!(ix.get(&NameId(14)), want[14]);
     }
 }
