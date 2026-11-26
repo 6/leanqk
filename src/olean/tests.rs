@@ -405,7 +405,7 @@ fn lazy_values_match_eager_ones() {
         e.decls
             .iter()
             .enumerate()
-            .filter(|&(j, d)| e.by_name.get(&d.name) == Some(&(j as u32)))
+            .filter(|&(j, d)| e.by_name.get(&d.name) == Some(j as u32))
             .map(|(_, d)| e.names.display(d.name).to_string())
             .collect()
     };
@@ -413,7 +413,7 @@ fn lazy_values_match_eager_ones() {
     let mut decoded = 0;
     let mut back = crate::compare::Tr::new(&lazy, &eager);
     for (j, d) in lazy.decls.iter().enumerate() {
-        if lazy.by_name.get(&d.name) != Some(&(j as u32)) {
+        if lazy.by_name.get(&d.name) != Some(j as u32) {
             continue;
         }
         let DeclKind::Theorem { value, .. } = d.kind else {

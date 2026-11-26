@@ -75,13 +75,16 @@ const SYN_T: usize = 1 << 12;
 const SYN_BVARS: usize = 1 << 10;
 
 /// Slots of `Nbe::eager_slots`.
-pub(super) const EAGER_SLOTS: usize = 1 << 14;
+pub(super) const EAGER_SLOTS: usize = 1 << 12;
+
+/// Slots of `Nbe::infer_slots`.
+pub(super) const INFER_SLOTS: usize = 1 << 14;
 
 /// Slots of `Nbe::binder_slots`.
-pub(super) const BINDER_SLOTS: usize = 1 << 14;
+pub(super) const BINDER_SLOTS: usize = 1 << 11;
 
 /// Slots of `Nbe::eager_direct`.
-pub(super) const EAGER_DIRECT_SLOTS: usize = 1 << 16;
+pub(super) const EAGER_DIRECT_SLOTS: usize = 1 << 13;
 
 /// Slots of `Nbe::prunes`.
 const PRUNES: usize = 1 << 12;
@@ -128,7 +131,7 @@ pub struct Nbe<'e> {
     infer_memo: memo::InferMemo,
     /// A direct-mapped front of `infer_memo`: (term, environment,
     /// substitution, entry).
-    pub(super) infer_slots: Box<[[u32; 4]; EAGER_SLOTS]>,
+    pub(super) infer_slots: Box<[[u32; 4]; INFER_SLOTS]>,
     level_cache: lsub::Lsub<LevelId>,
     list_cache: lsub::Lsub<LevelList>,
     /// Universe parameter lists by their names (see `lsub::ParamClasses`).
@@ -652,7 +655,7 @@ impl<'e> Nbe<'e> {
         let i = if k == n.0 {
             i
         } else {
-            let &i = env.by_name.get(&n)?;
+            let i = env.by_name.get(&n)?;
             slot.set((n.0, i));
             i
         };
