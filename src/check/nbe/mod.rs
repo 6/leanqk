@@ -353,6 +353,7 @@ impl<'e> Nbe<'e> {
     /// universe parameters are known to be well-formed. Past a size, all
     /// of it goes.
     pub fn begin(&mut self, limit: u32) {
+        self.end_scopes();
         self.st.reset_nat_unfold_work();
         if self.a.len() > KEEP_VALUES
             || self.st.local_exprs() > KEEP_VALUES + self.name_exprs + self.read_exprs
@@ -442,6 +443,8 @@ impl<'e> Nbe<'e> {
     /// `f`, given at most `budget` steps: `None` if it needed more. Inside
     /// another attempt, `f` shares what that one has left. Only finished
     /// results are cached, so a stopped attempt leaves only facts behind.
+    /// An unwind out of `f` leaves the budget in place: `begin` and `reset`
+    /// clear it (`end_scopes`).
     pub fn attempt<T>(&mut self, budget: u64, f: impl FnOnce(&mut Self) -> R<T>) -> R<Option<T>> {
         if self.stop != u64::MAX {
             return f(self).map(Some);
@@ -459,8 +462,17 @@ impl<'e> Nbe<'e> {
         }
     }
 
+    /// Leave the scopes an unwind (out of room, or the `Nat` unfolding
+    /// limit) skipped the end of: an attempt's budget, and a probe's flag.
+    fn end_scopes(&mut self) {
+        self.stop = u64::MAX;
+        self.stopped = false;
+        self.eval_probe = false;
+    }
+
     /// Forget everything.
     pub fn reset(&mut self, limit: u32) {
+        self.end_scopes();
         self.st.reset_nat_unfold_work();
         self.limit = limit;
         self.lparams_key = None;
@@ -973,5 +985,50 @@ impl<'e> Nbe<'e> {
     fn put_elims(&mut self, mut v: Vec<val::Elim>) {
         v.clear();
         self.elims.push(v);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+
+    use super::*;
+    use crate::env::Env;
+
+    /// Out of room within an attempt or a probe, the next try of the
+    /// declaration (`reset`) and the next declaration (`begin`) run with
+    /// no budget and with the evaluator asked.
+    #[test]
+    fn unwinds_leave_no_scope_behind() {
+        let env = Env::new();
+        let ext = Ext::with_decls(&env, &[]);
+        let mut nb = Nbe::new(Store::new(&env), &ext);
+        type Then = fn(&mut Nbe<'_>);
+        let thens: [Then; 2] = [|nb| nb.reset(0), |nb| nb.begin(0)];
+        for then in thens {
+            for in_probe in [false, true] {
+                let r = catch_unwind(AssertUnwindSafe(|| {
+                    let out = |nb: &mut Nbe<'_>| -> R<()> {
+                        nb.tick()?;
+                        resume_unwind(Box::new(OutOfRoom))
+                    };
+                    if in_probe {
+                        nb.probe(|nb| nb.attempt(10, out))
+                    } else {
+                        nb.attempt(10, out)
+                    }
+                }));
+                assert!(r.is_err_and(|p| p.is::<OutOfRoom>()));
+                assert_ne!(nb.stop, u64::MAX);
+                assert_eq!(nb.eval_probe, in_probe);
+                then(&mut nb);
+                assert_eq!(
+                    (nb.stop, nb.stopped, nb.eval_probe),
+                    (u64::MAX, false, false)
+                );
+                // A whole budget again.
+                assert!(matches!(nb.attempt(1, |nb| nb.tick()), Ok(Some(()))));
+            }
+        }
     }
 }

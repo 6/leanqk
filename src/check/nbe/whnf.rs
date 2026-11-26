@@ -773,6 +773,15 @@ impl Nbe<'_> {
         Ok(self.nat(r))
     }
 
+    /// `f` with the closed-term evaluator not asked (an unwind out of it
+    /// leaves the flag set: `begin` and `reset` clear it).
+    pub(super) fn probe<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.eval_probe = true;
+        let r = f(self);
+        self.eval_probe = false;
+        r
+    }
+
     /// The weak head normal form of `t`, a closed definition applied, if
     /// it is worth asking the closed-term evaluator: past `EVAL_AFTER`
     /// steps of reduction here (most computations are a few steps, where
@@ -794,9 +803,7 @@ impl Nbe<'_> {
         if EVAL_AFTER == 0 {
             return Ok(self.closed_whnf(t));
         }
-        self.eval_probe = true;
-        let r = self.attempt(EVAL_AFTER, |nb| nb.whnf_from(t, false));
-        self.eval_probe = false;
+        let r = self.probe(|nb| nb.attempt(EVAL_AFTER, |nb| nb.whnf_from(t, false)));
         match r? {
             Some(n) => Ok(Some(n)),
             None => Ok(self.closed_whnf(t)),
