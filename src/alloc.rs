@@ -11,13 +11,15 @@ use std::alloc::{GlobalAlloc, Layout};
 
 use libmimalloc_sys as mi;
 
-/// `mi_option_purge_delay` in mimalloc v3's `mi_option_t` (the bindings
-/// do not name it).
+/// `mi_option_purge_delay` and `mi_option_allow_thp` in mimalloc v3's
+/// `mi_option_t` (the bindings do not name them).
 const MI_OPTION_PURGE_DELAY: std::ffi::c_int = 15;
+const MI_OPTION_ALLOW_THP: std::ffi::c_int = 43;
 
 unsafe extern "C" {
     fn mi_option_get(option: std::ffi::c_int) -> std::ffi::c_long;
     fn mi_option_set_default(option: std::ffi::c_int, value: std::ffi::c_long);
+    fn mi_option_set(option: std::ffi::c_int, value: std::ffi::c_long);
 }
 
 /// Return freed memory to the system at once rather than after mimalloc
@@ -36,6 +38,50 @@ pub fn configure() {
                 || mi_option_get(MI_OPTION_PURGE_DELAY) == 1000
         );
         mi_option_set_default(MI_OPTION_PURGE_DELAY, 0);
+    }
+}
+
+/// Small pages for the heap memory not touched yet, before checking on
+/// several threads: each checker keeps a few partly used pages of every
+/// size, and in 2 MiB pages those held some 50 to 140 MiB more on Mathlib
+/// at 8 jobs (some 90 to 250 MiB at 12). What reading built keeps its huge
+/// pages, as does a single checker: on small pages from the start, one job
+/// took some 10% longer on Mathlib. The slabs ask for their own huge pages
+/// (`slab.rs`). Not done if `MIMALLOC_ALLOW_THP` is set (as `0`, it turns
+/// huge pages off for the whole process, the slabs' too).
+pub fn small_heap_pages() {
+    // SAFETY: plain option calls; mimalloc reads the option at each new
+    // mapping.
+    unsafe {
+        if std::env::var_os("MIMALLOC_ALLOW_THP").is_some()
+            || mi_option_get(MI_OPTION_ALLOW_THP) == 0
+        {
+            return;
+        }
+        mi_option_set(MI_OPTION_ALLOW_THP, 0);
+    }
+    // The heap's mappings so far asked for huge pages (`MADV_HUGEPAGE`):
+    // take that back for the pages not touched yet. mimalloc names them,
+    // where the kernel allows it; else the one a fresh allocation is in.
+    let probe = Box::new(0u64);
+    let at = &*probe as *const u64 as usize;
+    let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
+        return;
+    };
+    for line in maps.lines() {
+        let mut f = line.split_whitespace();
+        let Some((lo, hi)) = f.next().and_then(|r| r.split_once('-')).and_then(|(a, b)| {
+            Some((
+                usize::from_str_radix(a, 16).ok()?,
+                usize::from_str_radix(b, 16).ok()?,
+            ))
+        }) else {
+            continue;
+        };
+        if (lo..hi).contains(&at) || f.nth(4).is_some_and(|n| n.contains("mimalloc")) {
+            // SAFETY: advice only, on a mapping of the allocator's.
+            unsafe { libc::madvise(lo as *mut libc::c_void, hi - lo, libc::MADV_NOHUGEPAGE) };
+        }
     }
 }
 

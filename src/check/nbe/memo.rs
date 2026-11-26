@@ -44,6 +44,11 @@ impl<const WORDS: usize> Default for EnvMemo<WORDS> {
 }
 
 impl<const WORDS: usize> EnvMemo<WORDS> {
+    /// Bytes held, roughly.
+    pub fn heap_bytes(&self) -> usize {
+        self.table.capacity() * 5 + self.keys.capacity() * 4
+    }
+
     pub fn clear(&mut self) {
         if self.table.capacity() > 1 << 16 {
             *self = Self::default();
