@@ -356,6 +356,9 @@ impl Nbe<'_> {
                 if !self.st.list_has_param(lv) {
                     return self.infer_closed(e, node, infer_only);
                 }
+                if ls == Ls::ID && !infer_only {
+                    return self.infer_param_constant(e, n, lv);
+                }
                 let lv = self.inst_list(lv, ls);
                 return self.infer_constant(n, lv, infer_only);
             }
@@ -587,6 +590,23 @@ impl Nbe<'_> {
                 }
             }
         }
+    }
+
+    /// A checked constant with an identity substitution keeps its type
+    /// under the same universe parameters as the environment grows.
+    fn infer_param_constant(&mut self, e: ExprId, n: NameId, levels: LevelList) -> R<V> {
+        let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - EAGER_SLOTS.ilog2())) as usize;
+        let key = self.lparams_key();
+        // The expression id distinguishes this layout from other entries.
+        let [expr, limit, params, ty] = self.infer_slots[i];
+        if expr == e.0 && limit <= self.limit && u64::from(params) == key {
+            return Ok(V(ty));
+        }
+        let ty = self.infer_constant(n, levels, false)?;
+        if let Ok(params) = u32::try_from(key) {
+            self.infer_slots[i] = [e.0, self.limit, params, ty.0];
+        }
+        Ok(ty)
     }
 
     fn infer_constant(&mut self, n: NameId, ls: LevelList, infer_only: bool) -> R<V> {
