@@ -555,6 +555,132 @@ impl<A: Copy, B: Copy> Drop for Block<'_, A, B> {
     }
 }
 
+/// Plain integers: any bytes, zeros included, are one of their values.
+pub trait Plain: Copy + private::Sealed {}
+impl Plain for u32 {}
+impl Plain for u64 {}
+mod private {
+    pub trait Sealed {}
+    impl Sealed for u32 {}
+    impl Sealed for u64 {}
+}
+
+/// A fixed array of plain integers in memory of its own, zeros at first:
+/// a fresh mapping, whose pages cost nothing until written (where a
+/// zeroed `Vec` from the allocator may be written through first). It can
+/// shrink, giving back the pages past its new end.
+pub struct Zeroed<T: Plain> {
+    ptr: NonNull<T>,
+    len: usize,
+    /// The mapping's bytes (0 for an empty array, which has none).
+    bytes: usize,
+}
+
+// SAFETY: it owns its elements, like a `Box<[T]>`.
+unsafe impl<T: Plain + Send> Send for Zeroed<T> {}
+// SAFETY: as above.
+unsafe impl<T: Plain + Sync> Sync for Zeroed<T> {}
+
+impl<T: Plain> Zeroed<T> {
+    /// `len` zeros. Panics if the system has no room for them.
+    pub fn new(len: usize) -> Self {
+        let bytes = len.checked_mul(size_of::<T>()).expect("array size");
+        if bytes == 0 {
+            return Zeroed {
+                ptr: NonNull::dangling(),
+                len,
+                bytes: 0,
+            };
+        }
+        let Some(p) = map(bytes) else {
+            panic!(
+                "nitrolean: resource limit: out of memory for {} MiB",
+                bytes >> 20
+            );
+        };
+        Zeroed {
+            ptr: p.cast(),
+            len,
+            bytes,
+        }
+    }
+
+    /// Keep the first `len` elements (at most as many as there are) and
+    /// give back the pages after them.
+    pub fn truncate(&mut self, len: usize) {
+        if len >= self.len {
+            return;
+        }
+        self.len = len;
+        let keep = (len * size_of::<T>()).next_multiple_of(page_size());
+        if keep < self.bytes {
+            // SAFETY: the tail of this array's own mapping, past its
+            // elements: nothing refers to it.
+            unsafe {
+                libc::munmap(
+                    self.ptr.as_ptr().cast::<u8>().add(keep).cast(),
+                    self.bytes - keep,
+                )
+            };
+            self.bytes = keep;
+        }
+    }
+}
+
+impl<T: Plain> std::ops::Deref for Zeroed<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        // SAFETY: `len` elements of the mapping, zeros or written since
+        // (any bytes are a value of a plain type), owned by `self`.
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl<T: Plain> std::ops::DerefMut for Zeroed<T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        // SAFETY: as in `deref`, borrowed mutably through `self`.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl<T: Plain> Drop for Zeroed<T> {
+    fn drop(&mut self) {
+        if self.bytes > 0 {
+            // SAFETY: the array's own mapping, which nothing borrows now.
+            unsafe { libc::munmap(self.ptr.as_ptr().cast(), self.bytes) };
+        }
+    }
+}
+
+pub(crate) fn page_size() -> usize {
+    static PAGE: OnceLock<usize> = OnceLock::new();
+    *PAGE.get_or_init(|| {
+        // SAFETY: plain sysconf.
+        let p = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        usize::try_from(p)
+            .ok()
+            .filter(|p| p.is_power_of_two())
+            .unwrap_or(1 << 16)
+    })
+}
+
+/// Give the system back the memory pages that lie wholly inside `v`
+/// (`MADV_DONTNEED`), for elements that will not be read again: what is
+/// read there afterwards is zeros (a value of `T`, which is plain). The
+/// buffer stays allocated: freeing it later is as usual.
+pub fn release<T: Plain>(v: &mut [T]) {
+    let page = page_size();
+    let start = v.as_mut_ptr() as usize;
+    let end = start + std::mem::size_of_val(v);
+    let (from, to) = (start.next_multiple_of(page), end & !(page - 1));
+    if from < to {
+        // SAFETY: whole pages inside `v`, which this borrow holds alone;
+        // the memory is private and anonymous, so its pages read as zeros
+        // afterwards, which are values of `T`.
+        unsafe { libc::madvise(from as *mut libc::c_void, to - from, libc::MADV_DONTNEED) };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,6 +689,34 @@ mod tests {
     thread_local! {
         /// Slabs made on this thread take the reduced path, with this share.
         pub(super) static SHARE: Cell<Option<usize>> = const { Cell::new(None) };
+    }
+
+    /// A zeroed array reads zeros, keeps what is written, and shrinks.
+    #[test]
+    fn zeroed_arrays() {
+        let mut z: Zeroed<u64> = Zeroed::new(1 << 20);
+        assert!(z.iter().all(|&x| x == 0));
+        z[12345] = 7;
+        z[(1 << 20) - 1] = 9;
+        z.truncate(20000);
+        assert_eq!((z.len(), z[12345]), (20000, 7));
+        z.truncate(30000);
+        assert_eq!(z.len(), 20000);
+        let e: Zeroed<u32> = Zeroed::new(0);
+        assert!(e.is_empty());
+    }
+
+    /// Released elements read as zeros, the others as they were.
+    #[test]
+    fn released_pages_read_zero() {
+        let mut v: Vec<u64> = (1..=1 << 20).collect();
+        release(&mut v[100..(1 << 20) - 100]);
+        assert_eq!(v[99], 100);
+        assert_eq!(v[(1 << 20) - 100], (1 << 20) - 99);
+        assert_eq!(v[1 << 19], 0, "a page in the middle went back");
+        let mut w = vec![7u32; 10];
+        release(&mut w);
+        assert_eq!(w, vec![7; 10], "no whole page inside");
     }
 
     /// A reduced slab grows (moving) as it is pushed, keeps its elements,

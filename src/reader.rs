@@ -220,10 +220,9 @@ fn state(opts: &Options, size: u64, append: bool) -> State {
     let mut st = State::new();
     st.append = append;
     if opts.lazy_proofs {
+        // Expression ids are the builder's records, not `expr_ids`: no
+        // room for that map.
         st.lazy = Some(Box::new(lazy::Builder::with_capacity(size)));
-        // Export ids map to references (about one expression per 56
-        // bytes of a real export).
-        st.expr_ids.reserve((size / 56).min(1 << 31) as usize);
     }
     if !append {
         // About one name per 1 KiB of a real export.
@@ -785,7 +784,10 @@ fn map_lines_par(
     std::thread::scope(|sc| {
         let mut rxs = Vec::new();
         for t in 0..readers {
-            let (tx, rx) = mpsc::sync_channel::<Ahead>(2);
+            // No queue: a reader holds at most the chunk it has read, and
+            // starts its next one `readers - 1` chunks before it is
+            // needed. Each chunk held keeps its pages of the file mapped.
+            let (tx, rx) = mpsc::sync_channel::<Ahead>(0);
             rxs.push(rx);
             let pool = &pool;
             sc.spawn(move || {

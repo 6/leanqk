@@ -28,6 +28,7 @@ use crate::env::{Env, LAZY_BASE, LazyValues, TermSink};
 use crate::expr::{BinderInfo, ExprId, ExprNode, LetBinder};
 use crate::idmap::IdMap;
 use crate::name::NameId;
+use crate::slab::Zeroed;
 use crate::strings::Overflow;
 
 // A record: `DONE` and an arena id in the low 32 bits, or a tag (3 bits
@@ -882,79 +883,96 @@ impl Builder {
     /// expression by its arena id. `wide` if an arena id may not fit an
     /// application record's field.
     ///
-    /// Each record's slot is overwritten with where it went: an interned
-    /// one keeps its arena id, a kept one gets `FWD` and its index, and
-    /// both get the number of records kept below them (at [`J_AT`]), from
-    /// which a start's index follows. On one thread, one pass in order
-    /// does it (children come first, so theirs are known); on several, a
-    /// range of records each, the children are put right in a second pass.
+    /// Where each record went (a stored child reference: its arena id, or
+    /// its new index) is kept in a table of its own, so that the pages of
+    /// the records already passed go back to the system as the pass goes
+    /// (the old and new tables would otherwise be held at once, at the
+    /// peak of the read). On one thread, one pass in order does it
+    /// (children come first, so where they went is known); on several, a
+    /// range of records each, and the children are put right in a second
+    /// pass.
     fn into_stored(self, threads: usize, wide: bool) -> Stored {
         let Builder {
             mut recs,
-            side,
+            mut side,
             mut roots,
             mut starts,
             ..
         } = self;
         let n = recs.len();
-        let threads = threads.clamp(1, n.div_ceil(MIN_RANGE).max(1));
-        let (out, out_side) = if threads == 1 {
-            let mut out = vec![0u64; n];
-            let mut out_side = Vec::with_capacity(side.len());
-            let mut j = 0u64;
-            for i in 0..n {
-                let r = recs[i];
-                if r & DONE != 0 {
-                    recs[i] = r | j << J_AT;
-                    continue;
-                }
-                let t = tag(r);
-                if t == T_ALIAS {
-                    // What it stands for is interned or kept, and below it.
-                    let e = recs[(r & ID_MASK) as usize];
-                    recs[i] = e & !(J_MASK << J_AT) | j << J_AT;
-                    continue;
-                }
-                out[j as usize] = if t == T_APP && !wide {
-                    let f = recs[(r >> ID_BITS & ID_MASK) as usize];
-                    let a = recs[(r & ID_MASK) as usize];
-                    app_of_slots(f, a)
-                } else {
-                    stored(&side, r, wide, &mut out_side, |c| moved(recs[c as usize]))
-                };
-                recs[i] = FWD | j << J_AT | j;
-                j += 1;
+        // Each start, for now: the first record kept from it on (its
+        // value's root, at the latest).
+        for (s, &r) in starts.iter_mut().zip(&roots) {
+            while *s < r && !kept(recs[*s as usize]) {
+                *s += 1;
             }
-            out.truncate(j as usize);
-            (out, out_side)
+        }
+        let threads = threads.clamp(1, n.div_ceil(MIN_RANGE).max(1));
+        let (out, out_side, fwd) = if threads == 1 {
+            let mut fwd: Zeroed<u32> = Zeroed::new(n);
+            let mut out = Zeroed::new(n);
+            let mut out_side = Zeroed::new(side.len() + if wide { 2 * n } else { 0 });
+            let mut part = SidePart {
+                words: &mut out_side,
+                used: 0,
+                base: 0,
+            };
+            let mut k = 0usize;
+            // Side records come in the order of their records: those
+            // below `side_done` are passed.
+            let (mut side_done, mut side_from) = (0, 0);
+            for lo in (0..n).step_by(RELEASE) {
+                let hi = (lo + RELEASE).min(n);
+                for i in lo..hi {
+                    let r = recs[i];
+                    let e = if r & DONE != 0 {
+                        ARENA | r as u32
+                    } else if tag(r) == T_ALIAS {
+                        fwd[(r & ID_MASK) as usize]
+                    } else {
+                        let t = tag(r);
+                        out[k] = if t == T_APP && !wide {
+                            let f = fwd[(r >> ID_BITS & ID_MASK) as usize];
+                            stored_app(f, fwd[(r & ID_MASK) as usize])
+                        } else {
+                            if t != T_APP {
+                                side_done = r as u32 as usize;
+                            }
+                            stored(&side, 0, r, wide, &mut part, |c| fwd[c as usize])
+                        };
+                        k += 1;
+                        k as u32 - 1
+                    };
+                    fwd[i] = e;
+                }
+                crate::slab::release(&mut recs[lo.saturating_sub(RELEASE_MARGIN)..hi]);
+                crate::slab::release(&mut side[side_from..side_done]);
+                side_from = side_done.saturating_sub(2 * RELEASE_MARGIN);
+            }
+            let used = part.used;
+            out.truncate(k);
+            out_side.truncate(used);
+            (out, out_side, fwd)
         } else {
-            into_stored_par(&mut recs, &side, threads, wide)
+            into_stored_par(&mut recs, &mut side, threads, wide)
         };
-        drop(side);
-        let slot = |i: u32| {
-            let e = recs[i as usize];
-            if e & (DONE | FWD) == 0 {
-                // An alias (see `into_stored_par`): its target.
-                recs[(e & ID_MASK) as usize]
+        drop((recs, side));
+        // An alias's target (see `into_stored_par`; it is not an alias).
+        let at = |i: u32| {
+            let e = fwd[i as usize];
+            if e & ALIAS_REF != 0 && e & ARENA == 0 {
+                fwd[(e & !ALIAS_REF) as usize]
             } else {
                 e
             }
         };
         for r in &mut roots {
-            *r = moved(slot(*r));
+            *r = at(*r);
         }
         for s in &mut starts {
-            let e = recs[*s as usize];
-            *s = if e & (DONE | FWD) == 0 {
-                (e >> ALIAS_J_AT & J_MASK) as u32
-            } else {
-                (e >> J_AT & J_MASK) as u32
-            };
+            *s = at(*s) & !ARENA;
         }
-        let mut out = out;
-        let mut out_side = out_side;
-        out.shrink_to_fit();
-        out_side.shrink_to_fit();
+        drop(fwd);
         roots.shrink_to_fit();
         starts.shrink_to_fit();
         Stored {
@@ -966,30 +984,21 @@ impl Builder {
     }
 }
 
-/// In a slot that [`Builder::into_stored`] has passed: the number of
-/// records kept below it (an alias's, at [`ALIAS_J_AT`]).
-const J_AT: u32 = 31;
-const ALIAS_J_AT: u32 = ID_BITS;
-const J_MASK: u64 = ID_MASK;
-
-/// A stored application of the records in passed slots `f` and `a`
-/// (interned or kept; arena ids fitting the fields): [`stored_app`] of
-/// their [`moved`] references, from the slots' bits.
+/// Whether record `r` stays in the stored table: compound, not interned.
 #[inline(always)]
-fn app_of_slots(f: u64, a: u64) -> u64 {
-    const _: () = assert!(APP_F_ARENA == DONE >> 5 && APP_A_ARENA == DONE >> 1);
-    T_APP << TAG
-        | (f >> 5 & APP_F_ARENA)
-        | (a >> 1 & APP_A_ARENA)
-        | (f & ID_MASK) << ID_BITS
-        | a & ID_MASK
+fn kept(r: u64) -> bool {
+    r & DONE == 0 && tag(r) != T_ALIAS
 }
 
-/// A passed slot `e` (interned or kept) as a stored child.
-#[inline(always)]
-fn moved(e: u64) -> u32 {
-    (e as u32 & !ARENA) | ((e >> 32) as u32 & ARENA)
-}
+/// Records that [`Builder::into_stored`] passes between giving pages
+/// back, and how far back it gives them again (pages that straddle the
+/// boundary of the last range: 64 KiB, the largest page size).
+const RELEASE: usize = 1 << 18;
+const RELEASE_MARGIN: usize = (64 << 10) / 8;
+
+/// While [`into_stored_par`] runs: an alias's reference is its target's
+/// record, with this bit (never set in a record's index).
+const ALIAS_REF: u32 = 1 << 30;
 
 /// Where [`stored`] puts side records: their offset in the whole table.
 trait SideOut {
@@ -1034,11 +1043,13 @@ fn stored_side_words(r: u64, wide: bool) -> usize {
     }
 }
 
-/// Record `r` (compound, not done) as a stored one, its side record put
-/// in `out_side`, its children's references given by `kid`.
+/// Record `r` (compound, not done) as a stored one, its side record (in
+/// `side`, which starts at offset `side_base` of the whole) put in
+/// `out_side`, its children's references given by `kid`.
 #[inline(always)]
 fn stored(
     side: &[u32],
+    side_base: usize,
     r: u64,
     wide: bool,
     out_side: &mut impl SideOut,
@@ -1055,7 +1066,7 @@ fn stored(
         }
         return stored_app(f, a);
     }
-    let from = r as u32 as usize;
+    let from = r as u32 as usize - side_base;
     let o = match t {
         T_LET => {
             let f = &side[from..from + 4];
@@ -1077,29 +1088,31 @@ fn stored(
 /// fields).
 #[inline(always)]
 fn stored_app(f: u32, a: u32) -> u64 {
-    let bit = |c: u32, b: u64| if c & ARENA != 0 { b } else { 0 };
+    const _: () =
+        assert!(APP_F_ARENA == (ARENA as u64) << 27 && APP_A_ARENA == (ARENA as u64) << 31);
     T_APP << TAG
-        | bit(f, APP_F_ARENA)
-        | bit(a, APP_A_ARENA)
+        | ((f & ARENA) as u64) << 27
+        | ((a & ARENA) as u64) << 31
         | ((f & !ARENA) as u64) << ID_BITS
         | (a & !ARENA) as u64
 }
 
 /// [`Builder::into_stored`] on `threads` threads, ranges of records each:
 /// a pass counts each range's kept records and side words; one copies
-/// them (children as export ids) into their place and passes their slots;
-/// one puts their children right. An alias's slot keeps what it stands
-/// for and gets its count at [`ALIAS_J_AT`].
+/// them (children as export ids) into their place, notes where each
+/// record went, and gives the range's pages back; one puts the children
+/// right. An alias's reference is its target's record (with
+/// [`ALIAS_REF`]), put right at the end.
 fn into_stored_par(
     recs: &mut [u64],
-    side: &[u32],
+    side: &mut [u32],
     threads: usize,
     wide: bool,
-) -> (Vec<u64>, Vec<u32>) {
+) -> (Zeroed<u64>, Zeroed<u32>, Zeroed<u32>) {
     let n = recs.len();
-    let kept = |r: u64| r & DONE == 0 && tag(r) != T_ALIAS;
     let per = n.div_ceil(threads * 4).max(1);
-    let mut counts = vec![(0usize, 0usize); n.div_ceil(per)];
+    // Per range: records kept, their side words, the first one's offset.
+    let mut counts = vec![(0usize, 0usize, usize::MAX); n.div_ceil(per)];
     par_each(
         threads,
         recs.chunks(per).zip(counts.iter_mut()),
@@ -1108,61 +1121,88 @@ fn into_stored_par(
                 if kept(r) {
                     count.0 += 1;
                     count.1 += stored_side_words(r, wide);
+                    if tag(r) != T_APP && count.2 == usize::MAX {
+                        count.2 = r as u32 as usize;
+                    }
                 }
             }
         },
     );
-    let mut out = vec![0u64; counts.iter().map(|c| c.0).sum()];
-    let mut out_side = vec![0u32; counts.iter().map(|c| c.1).sum()];
-    // Each range: its records, its part of the outputs and where they are.
+    // A range's side records start where its first one does (they come
+    // in the order of their records), or where the next range's do.
+    let mut next = side.len();
+    for c in counts.iter_mut().rev() {
+        if c.2 == usize::MAX {
+            c.2 = next;
+        }
+        next = c.2;
+    }
+    let mut out = Zeroed::new(counts.iter().map(|c| c.0).sum());
+    let mut out_side = Zeroed::new(counts.iter().map(|c| c.1).sum());
+    let mut fwd = Zeroed::new(n);
     let mut ranges = Vec::with_capacity(counts.len());
     {
         let (mut o, mut os) = (&mut out[..], &mut out_side[..]);
+        let mut sd = &mut side[counts.first().map_or(0, |c| c.2)..];
+        let mut fw = &mut fwd[..];
         let (mut at, mut side_at) = (0usize, 0usize);
-        for (rs, &(k, sw)) in recs.chunks_mut(per).zip(&counts) {
+        for (c, rs) in recs.chunks_mut(per).enumerate() {
+            let (k, sw, first) = counts[c];
             let (oh, ot) = std::mem::take(&mut o).split_at_mut(k);
             let (sh, st) = std::mem::take(&mut os).split_at_mut(sw);
-            ranges.push((rs, oh, sh, at, side_at));
-            (o, os) = (ot, st);
+            let (fh, ft) = std::mem::take(&mut fw).split_at_mut(rs.len());
+            let own = counts.get(c + 1).map_or(sd.len(), |c2| c2.2 - first);
+            let (dh, dt) = std::mem::take(&mut sd).split_at_mut(own);
+            ranges.push((rs, fh, dh, first, oh, sh, at, side_at));
+            (o, os, fw, sd) = (ot, st, ft, dt);
             at += k;
             side_at += sw;
         }
     }
-    let mut seconds = Vec::with_capacity(ranges.len());
-    let (tx, rx) = std::sync::mpsc::channel();
-    par_each(threads, ranges.into_iter(), |(rs, o, sh, at, side_at)| {
-        let mut part = SidePart {
-            words: sh,
-            used: 0,
-            base: side_at as u64,
-        };
-        let mut j = at as u64;
-        let mut k = 0;
-        for r in rs.iter_mut() {
-            if *r & DONE != 0 {
-                *r |= j << J_AT;
-            } else if tag(*r) == T_ALIAS {
-                *r |= j << ALIAS_J_AT;
-            } else {
-                o[k] = stored(side, *r, wide, &mut part, |c| c);
-                k += 1;
-                *r = FWD | j << J_AT | j;
-                j += 1;
+    par_each(
+        threads,
+        ranges.into_iter(),
+        |(rs, fw, sd, first, o, sh, at, side_at)| {
+            let mut part = SidePart {
+                words: sh,
+                used: 0,
+                base: side_at as u64,
+            };
+            let mut k = 0;
+            for (r, f) in rs.iter().zip(fw.iter_mut()) {
+                let r = *r;
+                *f = if r & DONE != 0 {
+                    ARENA | r as u32
+                } else if tag(r) == T_ALIAS {
+                    ALIAS_REF | (r & ID_MASK) as u32
+                } else {
+                    o[k] = stored(sd, first, r, wide, &mut part, |c| c);
+                    k += 1;
+                    (at + k - 1) as u32
+                };
             }
-        }
-        tx.send((o, part.words)).expect("send");
-    });
-    drop(tx);
-    seconds.extend(rx);
-    let recs = &*recs;
+            crate::slab::release(rs);
+            crate::slab::release(sd);
+        },
+    );
     let kid = |c: u32| {
-        let e = recs[c as usize];
-        moved(if e & (DONE | FWD) == 0 {
-            recs[(e & ID_MASK) as usize]
+        let e = fwd[c as usize];
+        if e & ALIAS_REF != 0 && e & ARENA == 0 {
+            fwd[(e & !ALIAS_REF) as usize]
         } else {
             e
-        })
+        }
     };
+    let mut seconds = Vec::with_capacity(counts.len());
+    {
+        let (mut o, mut os) = (&mut out[..], &mut out_side[..]);
+        for &(k, sw, _) in &counts {
+            let (oh, ot) = std::mem::take(&mut o).split_at_mut(k);
+            let (sh, st) = std::mem::take(&mut os).split_at_mut(sw);
+            seconds.push((oh, sh));
+            (o, os) = (ot, st);
+        }
+    }
     par_each(threads, seconds.into_iter(), |(o, sh)| {
         let mut q = 0;
         for r in o.iter_mut() {
@@ -1185,7 +1225,7 @@ fn into_stored_par(
             q += stored_side_words(*r, true);
         }
     });
-    (out, out_side)
+    (out, out_side, fwd)
 }
 
 /// The fewest records per thread that [`Builder::into_stored`] uses
@@ -1341,9 +1381,6 @@ const ARENA: u32 = 1 << 31;
 /// (the bits `NEEDED` and the one below `TAG` are free once read).
 const APP_F_ARENA: u64 = 1 << 58;
 const APP_A_ARENA: u64 = NEEDED;
-/// While [`Builder::into_stored`] runs: the record at this index is
-/// kept, as the stored record with the index in the low bits.
-const FWD: u64 = NEEDED;
 
 /// Stored record `r`, decoded: its children are records' indices or (with
 /// [`ARENA`]) arena ids.
@@ -1372,8 +1409,8 @@ fn decode_stored(side: &[u32], r: u64) -> Node {
 /// A root is a record's index, or an arena id (with [`ARENA`]); a start,
 /// the index of the first record of its value's declaration.
 struct Stored {
-    recs: Vec<u64>,
-    side: Vec<u32>,
+    recs: Zeroed<u64>,
+    side: Zeroed<u32>,
     roots: Vec<u32>,
     starts: Vec<u32>,
 }
@@ -1413,8 +1450,8 @@ impl LazyValues for Stored {
     }
 
     fn heap_bytes(&self) -> usize {
-        self.recs.capacity() * 8
-            + self.side.capacity() * 4
+        self.recs.len() * 8
+            + self.side.len() * 4
             + (self.roots.capacity() + self.starts.capacity()) * 4
     }
 }
