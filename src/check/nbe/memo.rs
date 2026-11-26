@@ -264,19 +264,27 @@ impl Nbe<'_> {
         let TupleMemo { table, words } = &mut self.tuples;
         let base = words.len();
         let head = [n, holes as u32, (holes >> 32) as u32];
-        words.extend_from_slice(&head);
         let mut cur = env;
         let mut mask = holes;
         let mut h = hash_front(n as u64, holes);
-        for _ in 0..n {
-            if mask & 1 == 0 {
-                let v = self.a.env_head(cur);
-                h = (h.rotate_left(5) ^ v.0 as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
-                words.push(v.0);
+        let skipped = if n >= 64 {
+            holes.count_ones()
+        } else {
+            (holes & ((1u64 << n) - 1)).count_ones()
+        };
+        // One extend of known length, not a check per push.
+        let a = &self.a;
+        words.extend(head.into_iter().chain((0..n - skipped).map(|_| {
+            while mask & 1 != 0 {
+                mask >>= 1;
+                cur = a.env_tail(cur);
             }
+            let v = a.env_head(cur);
+            h = (h.rotate_left(5) ^ v.0 as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
             mask >>= 1;
-            cur = self.a.env_tail(cur);
-        }
+            cur = a.env_tail(cur);
+            v.0
+        })));
         let end = words.len();
         let len = end - base;
         let h = fold32(h);
