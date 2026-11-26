@@ -795,7 +795,14 @@ fn map_lines_par(
             let pool = &pool;
             sc.spawn(move || {
                 for c in (t..chunks).step_by(readers) {
-                    let reuse = pool.lock().unwrap_or_else(|e| e.into_inner()).pop();
+                    let mut reuse = pool.lock().unwrap_or_else(|e| e.into_inner()).pop();
+                    // The pages of a chunk the applying thread is done
+                    // with go back here, not there (it is the bottleneck).
+                    if let Some(r) = reuse.as_mut()
+                        && let Some((from, to)) = r.done.take()
+                    {
+                        m.release(from, to);
+                    }
                     let a = read_ahead(b, c * AHEAD, (c + 1) * AHEAD, reuse.unwrap_or_default());
                     if tx.send(a).is_err() {
                         return;
@@ -817,11 +824,18 @@ fn map_lines_par(
                 }
                 st.lines(&mut lines, &b[p.bytes.clone()])?;
             }
-            m.release(done, a.end);
+            let mut a = a;
+            a.done = Some((done, a.end));
             done = a.end;
             pool.lock().unwrap_or_else(|e| e.into_inner()).push(a);
         }
         drop(rxs);
+        for r in pool.lock().unwrap_or_else(|e| e.into_inner()).iter_mut() {
+            if let Some((from, to)) = r.done.take() {
+                m.release(from, to);
+            }
+        }
+        m.release(done, b.len());
         st.end_lines(lines)
     })
 }
@@ -833,6 +847,8 @@ struct Ahead {
     pieces: Vec<Piece>,
     runs: lazy::Runs,
     end: usize,
+    /// Bytes of the file the applying thread has read, still mapped.
+    done: Option<(usize, usize)>,
 }
 
 /// Lines of a chunk: a run read ahead, or lines left as they are.
