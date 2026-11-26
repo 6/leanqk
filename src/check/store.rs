@@ -22,7 +22,7 @@ use num_bigint::BigUint;
 use crate::env::{Decl, Env, NameList, RecRule, RuleList};
 use crate::expr::{BigId, BinderInfo, ExprData, ExprId, ExprNode, LetBinder, LetId, big_hash};
 use crate::intern::{Interner, Node};
-use crate::level::{LevelId, LevelList, LevelNode, list_at, list_hash};
+use crate::level::{LevelId, LevelList, LevelNode, LevelParams, list_at, list_hash};
 use crate::name::{NameId, NameNode};
 use crate::slab::{BLOCK, Block, Reader};
 use crate::strings::StrId;
@@ -66,7 +66,7 @@ pub struct Store<'e> {
     nat_unfold_work: u64,
     names: Interner<NameNode>,
     levels: Interner<LevelNode>,
-    level_hp: Vec<bool>,
+    level_params: Vec<LevelParams>,
     list_data: Vec<LevelId>,
     /// List `i` is from `list_offs[i]` to `list_offs[i + 1]`.
     list_offs: Vec<u32>,
@@ -127,7 +127,7 @@ impl<'e> Store<'e> {
             nat_unfold_work: 0,
             names: Interner::new("too many names"),
             levels: Interner::new("too many levels"),
-            level_hp: Vec::new(),
+            level_params: Vec::new(),
             list_data: Vec::new(),
             list_offs: vec![0],
             list_hp: Vec::new(),
@@ -299,10 +299,15 @@ impl<'e> Store<'e> {
 
     #[inline]
     pub fn level_has_param(&self, l: LevelId) -> bool {
+        self.level_params(l) != LevelParams::None
+    }
+
+    #[inline]
+    pub(crate) fn level_params(&self, l: LevelId) -> LevelParams {
         if is_local(l.0) {
-            self.level_hp[(l.0 & !LOCAL) as usize]
+            self.level_params[(l.0 & !LOCAL) as usize]
         } else {
-            self.env.levels.has_param(l)
+            self.env.levels.params(l)
         }
     }
 
@@ -318,15 +323,8 @@ impl<'e> Store<'e> {
         }
         let (i, fresh) = self.levels.intern(node).expect("levels");
         if fresh {
-            let hp = match node {
-                LevelNode::Zero => false,
-                LevelNode::Succ(a) => self.level_has_param(a),
-                LevelNode::Max(a, b) | LevelNode::IMax(a, b) => {
-                    self.level_has_param(a) || self.level_has_param(b)
-                }
-                LevelNode::Param(_) => true,
-            };
-            self.level_hp.push(hp);
+            let params = LevelParams::of_node(node, |l| self.level_params(l));
+            self.level_params.push(params);
         }
         LevelId(local_id(i))
     }
