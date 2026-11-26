@@ -24,7 +24,7 @@ const EMPTY_TUPLE: u32 = val::NONE - 1;
 const WHOLE_ENV: u32 = 1 << 31;
 
 /// Slots of `Nbe::tuple_slots`.
-pub(super) const TUPLE_SLOTS: usize = 1 << 11;
+pub(super) const TUPLE_SLOTS: usize = 1 << 14;
 
 /// Interned tuples store the range, two hole words, and the values read.
 #[derive(Default)]
