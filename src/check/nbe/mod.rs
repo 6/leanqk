@@ -748,6 +748,17 @@ impl<'e> Nbe<'e> {
     #[inline(never)]
     fn inst_list_new(&mut self, ll: LevelList, ls: Ls) -> LevelList {
         let node = self.a.ls(ls);
+        let params = self.st.name_list(node.params);
+        if self.st.is_own_levels(params, self.st.list(ll))
+            && self.st.list(node.levels).len() == params.len()
+            && params
+                .iter()
+                .enumerate()
+                .all(|(i, p)| !params[..i].contains(p))
+        {
+            self.list_cache.insert((ll, ls), node.levels);
+            return node.levels;
+        }
         let cache = &mut self.level_cache;
         let r = univ::map_level_list(&mut self.st, ll, |st, l| {
             if !st.level_has_param(l) {
