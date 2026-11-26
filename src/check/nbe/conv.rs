@@ -32,6 +32,47 @@ const EQ_FAIL: u8 = 4;
 const SYN_OK: u8 = 8;
 const SYN_FAIL: u8 = 16;
 
+/// Exact pair facts. Collisions replace the previous entry.
+pub(super) struct PairCache {
+    slots: Box<[(u64, u8)]>,
+}
+
+impl Default for PairCache {
+    fn default() -> Self {
+        Self {
+            slots: vec![(0, 0); Self::SLOTS].into_boxed_slice(),
+        }
+    }
+}
+
+impl PairCache {
+    const SLOTS: usize = 1 << 15;
+
+    #[inline]
+    fn index(key: u64) -> usize {
+        crate::hash::hash2(key, 0) as usize & (Self::SLOTS - 1)
+    }
+
+    #[inline]
+    fn get(&self, key: u64) -> u8 {
+        let (stored, bits) = self.slots[Self::index(key)];
+        if stored == key { bits } else { 0 }
+    }
+
+    fn insert(&mut self, key: u64, bit: u8) {
+        let slot = &mut self.slots[Self::index(key)];
+        if slot.0 == key {
+            slot.1 |= bit;
+        } else {
+            *slot = (key, bit);
+        }
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.slots.fill((0, 0));
+    }
+}
+
 /// Steps a failed structural comparison must have taken to be remembered
 /// (`SYN_FAIL`): a cheaper one is cheaper to try again than to remember.
 const SYN_FAIL_MIN: u32 = 4;
@@ -160,11 +201,11 @@ impl Nbe<'_> {
     /// What is known of `t` and `s` (bits `EQ` and the others).
     #[inline]
     fn pf(&self, t: V, s: V) -> u8 {
-        self.pairs.get(&pair(t, s)).copied().unwrap_or(0)
+        self.pairs.get(pair(t, s))
     }
 
     fn pset(&mut self, t: V, s: V, bit: u8) {
-        *self.pairs.entry(pair(t, s)).or_insert(0) |= bit;
+        self.pairs.insert(pair(t, s), bit);
     }
 
     fn is_lit(v: &Val) -> bool {

@@ -129,7 +129,7 @@ pub struct Nbe<'e> {
     /// Values left in their `.olean` files, as built in the store.
     lazy_values: IdMap<ExprId, ExprId>,
     /// What is known of pairs of values (`conv::EQ` and the other bits).
-    pairs: IdMap<u64, u8>,
+    pairs: conv::PairCache,
     /// Terms with universe parameters marked checked in this declaration.
     level_checked: Vec<V>,
     fresh: bool,
@@ -293,7 +293,7 @@ impl<'e> Nbe<'e> {
             const_type: IdMap::default(),
             const_value: IdMap::default(),
             lazy_values: IdMap::default(),
-            pairs: IdMap::default(),
+            pairs: conv::PairCache::default(),
             level_checked: Vec::new(),
             fresh: true,
             syn_t: vec![[val::NONE; 8]; SYN_T],
@@ -509,7 +509,7 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.list_cache);
         shrink(&mut self.const_type);
         shrink(&mut self.const_value);
-        shrink(&mut self.pairs);
+        self.pairs.clear();
         self.syn_t.fill([val::NONE; 8]);
         shrink(&mut self.level_eq);
         shrink(&mut self.major_induct);
