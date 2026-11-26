@@ -19,16 +19,7 @@ pub fn peak_rss_bytes() -> Option<u64> {
 /// reports it (Linux: `/proc/self/statm`, in pages of the system's size,
 /// which is not 4 KiB everywhere).
 pub fn rss_bytes() -> Option<u64> {
-    use std::os::unix::fs::FileExt;
-    // The file stays open (it is read every few blocks); `pread` at 0 makes
-    // the kernel render it again.
-    static STATM: std::sync::OnceLock<Option<std::fs::File>> = std::sync::OnceLock::new();
-    let f = STATM
-        .get_or_init(|| std::fs::File::open("/proc/self/statm").ok())
-        .as_ref()?;
-    let mut buf = [0u8; 128];
-    let n = f.read_at(&mut buf, 0).ok()?;
-    let s = std::str::from_utf8(&buf[..n]).ok()?;
+    let s = std::fs::read_to_string("/proc/self/statm").ok()?;
     let pages: u64 = s.split_whitespace().nth(1)?.parse().ok()?;
     Some(pages * crate::slab::page_size() as u64)
 }
