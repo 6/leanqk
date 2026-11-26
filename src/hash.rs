@@ -228,6 +228,139 @@ impl Table {
     }
 }
 
+/// An open-addressing set of `u64` keys for one thread: linear probing
+/// over the keys themselves at a load of at most 3/4, the slot picked by
+/// the top bits of [`hash1`]. `u64::MAX` marks an empty slot; the key
+/// `u64::MAX` itself is kept apart.
+pub struct U64Set {
+    slots: Box<[u64]>,
+    /// `64 - log2(slots.len())`.
+    shift: u32,
+    len: usize,
+    has_max: bool,
+}
+
+impl Default for U64Set {
+    fn default() -> Self {
+        U64Set::with_slots(MIN_SLOTS)
+    }
+}
+
+impl U64Set {
+    fn with_slots(n: usize) -> Self {
+        debug_assert!(n.is_power_of_two() && n >= MIN_SLOTS);
+        U64Set {
+            slots: vec![u64::MAX; n].into_boxed_slice(),
+            shift: 64 - n.trailing_zeros(),
+            len: 0,
+            has_max: false,
+        }
+    }
+
+    #[inline(always)]
+    fn start(&self, k: u64) -> usize {
+        (hash1(k) >> self.shift) as usize
+    }
+
+    #[inline(always)]
+    #[allow(unsafe_code)]
+    fn slot(&self, i: usize) -> u64 {
+        debug_assert!(i < self.slots.len());
+        // SAFETY: every index is below `slots.len()`: a hash shifted down
+        // to its top bits, or masked by `slots.len() - 1`, a power of two
+        // less one.
+        unsafe { *self.slots.get_unchecked(i) }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len + self.has_max as usize
+    }
+
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Slots held.
+    pub fn capacity(&self) -> usize {
+        self.slots.len()
+    }
+
+    #[inline]
+    pub fn contains(&self, k: &u64) -> bool {
+        let k = *k;
+        if k == u64::MAX {
+            return self.has_max;
+        }
+        let mask = self.slots.len() - 1;
+        let mut i = self.start(k);
+        loop {
+            let v = self.slot(i);
+            if v == k {
+                return true;
+            }
+            if v == u64::MAX {
+                return false;
+            }
+            i = (i + 1) & mask;
+        }
+    }
+
+    /// Add `k`: whether it was new.
+    #[inline]
+    pub fn insert(&mut self, k: u64) -> bool {
+        if k == u64::MAX {
+            return !std::mem::replace(&mut self.has_max, true);
+        }
+        let mask = self.slots.len() - 1;
+        let mut i = self.start(k);
+        loop {
+            let v = self.slot(i);
+            if v == k {
+                return false;
+            }
+            if v == u64::MAX {
+                break;
+            }
+            i = (i + 1) & mask;
+        }
+        self.slots[i] = k;
+        self.len += 1;
+        if self.len * 4 > self.slots.len() * 3 {
+            self.grow();
+        }
+        true
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow(&mut self) {
+        let mut new = U64Set::with_slots(self.slots.len() * 2);
+        let mask = new.slots.len() - 1;
+        for &v in self.slots.iter() {
+            if v != u64::MAX {
+                let mut i = new.start(v);
+                while new.slot(i) != u64::MAX {
+                    i = (i + 1) & mask;
+                }
+                new.slots[i] = v;
+            }
+        }
+        new.len = self.len;
+        new.has_max = self.has_max;
+        *self = new;
+    }
+
+    /// Empty the set, keeping its storage.
+    pub fn clear(&mut self) {
+        if self.len != 0 {
+            self.slots.fill(u64::MAX);
+            self.len = 0;
+        }
+        self.has_max = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,6 +386,22 @@ mod tests {
         assert_eq!(t.find(hash(5), |x| x == 5), None);
         t.insert_new(hash(5), 5);
         assert_eq!(t.find(hash(5), |x| x == 5), Some(5));
+    }
+
+    #[test]
+    fn u64_set_holds_what_it_was_given() {
+        let mut s = U64Set::default();
+        let keys = (0..5_000u64).map(|k| k.wrapping_mul(0x1_0000_0001));
+        for k in keys.chain([u64::MAX]) {
+            assert!(!s.contains(&k));
+            assert!(s.insert(k));
+            assert!(!s.insert(k));
+        }
+        assert_eq!(s.len(), 5_001);
+        assert!(s.contains(&u64::MAX) && s.contains(&0x1_0000_0001));
+        assert!(!s.contains(&7));
+        s.clear();
+        assert!(s.is_empty() && !s.contains(&0) && !s.contains(&u64::MAX));
     }
 
     #[test]
