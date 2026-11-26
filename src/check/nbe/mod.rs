@@ -155,7 +155,7 @@ pub struct Nbe<'e> {
     terms: Vec<ExprId>,
     /// Declarations found by name, a direct-mapped front for the
     /// environment's table: (name, index), or `NONE` names.
-    found: Box<[std::cell::Cell<(u32, u32)>]>,
+    found: Box<[std::cell::Cell<(u32, u32)>; 1 << FOUND_BITS]>,
     vargs: Vec<V>,
     /// Nesting of eager argument evaluation (see `thunk`).
     eager_depth: u32,
@@ -315,7 +315,9 @@ impl<'e> Nbe<'e> {
             terms: Vec::new(),
             found: (0..1 << FOUND_BITS)
                 .map(|_| std::cell::Cell::new((val::NONE, 0)))
-                .collect(),
+                .collect::<Box<[_]>>()
+                .try_into()
+                .expect("FOUND_BITS slots"),
             vargs: Vec::new(),
             eager_depth: 0,
             closed_eval: super::eval::enabled(),
