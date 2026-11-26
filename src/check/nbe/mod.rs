@@ -72,6 +72,7 @@ const PRUNE: bool = true;
 
 /// Slots of the direct-mapped structural comparison memo `Nbe::syn_t`.
 const SYN_T: usize = 1 << 12;
+const SYN_BVARS: usize = 1 << 10;
 
 /// Slots of `Nbe::eager_slots`.
 pub(super) const EAGER_SLOTS: usize = 1 << 14;
@@ -145,6 +146,8 @@ pub struct Nbe<'e> {
     fresh: bool,
     /// Structural comparisons of term pairs and value–term pairs.
     syn_t: Box<[[u32; 8]; SYN_T]>,
+    /// Pairs of environment lookups that resolve to the same value.
+    syn_bvars: Box<[u64; SYN_BVARS]>,
     level_eq: IdMap<(LevelId, LevelId), bool>,
     major_induct: IdMap<NameId, NameId>,
     /// `prop_positions` of constants.
@@ -317,6 +320,7 @@ impl<'e> Nbe<'e> {
             level_checked: Vec::new(),
             fresh: true,
             syn_t: val::table(val::NONE),
+            syn_bvars: vec![0; SYN_BVARS].into_boxed_slice().try_into().unwrap(),
             level_eq: IdMap::default(),
             major_induct: IdMap::default(),
             prop_pos: IdMap::default(),
@@ -600,6 +604,7 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.const_value);
         self.pairs.clear();
         self.syn_t.as_flattened_mut().fill(val::NONE);
+        self.syn_bvars.fill(0);
         shrink(&mut self.level_eq);
         shrink(&mut self.major_induct);
         if self.kept_bytes() > self.cache_share {

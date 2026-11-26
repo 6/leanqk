@@ -38,7 +38,7 @@ pub(super) struct PairCache {
     slots: Box<[u64; PairCache::SLOTS]>,
 }
 
-const _: () = assert!(LIMIT <= 1 << 24);
+const _: () = assert!(LIMIT <= 1 << 24 && LIMIT.is_power_of_two());
 
 impl Default for PairCache {
     fn default() -> Self {
@@ -1468,19 +1468,42 @@ impl Nbe<'_> {
                 if i < k_l || *budget == 0 {
                     return false;
                 }
-                let Some(x) = self.a.lookup(e_l, i - k_l) else {
+                let k_r = depth.right_total();
+                let left = i - k_l;
+                let right = j.wrapping_sub(k_r);
+                // Each half holds an environment ID and a small offset. Zero
+                // cannot be a cached pair, since both lookups must succeed.
+                let key = if (left | right) <= u32::MAX / LIMIT {
+                    let lhs = e_l.0 | (left * LIMIT);
+                    let rhs = e_r.0 | (right * LIMIT);
+                    (u64::from(lhs) << 32) | u64::from(rhs)
+                } else {
+                    0
+                };
+                let index = crate::hash::hash_front(key, 0) as usize & (super::SYN_BVARS - 1);
+                let slot = &mut self.syn_bvars[index];
+                if key != 0 && *slot == key {
+                    *budget -= 1;
+                    return true;
+                }
+                let Some(x) = self.a.lookup(e_l, left) else {
                     return false;
                 };
                 // Charge for the right variable as in the mixed comparison.
                 *budget -= 1;
-                let k_r = depth.right_total();
                 if j < k_r {
                     return false;
                 }
-                return match self.a.lookup(e_r, j - k_r) {
-                    Some(y) => self.syn_eq_v(x, y, budget),
-                    None => false,
+                let Some(y) = self.a.lookup(e_r, right) else {
+                    return false;
                 };
+                if x == y {
+                    if key != 0 {
+                        *slot = key;
+                    }
+                    return true;
+                }
+                return self.syn_eq_v(x, y, budget);
             }
             (ExprNode::BVar(i), _) if i >= d => {
                 let k_l = depth.left_total();
