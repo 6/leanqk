@@ -729,7 +729,12 @@ impl Arena {
                 let base = sps[k - 1] & (HAS_FVAR_BIT | HAS_PROJ_BIT);
                 let fv = xs.iter().any(|&x| recs[x.0 as usize].flags & HAS_FVAR != 0);
                 sps.push((n + xs.len()) as u32 | base | if fv { HAS_FVAR_BIT } else { 0 });
-                sps.extend_from_within(k..k + 2 * n);
+                // Word by word: spines are short, and a call to copy
+                // memory costs more than the loop.
+                for j in k..k + 2 * n {
+                    let w = *at(sps, j);
+                    sps.push(w);
+                }
                 for x in xs {
                     sps.push(x.0);
                     sps.push(NONE);
