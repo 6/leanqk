@@ -763,13 +763,33 @@ mod tests {
         a.push(42);
         let cap = a.cap.load(Ordering::Relaxed);
         let base = a.base;
-        // Free the upper half of the mapping, then grow back into it.
-        // SAFETY: the slab's own mapping, above its one element.
-        unsafe { libc::munmap(base.as_ptr().add(cap / 2).cast(), cap / 2 * 4) };
-        *a.cap.get_mut() = cap / 2;
-        assert!(a.grow_in_place(cap));
-        assert_eq!((a.cap.load(Ordering::Relaxed), a.base), (cap, base));
-        assert_eq!(*a.get(0), 42);
+        // Free the upper half of the mapping, then grow back into it. In a
+        // child process: there no other thread (another test's) can map
+        // the freed range first. The child only makes system calls and
+        // reads memory, then exits with the outcome.
+        // SAFETY: fork; the child runs no code that could need a lock
+        // another thread held (no allocation, no panic) before `_exit`.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork");
+        if pid == 0 {
+            // SAFETY: the slab's own mapping, above its one element.
+            let freed = unsafe { libc::munmap(base.as_ptr().add(cap / 2).cast(), cap / 2 * 4) };
+            *a.cap.get_mut() = cap / 2;
+            let ok = freed == 0
+                && a.grow_in_place(cap)
+                && (a.cap.load(Ordering::Relaxed), a.base) == (cap, base)
+                && *a.get(0) == 42;
+            // SAFETY: ends the child at once, running nothing of the
+            // test harness's.
+            unsafe { libc::_exit(if ok { 0 } else { 1 }) };
+        }
+        let mut status = 0;
+        // SAFETY: waits for the child just made.
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+            "grown in place in the child: {status:#x}"
+        );
     }
 
     /// A pool out of a reduced slab's room extends it in place, or else
