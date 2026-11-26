@@ -113,7 +113,7 @@ pub struct Nbe<'e> {
     /// value).
     pub(super) eager_direct: Box<[[u32; 4]; EAGER_DIRECT_SLOTS]>,
     /// Lists of values read from environments (`read_tuple`).
-    pub(super) tuples: memo::EnvMemo<0>,
+    tuples: memo::TupleMemo,
     /// A direct-mapped front of `tuples`: (environment, range, holes (two
     /// words), id).
     pub(super) tuple_slots: Box<[[u32; 5]; memo::TUPLE_SLOTS]>,
