@@ -22,6 +22,15 @@ pub fn hash2(w0: u64, w1: u64) -> u64 {
     fold_mul(fold_mul(w0 ^ K0, K2) ^ w1, K1)
 }
 
+/// Hash two words with one multiply (the folded product of the two words,
+/// each offset by a constant). Enough for direct-mapped fronts and for
+/// the hash-consing tables keyed by ids; a word equal to its constant
+/// would make every hash with it zero, which only costs time.
+#[inline]
+pub fn hash_front(w0: u64, w1: u64) -> u64 {
+    fold_mul(w0 ^ K0, w1 ^ K2)
+}
+
 /// Hash a byte string.
 pub fn hash_bytes(bytes: &[u8]) -> u64 {
     let mut h = K2 ^ bytes.len() as u64;

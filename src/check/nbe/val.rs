@@ -134,7 +134,10 @@ impl Val {
             Val::Const(n, l, sp) => (8, n.0, l.0, sp.0),
             Val::FVar(k, sp) => (9, k, sp.0, 0),
         };
-        h32(hash2(tag | (a as u64) << 32, (b as u64) << 32 | c as u64))
+        h32(crate::hash::hash_front(
+            tag | (a as u64) << 32,
+            (b as u64) << 32 | c as u64,
+        ))
     }
 }
 
@@ -429,7 +432,7 @@ impl Arena {
 
     #[inline]
     fn head(&mut self, a: u32, b: u32, val: Val) -> V {
-        let i = (hash2(a as u64, b as u64) >> 52) as usize & (HEADS - 1);
+        let i = (crate::hash::hash_front(a as u64, b as u64) >> 52) as usize & (HEADS - 1);
         let (x, y, v) = self.heads[i];
         if x == a && y == b {
             return v;
@@ -443,7 +446,7 @@ impl Arena {
     /// thunk it holds for them, if it does.
     #[inline]
     pub fn thunk_slot(&self, e: ExprId, env: Env, ls: Ls) -> (usize, Option<V>) {
-        let h = hash2(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
+        let h = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let i = (h >> 50) as usize & (THUNKS - 1);
         let s = self.thunks[i];
         let hit = s[0] == e.0 && s[1] == env.0 && s[2] == ls.0;
@@ -631,7 +634,7 @@ impl Arena {
             Val::FVar(k, _) => (1u64, k, 0),
             _ => unreachable!(),
         };
-        let mut h = hash2(tag | (a as u64) << 32, b as u64);
+        let mut h = crate::hash::hash_front(tag | (a as u64) << 32, b as u64);
         // One step per elimination (its two words).
         for w in at_slice(&self.sps, k, k + 2 * n).as_chunks::<2>().0 {
             let x = w[0] as u64 | (w[1] as u64) << 32;
@@ -823,12 +826,14 @@ impl Arena {
 
     #[inline]
     pub fn cons(&mut self, env: Env, v: V) -> Env {
-        let h = hash2(env.0 as u64 | 2 << 40, v.0 as u64);
-        let i = (h >> 50) as usize & (CONSES - 1);
+        let i = (crate::hash::hash_front(env.0 as u64 | 2 << 40, v.0 as u64) >> 50) as usize
+            & (CONSES - 1);
         let s = self.conses[i];
         if s[0] == env.0 && s[1] == v.0 {
             return Env(s[2]);
         }
+        // The table's hash only past the front.
+        let h = crate::hash::hash_front(env.0 as u64 | 2 << 40, v.0 as u64);
         let r = self.cons_find(env, v, h32(h));
         self.conses[i] = [env.0, v.0, r.0];
         r
