@@ -59,6 +59,10 @@ fn local_id(i: u32) -> u32 {
     i | LOCAL
 }
 
+/// Slots of the overlay's expression table kept from one declaration to
+/// the next.
+const TABLE_KEEP: usize = 1 << 10;
+
 pub struct Store<'e> {
     pub env: &'e Env,
     pub(super) decls: &'e [Decl],
@@ -99,7 +103,7 @@ struct LocalExprs<'e> {
     /// so that the next push takes one).
     fill: u32,
     count: usize,
-    table: HashTable<u32>,
+    table: crate::hash::Table,
 }
 
 impl Default for LocalExprs<'_> {
@@ -108,7 +112,7 @@ impl Default for LocalExprs<'_> {
             blocks: Vec::new(),
             fill: BLOCK,
             count: 0,
-            table: HashTable::new(),
+            table: crate::hash::Table::new(),
         }
     }
 }
@@ -152,11 +156,17 @@ impl<'e> Store<'e> {
         // declaration.
         let mut blocks = std::mem::take(&mut self.exprs.blocks);
         blocks.truncate(1);
+        // So is the table's storage, unless it is large.
+        let mut table = std::mem::take(&mut self.exprs.table);
         *self = self.fresh();
         if !blocks.is_empty() {
             self.exprs.fill = 0;
         }
         self.exprs.blocks = blocks;
+        if table.capacity() <= TABLE_KEEP {
+            table.clear();
+            self.exprs.table = table;
+        }
     }
 
     pub(super) fn fresh(&self) -> Self {
@@ -483,16 +493,19 @@ impl<'e> Store<'e> {
     }
 
     fn mk_local(&mut self, node: ExprNode) -> ExprId {
-        let h = node.hash();
+        let h = crate::hash::fold32(node.hash());
         let nodes = self.nodes;
-        if let Some(&id) = self.exprs.table.find(h, |&id| nodes.get(id).same(&node)) {
-            return ExprId(id);
-        }
+        let slot = match self
+            .exprs
+            .table
+            .find_or_slot(h, |id| nodes.get(id).same(&node))
+        {
+            Ok(id) => return ExprId(id),
+            Err(slot) => slot,
+        };
         let d = self.data_of(node);
         let e = self.push_local(node, d);
-        self.exprs
-            .table
-            .insert_unique(h, e.0, |&id| nodes.get(id).hash());
+        self.exprs.table.insert_at(slot, h, e.0);
         e
     }
 

@@ -9,12 +9,9 @@
 //! keyed by a value id (forced thunk, `whnf`, type) is shared by all its
 //! routes.
 
-use hashbrown::HashTable;
-use hashbrown::hash_table::Entry;
-
 use crate::env::NameList;
 use crate::expr::ExprId;
-use crate::hash::hash2;
+use crate::hash::{Table, hash2};
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 use crate::strings::StrId;
@@ -252,7 +249,7 @@ pub struct Arena {
     /// probing `vtable` reads only values.
     vals: Vec<Val>,
     recs: Vec<Rec>,
-    vtable: HashTable<(u32, u32)>,
+    vtable: Table,
 
     /// Spines, each a header (its length and `HAS_FVAR_BIT`,
     /// `HAS_PROJ_BIT`) and then two words per elimination (an argument's
@@ -260,13 +257,13 @@ pub struct Arena {
     /// the offset of its header; `Sp::NIL` is the empty one at 0.
     sps: Vec<u32>,
     /// Spines by content.
-    sptable: HashTable<(u32, u32)>,
+    sptable: Table,
     /// Scratch words for building a spine.
     sp_buf: Vec<u32>,
     envs: Vec<EnvRec>,
-    envtable: HashTable<(u32, u32)>,
+    envtable: Table,
     lss: Vec<LsNode>,
-    lstable: HashTable<(u32, u32)>,
+    lstable: Table,
     /// Recently made constants and sorts with no arguments, by a hash of
     /// their name and levels (direct-mapped, in front of `vtable`): the
     /// value of a constant is made at every occurrence.
@@ -277,7 +274,7 @@ pub struct Arena {
     thunks: Box<[[u32; 4]; THUNKS]>,
     /// Neutrals by head and spine contents, so that applying a neutral to
     /// arguments finds the result with one probe.
-    nutable: HashTable<(u32, u32)>,
+    nutable: Table,
     /// Environments by their last entry and the rest (direct-mapped, in
     /// front of `envtable`): (rest, entry, environment).
     conses: Box<[[u32; 3]; CONSES]>,
@@ -313,9 +310,9 @@ impl Arena {
         Arena {
             vals: Vec::new(),
             recs: Vec::new(),
-            vtable: HashTable::new(),
+            vtable: Table::new(),
             sps: vec![0],
-            sptable: HashTable::new(),
+            sptable: Table::new(),
             sp_buf: Vec::new(),
             envs: vec![EnvRec {
                 node: EnvNode {
@@ -325,18 +322,18 @@ impl Arena {
                 len: 0,
                 jump: Env::NIL,
             }],
-            envtable: HashTable::new(),
+            envtable: Table::new(),
             lss: vec![LsNode {
                 params: NameList::default(),
                 levels: LevelList::EMPTY,
             }],
-            lstable: HashTable::new(),
+            lstable: Table::new(),
             heads: vec![(NONE, NONE, V(NONE)); HEADS]
                 .into_boxed_slice()
                 .try_into()
                 .expect("HEADS slots"),
             thunks: table(NONE),
-            nutable: HashTable::new(),
+            nutable: Table::new(),
             conses: table(NONE),
             apps: table(NONE),
             fars: (0..FARS)
@@ -354,10 +351,10 @@ impl Arena {
     /// Empty the arena, keeping its storage: refilling it then costs no
     /// growth. A large one is dropped instead.
     pub fn clear(&mut self) {
-        if self.vtable.capacity() > 1 << 17
-            || self.sptable.capacity() > 1 << 17
-            || self.envtable.capacity() > 1 << 17
-            || self.nutable.capacity() > 1 << 17
+        if self.vtable.capacity() > 1 << 18
+            || self.sptable.capacity() > 1 << 18
+            || self.envtable.capacity() > 1 << 18
+            || self.nutable.capacity() > 1 << 18
         {
             *self = Arena::new();
             return;
@@ -390,14 +387,14 @@ impl Arena {
     pub fn heap_bytes(&self) -> usize {
         self.vals.capacity() * size_of::<Val>()
             + self.recs.capacity() * size_of::<Rec>()
-            + self.vtable.capacity() * 9
+            + self.vtable.capacity() * 8
             + self.sps.capacity() * 4
-            + self.sptable.capacity() * 9
+            + self.sptable.capacity() * 8
             + self.envs.capacity() * 17
             + self.thunks.len() * 16
-            + self.nutable.capacity() * 9
+            + self.nutable.capacity() * 8
             + self.conses.len() * 12
-            + self.envtable.capacity() * 9
+            + self.envtable.capacity() * 8
     }
 
     // ---- values ----
@@ -488,19 +485,15 @@ impl Arena {
         }
         let h = val.hash();
         let Self { vals, vtable, .. } = self;
-        let slot = match vtable.entry(
-            spread(h),
-            |&(id, k)| k == h && vals[id as usize] == val,
-            |&(_, k)| spread(k),
-        ) {
-            Entry::Occupied(o) => return V(o.get().0),
-            Entry::Vacant(slot) => slot,
+        let slot = match vtable.find_or_slot(h, |id| *at(vals, id as usize) == val) {
+            Ok(id) => return V(id),
+            Err(slot) => slot,
         };
         let id = vals.len() as u32;
         if id >= LIMIT {
             out_of_room();
         }
-        slot.insert((id, h));
+        vtable.insert_at(slot, h, id);
         vals.push(val);
         let flags = match val {
             Val::Lam(_, e, _) | Val::Pi(_, e, _) | Val::PiInfer(_, e, _) => {
@@ -693,10 +686,9 @@ impl Arena {
             recs,
             ..
         } = self;
-        let slot = match nutable.entry(
-            spread(h),
-            |&(id, k2)| {
-                k2 == h && {
+        let slot = match nutable.find_or_slot(h, |id| {
+            {
+                {
                     let (same, sp) = match (*at(vals, id as usize), head) {
                         (Val::Const(n2, l2, sp), Val::Const(n1, l1, _)) => {
                             (n1 == n2 && l1 == l2, sp)
@@ -716,11 +708,10 @@ impl Arena {
                             *at(sps, w) == x.0 && *at(sps, w + 1) == NONE
                         })
                 }
-            },
-            |&(_, k)| spread(k),
-        ) {
-            Entry::Occupied(o) => return V(o.get().0),
-            Entry::Vacant(slot) => slot,
+            }
+        }) {
+            Ok(id) => return V(id),
+            Err(slot) => slot,
         };
         let sp = match sp {
             Some(sp) => sp,
@@ -749,7 +740,7 @@ impl Arena {
         if id >= LIMIT {
             out_of_room();
         }
-        slot.insert((id, h));
+        nutable.insert_at(slot, h, id);
         vals.push(val);
         let fv = matches!(head, Val::FVar(..)) || sps[sp.0 as usize] & HAS_FVAR_BIT != 0;
         recs.push(Rec {
@@ -799,12 +790,10 @@ impl Arena {
         }
         let h = h32(h);
         let Self { sps, sptable, .. } = self;
-        if let Some(&(id, _)) = sptable.find(spread(h), |&(id, k)| {
-            k == h && {
-                let i = id as usize;
-                *at(sps, i) & LEN_BITS == (w.len() / 2) as u32
-                    && w.iter().enumerate().all(|(j, &x)| *at(sps, i + 1 + j) == x)
-            }
+        if let Some(id) = sptable.find(h, |id| {
+            let i = id as usize;
+            *at(sps, i) & LEN_BITS == (w.len() / 2) as u32
+                && w.iter().enumerate().all(|(j, &x)| *at(sps, i + 1 + j) == x)
         }) {
             return Sp(id);
         }
@@ -826,8 +815,7 @@ impl Arena {
             | if pj { HAS_PROJ_BIT } else { 0 };
         self.sps.push(hdr);
         self.sps.extend_from_slice(w);
-        self.sptable
-            .insert_unique(spread(h), (id, h), |&(_, k)| spread(k));
+        self.sptable.insert_new(h, id);
         Sp(id)
     }
 
@@ -888,19 +876,15 @@ impl Arena {
             recs,
             ..
         } = self;
-        let slot = match envtable.entry(
-            spread(h),
-            |&(id, k)| k == h && envs[id as usize].node == node,
-            |&(_, k)| spread(k),
-        ) {
-            Entry::Occupied(o) => return Env(o.get().0),
-            Entry::Vacant(slot) => slot,
+        let slot = match envtable.find_or_slot(h, |id| at(envs, id as usize).node == node) {
+            Ok(id) => return Env(id),
+            Err(slot) => slot,
         };
         let id = envs.len() as u32;
         if id >= LIMIT {
             out_of_room();
         }
-        slot.insert((id, h));
+        envtable.insert_at(slot, h, id);
         let p = envs[env.0 as usize];
         let fv = p.len & HAS_FVAR_BIT != 0 || recs[v.0 as usize].flags & HAS_FVAR != 0;
         let len = ((p.len & LEN_BITS) + 1) | if fv { HAS_FVAR_BIT } else { 0 };
@@ -980,14 +964,12 @@ impl Arena {
             levels.0 as u64,
         ));
         let Self { lss, lstable, .. } = self;
-        if let Some(&(id, _)) =
-            lstable.find(spread(h), |&(id, k)| k == h && lss[id as usize] == node)
-        {
+        if let Some(id) = lstable.find(h, |id| *at(lss, id as usize) == node) {
             return Ls(id);
         }
         let id = lss.len() as u32;
         lss.push(node);
-        lstable.insert_unique(spread(h), (id, h), |&(_, k)| spread(k));
+        lstable.insert_new(h, id);
         Ls(id)
     }
 }
