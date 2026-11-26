@@ -303,7 +303,16 @@ impl Tc<'_> {
     /// order: types, constructors, recursors (the auxiliary recursors of
     /// nested occurrences last). On success the derived declarations are
     /// left in `pending`.
-    pub fn add_inductive(&mut self, d: &IndDecl, naming: &RecNaming) -> R<Vec<Decl>> {
+    /// `pre` checks a closed type of the environment's (a type of the
+    /// block, or a constructor's, under the block's universe parameters)
+    /// with the first `k` declarations of the block visible, if it can:
+    /// what it accepts, `Tc` need not check (see `AddInd::check_closed`).
+    pub fn add_inductive(
+        &mut self,
+        d: &IndDecl,
+        naming: &RecNaming,
+        pre: Option<&mut PreCheck<'_>>,
+    ) -> R<Vec<Decl>> {
         if d.types.is_empty() {
             return err("invalid empty (mutual) inductive datatype declaration");
         }
@@ -317,7 +326,11 @@ impl Tc<'_> {
         self.check_uniform_ind_occs(d)?;
         let nested = ElimNested::run(self, d)?;
         let nnested = nested.aux.len() as u32;
-        let aux_decls = AddInd::new(self, &nested.decl, nnested, naming).run()?;
+        let mut add = AddInd::new(self, &nested.decl, nnested, naming);
+        if nnested == 0 {
+            add.pre = pre.map(|p| -> &mut PreCheck<'_> { p });
+        }
+        let aux_decls = add.run()?;
         if nnested == 0 {
             return Ok(aux_decls);
         }
@@ -344,9 +357,19 @@ struct RecInfo {
     major: ExprId,
 }
 
+/// A check of a closed type `e` under universe parameters `ps`, with the
+/// first `k` declarations of the block visible: whether it passed.
+pub type PreCheck<'p> = dyn FnMut(ExprId, &[NameId], u32) -> bool + 'p;
+
+/// Whether the recursors made are type-checked, and their computation
+/// rules checked to preserve types. Lean does neither: they are made
+/// well-typed, and must be the export's own (`compare_decl`).
+const CHECK_RECURSORS: bool = false;
+
 /// Lean's `add_inductive_fn`.
 struct AddInd<'a, 'e> {
     tc: &'a mut Tc<'e>,
+    pre: Option<&'a mut PreCheck<'a>>,
     lparams: Vec<NameId>,
     levels: LevelList,
     nparams: usize,
@@ -372,6 +395,7 @@ impl<'a, 'e> AddInd<'a, 'e> {
         let levels = tc.param_levels(&d.lparams);
         AddInd {
             tc,
+            pre: None,
             lparams: d.lparams.clone(),
             levels,
             nparams: d.nparams as usize,
@@ -397,6 +421,21 @@ impl<'a, 'e> AddInd<'a, 'e> {
         self.tc.fvar_decl(self.params[i]).unwrap().ty
     }
 
+    /// `Tc::check` of the closed type `e` of the block (with its first `k`
+    /// declarations visible), unless `pre` passes it.
+    fn check_closed(&mut self, e: ExprId, k: u32) -> R<()> {
+        if !self.is_unsafe
+            && !self.tc.st.is_local_expr(e)
+            && let Some(pre) = self.pre.as_mut()
+            && pre(e, &self.lparams, k)
+        {
+            return Ok(());
+        }
+        let lps = self.lparams.clone();
+        self.tc.check(e, &lps)?;
+        Ok(())
+    }
+
     fn declare(&mut self, d: Decl) -> R<()> {
         if self.tc.pending.contains_key(&d.name) {
             return err(format!(
@@ -414,8 +453,7 @@ impl<'a, 'e> AddInd<'a, 'e> {
         for idx in 0..self.types.len() {
             let name = self.types[idx].name;
             let mut ty = self.types[idx].ty;
-            let lps = self.lparams.clone();
-            self.tc.check(ty, &lps)?;
+            self.check_closed(ty, 0)?;
             self.nindices.push(0);
             let mut i = 0;
             ty = self.tc.whnf(ty)?;
@@ -590,8 +628,8 @@ impl<'a, 'e> AddInd<'a, 'e> {
                     return err(format!("duplicate constructor name '{}'", self.tc.show(n)));
                 }
                 found.push(n);
-                let lps = self.lparams.clone();
-                self.tc.check(t, &lps)?;
+                let k = self.types.len() as u32;
+                self.check_closed(t, k)?;
                 let mut i = 0;
                 while let ExprNode::Pi(_, _, dom, body) = self.tc.st.node(t) {
                     if i < self.nparams {
@@ -1027,7 +1065,9 @@ impl<'a, 'e> AddInd<'a, 'e> {
         self.init_k_target();
         self.mk_rec_infos()?;
         self.declare_recursors()?;
-        self.check_recursors()?;
+        if CHECK_RECURSORS {
+            self.check_recursors()?;
+        }
         let _ = self.is_ind_name(NameId::ANON);
         Ok(())
     }
