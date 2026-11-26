@@ -53,7 +53,7 @@ impl<const WORDS: usize> EnvMemo<WORDS> {
     /// The words at `i` (from `find_or_add`).
     #[inline]
     pub fn get(&self, i: usize) -> &[u32] {
-        &self.keys[i..i + WORDS]
+        val::at_slice(&self.keys, i, i + WORDS)
     }
 
     #[inline]
@@ -201,9 +201,9 @@ impl Nbe<'_> {
         let cnt = vals.len();
         let eq = |&i: &u32| {
             let i = i as usize;
-            keys[i] == k.h
-                && keys[i + 1..i + 7] == k.head
-                && keys[i + 7..i + 7 + cnt]
+            *val::at(keys, i) == k.h
+                && *val::at_slice(keys, i + 1, i + 7) == k.head
+                && val::at_slice(keys, i + 7, i + 7 + cnt)
                     .iter()
                     .zip(vals)
                     .all(|(&a, b)| a == b.0)

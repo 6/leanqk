@@ -107,22 +107,22 @@ pub struct Nbe<'e> {
     big_table: HashTable<u32>,
     /// A direct-mapped front of `eager_memo`: (term, environment,
     /// substitution, value).
-    pub(super) eager_slots: Vec<[u32; 4]>,
+    pub(super) eager_slots: Box<[[u32; 4]; EAGER_SLOTS]>,
     /// Values of terms evaluated by `thunk` at once (`eager`).
     pub(super) eager_memo: memo::EnvMemo<1>,
     /// `eager`'s direct-mapped memo: (term, substitution, values read,
     /// value).
-    pub(super) eager_direct: Vec<[u32; 4]>,
+    pub(super) eager_direct: Box<[[u32; 4]; EAGER_DIRECT_SLOTS]>,
     /// Lists of values read from environments (`read_tuple`).
     pub(super) tuples: memo::EnvMemo<0>,
     /// A direct-mapped front of `tuples`: (environment, range, holes (two
     /// words), id).
-    pub(super) tuple_slots: Vec<[u32; 5]>,
+    pub(super) tuple_slots: Box<[[u32; 5]; memo::TUPLE_SLOTS]>,
     /// Types of terms (`infer_term`): the type, and whether checked.
     pub(super) infer_memo: memo::EnvMemo<2>,
     /// A direct-mapped front of `infer_memo`: (term, environment,
     /// substitution, entry).
-    pub(super) infer_slots: Vec<[u32; 4]>,
+    pub(super) infer_slots: Box<[[u32; 4]; EAGER_SLOTS]>,
     /// Entries of `infer_memo` checked under the declaration's universe
     /// parameters, as `level_checked`.
     pub(super) level_checked_memo: Vec<usize>,
@@ -140,7 +140,7 @@ pub struct Nbe<'e> {
     level_checked: Vec<V>,
     fresh: bool,
     /// Structural comparisons of terms in environments, by `syn_eq_t`.
-    syn_t: Vec<[u32; 8]>,
+    syn_t: Box<[[u32; 8]; SYN_T]>,
     level_eq: IdMap<(LevelId, LevelId), bool>,
     major_induct: IdMap<NameId, NameId>,
     /// `prop_positions` of constants.
@@ -149,13 +149,13 @@ pub struct Nbe<'e> {
     unused_pos: IdMap<NameId, u64>,
     open_count: IdMap<(V, V), u32>,
     /// `trim_long` (direct-mapped): (environment, length, result).
-    trim_cache: Vec<[u32; 3]>,
+    trim_cache: Box<[[u32; 3]; PRUNES]>,
     canon_fvar: IdMap<(V, V, u32), u32>,
     elims: Vec<Vec<val::Elim>>,
     terms: Vec<ExprId>,
     /// Declarations found by name, a direct-mapped front for the
     /// environment's table: (name, index), or `NONE` names.
-    found: Box<[std::cell::Cell<(u32, u32)>]>,
+    found: Box<[std::cell::Cell<(u32, u32)>; 1 << FOUND_BITS]>,
     vargs: Vec<V>,
     /// Nesting of eager argument evaluation (see `thunk`).
     eager_depth: u32,
@@ -173,9 +173,9 @@ pub struct Nbe<'e> {
     name_eq: IdMap<(ExprId, ExprId), bool>,
     /// `prune` by environment and holes (direct-mapped): (environment,
     /// holes, pruned environment).
-    prunes: Vec<[u32; 3]>,
+    prunes: Box<[[u32; 3]; PRUNES]>,
     /// `trim_holes` (direct-mapped): (environment, holes, length, result).
-    trim_holes_memo: Vec<[u32; 4]>,
+    trim_holes_memo: Box<[[u32; 4]; PRUNES]>,
     /// `surely_not_proof` by constant and number of arguments.
     not_proof: IdMap<(NameId, u32), bool>,
     /// Terms added to `st` for names: they do not count towards its size
@@ -286,13 +286,13 @@ impl<'e> Nbe<'e> {
             fvars: Vec::new(),
             bigs: Vec::new(),
             big_table: HashTable::new(),
-            eager_slots: vec![[val::NONE; 4]; EAGER_SLOTS],
+            eager_slots: val::table(val::NONE),
             eager_memo: Default::default(),
-            eager_direct: vec![[val::NONE; 4]; EAGER_DIRECT_SLOTS],
+            eager_direct: val::table(val::NONE),
             tuples: Default::default(),
-            tuple_slots: vec![[val::NONE; 5]; memo::TUPLE_SLOTS],
+            tuple_slots: val::table(val::NONE),
             infer_memo: Default::default(),
-            infer_slots: vec![[val::NONE; 4]; EAGER_SLOTS],
+            infer_slots: val::table(val::NONE),
             level_checked_memo: Vec::new(),
             level_cache: Default::default(),
             list_cache: Default::default(),
@@ -303,19 +303,21 @@ impl<'e> Nbe<'e> {
             pairs: conv::PairCache::default(),
             level_checked: Vec::new(),
             fresh: true,
-            syn_t: vec![[val::NONE; 8]; SYN_T],
+            syn_t: val::table(val::NONE),
             level_eq: IdMap::default(),
             major_induct: IdMap::default(),
             prop_pos: IdMap::default(),
             unused_pos: IdMap::default(),
             open_count: IdMap::default(),
-            trim_cache: vec![[val::NONE; 3]; PRUNES],
+            trim_cache: val::table(val::NONE),
             canon_fvar: IdMap::default(),
             elims: Vec::new(),
             terms: Vec::new(),
             found: (0..1 << FOUND_BITS)
                 .map(|_| std::cell::Cell::new((val::NONE, 0)))
-                .collect(),
+                .collect::<Box<[_]>>()
+                .try_into()
+                .expect("FOUND_BITS slots"),
             vargs: Vec::new(),
             eager_depth: 0,
             closed_eval: super::eval::enabled(),
@@ -324,8 +326,8 @@ impl<'e> Nbe<'e> {
             ev_used: false,
             names: IdMap::default(),
             name_eq: IdMap::default(),
-            prunes: vec![[val::NONE; 3]; PRUNES],
-            trim_holes_memo: vec![[val::NONE; 4]; PRUNES],
+            prunes: val::table(val::NONE),
+            trim_holes_memo: val::table(val::NONE),
             not_proof: IdMap::default(),
             name_exprs: 0,
             checked_closed: IdSet::default(),
@@ -729,7 +731,7 @@ impl<'e> Nbe<'e> {
         let val::Val::FVar(k, _) = self.a.get(x) else {
             unreachable!()
         };
-        let f = self.fvars[k as usize];
+        let f = *val::at(&self.fvars, k as usize);
         if let Some(n) = self.open_count.get_mut(&f.key) {
             *n -= 1;
         }
@@ -809,7 +811,7 @@ impl<'e> Nbe<'e> {
             let v = if j < 32 && holes >> j & 1 != 0 {
                 hole
             } else {
-                self.vargs[base + j]
+                *val::at(&self.vargs, base + j)
             };
             r = self.a.cons(r, v);
         }
@@ -844,7 +846,7 @@ impl<'e> Nbe<'e> {
                 let v = if holes >> j & 1 != 0 {
                     hole
                 } else {
-                    self.vargs[base + j]
+                    *val::at(&self.vargs, base + j)
                 };
                 r = self.a.cons(r, v);
             }
@@ -870,7 +872,7 @@ impl<'e> Nbe<'e> {
         }
         let mut r = val::Env::NIL;
         for k in (base..self.vargs.len()).rev() {
-            r = self.a.cons(r, self.vargs[k]);
+            r = self.a.cons(r, *val::at(&self.vargs, k));
         }
         self.vargs.truncate(base);
         self.trim_cache[i] = [env.0, n, r.0];

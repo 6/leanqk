@@ -83,6 +83,42 @@ fn h32(h: u64) -> u32 {
     (h >> 32) as u32 ^ h as u32
 }
 
+/// `v[i]`, with the bound checked in debug builds only: ids index the
+/// arena that made them (and caches holding ids are cleared with it).
+#[inline(always)]
+#[allow(unsafe_code)]
+pub(super) fn at<T>(v: &[T], i: usize) -> &T {
+    debug_assert!(i < v.len(), "arena index {i} out of bounds");
+    // SAFETY: as above, `i` is below the length.
+    unsafe { v.get_unchecked(i) }
+}
+
+/// `&v[a..b]`, with the bounds checked in debug builds only (as `at`).
+#[inline(always)]
+#[allow(unsafe_code)]
+pub(super) fn at_slice<T>(v: &[T], a: usize, b: usize) -> &[T] {
+    debug_assert!(a <= b && b <= v.len(), "arena range {a}..{b} out of bounds");
+    // SAFETY: as above, the range is inside `v`.
+    unsafe { v.get_unchecked(a..b) }
+}
+
+#[inline(always)]
+#[allow(unsafe_code)]
+fn at_mut<T>(v: &mut [T], i: usize) -> &mut T {
+    debug_assert!(i < v.len(), "arena index {i} out of bounds");
+    // SAFETY: as `at`.
+    unsafe { v.get_unchecked_mut(i) }
+}
+
+/// A direct-mapped table of `N` slots of `W` words, all `fill`: of fixed
+/// size, so that a masked index needs no bounds check.
+pub fn table<const W: usize, const N: usize>(fill: u32) -> Box<[[u32; W]; N]> {
+    vec![[fill; W]; N]
+        .into_boxed_slice()
+        .try_into()
+        .expect("N slots")
+}
+
 impl Val {
     #[inline]
     fn hash(&self) -> u32 {
@@ -231,17 +267,17 @@ pub struct Arena {
     /// Recently made constants and sorts with no arguments, by a hash of
     /// their name and levels (direct-mapped, in front of `vtable`): the
     /// value of a constant is made at every occurrence.
-    heads: Vec<(u32, u32, V)>,
+    heads: Box<[(u32, u32, V); HEADS]>,
     /// The thunks of terms by their environment before it is trimmed
     /// (direct-mapped, in front of trimming and `vtable`): (term,
     /// environment, substitution, thunk).
-    thunks: Vec<[u32; 4]>,
+    thunks: Box<[[u32; 4]; THUNKS]>,
     /// Neutrals by head and spine contents, so that applying a neutral to
     /// arguments finds the result with one probe.
     nutable: HashTable<(u32, u32)>,
     /// Environments by their last entry and the rest (direct-mapped, in
     /// front of `envtable`): (rest, entry, environment).
-    conses: Vec<[u32; 3]>,
+    conses: Box<[[u32; 3]; CONSES]>,
 }
 
 /// Slots of `Arena::heads`.
@@ -282,10 +318,13 @@ impl Arena {
                 levels: LevelList::EMPTY,
             }],
             lstable: HashTable::new(),
-            heads: vec![(NONE, NONE, V(NONE)); HEADS],
-            thunks: vec![[NONE; 4]; THUNKS],
+            heads: vec![(NONE, NONE, V(NONE)); HEADS]
+                .into_boxed_slice()
+                .try_into()
+                .expect("HEADS slots"),
+            thunks: table(NONE),
             nutable: HashTable::new(),
-            conses: vec![[NONE; 3]; CONSES],
+            conses: table(NONE),
         }
     }
 
@@ -332,9 +371,9 @@ impl Arena {
             + self.sps.capacity() * 4
             + self.sptable.capacity() * 9
             + self.envs.capacity() * 17
-            + self.thunks.capacity() * 16
+            + self.thunks.len() * 16
             + self.nutable.capacity() * 9
-            + self.conses.capacity() * 12
+            + self.conses.len() * 12
             + self.envtable.capacity() * 9
     }
 
@@ -342,38 +381,38 @@ impl Arena {
 
     #[inline]
     pub fn get(&self, v: V) -> Val {
-        self.vals[v.0 as usize]
+        *at(&self.vals, v.0 as usize)
     }
 
     /// What is known about `v`.
     #[inline]
     pub fn r(&self, v: V) -> &Rec {
-        &self.recs[v.0 as usize]
+        at(&self.recs, v.0 as usize)
     }
 
     #[inline]
     pub fn rm(&mut self, v: V) -> &mut Rec {
-        &mut self.recs[v.0 as usize]
+        at_mut(&mut self.recs, v.0 as usize)
     }
 
     #[inline]
     pub fn has_fvar(&self, v: V) -> bool {
-        self.recs[v.0 as usize].flags & HAS_FVAR != 0
+        at(&self.recs, v.0 as usize).flags & HAS_FVAR != 0
     }
 
     #[inline]
     pub fn checked(&self, v: V) -> bool {
-        self.recs[v.0 as usize].flags & CHECKED != 0
+        at(&self.recs, v.0 as usize).flags & CHECKED != 0
     }
 
     #[inline]
     pub fn set_checked(&mut self, v: V) {
-        self.recs[v.0 as usize].flags |= CHECKED;
+        at_mut(&mut self.recs, v.0 as usize).flags |= CHECKED;
     }
 
     #[inline]
     pub fn clear_checked(&mut self, v: V) {
-        self.recs[v.0 as usize].flags &= !CHECKED;
+        at_mut(&mut self.recs, v.0 as usize).flags &= !CHECKED;
     }
 
     /// `mk(Val::Const(n, l, Sp::NIL))`.
@@ -461,7 +500,7 @@ impl Arena {
     }
 
     fn env_flags(&self, e: Env) -> u32 {
-        if self.envs[e.0 as usize].len & HAS_FVAR_BIT != 0 {
+        if at(&self.envs, e.0 as usize).len & HAS_FVAR_BIT != 0 {
             HAS_FVAR
         } else {
             0
@@ -472,13 +511,13 @@ impl Arena {
 
     #[inline]
     pub fn sp_len(&self, sp: Sp) -> u32 {
-        self.sps[sp.0 as usize] & LEN_BITS
+        *at(&self.sps, sp.0 as usize) & LEN_BITS
     }
 
     /// Whether `sp` has a projection.
     #[inline]
     pub fn sp_has_proj(&self, sp: Sp) -> bool {
-        self.sps[sp.0 as usize] & HAS_PROJ_BIT != 0
+        *at(&self.sps, sp.0 as usize) & HAS_PROJ_BIT != 0
     }
 
     /// The length of the application-only prefix of a spine.
@@ -488,7 +527,7 @@ impl Arena {
             return len;
         }
         let start = sp.0 as usize + 1;
-        self.sps[start..start + 2 * len as usize]
+        at_slice(&self.sps, start, start + 2 * len as usize)
             .as_chunks::<2>()
             .0
             .iter()
@@ -500,7 +539,7 @@ impl Arena {
     #[inline]
     pub fn sp_elim(&self, sp: Sp, i: u32) -> Elim {
         let k = sp.0 as usize + 1 + 2 * i as usize;
-        let (a, b) = (self.sps[k], self.sps[k + 1]);
+        let (a, b) = (*at(&self.sps, k), *at(&self.sps, k + 1));
         if b == NONE {
             Elim::Arg(V(a))
         } else {
@@ -513,14 +552,14 @@ impl Arena {
     pub(super) fn sp_arg(&self, sp: Sp, i: u32) -> V {
         let k = sp.0 as usize + 1 + 2 * i as usize;
         debug_assert!(i < self.sp_len(sp) && self.sps[k + 1] == NONE);
-        V(self.sps[k])
+        V(*at(&self.sps, k))
     }
 
     /// Append an application-only range of a spine.
     pub(super) fn extend_sp_args(&self, sp: Sp, start: u32, end: u32, out: &mut Vec<V>) {
         debug_assert!(start <= end && end <= self.sp_len(sp));
         let k = sp.0 as usize + 1;
-        let words = &self.sps[k + 2 * start as usize..k + 2 * end as usize];
+        let words = at_slice(&self.sps, k + 2 * start as usize, k + 2 * end as usize);
         out.extend(words.as_chunks::<2>().0.iter().map(|&[a, tag]| {
             debug_assert_eq!(tag, NONE);
             V(a)
@@ -541,7 +580,7 @@ impl Arena {
         let mut buf = std::mem::take(&mut self.sp_buf);
         buf.clear();
         let k = sp.0 as usize + 1;
-        buf.extend_from_slice(&self.sps[k..k + 2 * n as usize]);
+        buf.extend_from_slice(at_slice(&self.sps, k, k + 2 * n as usize));
         let r = self.intern_sp(&buf);
         self.sp_buf = buf;
         r
@@ -594,7 +633,7 @@ impl Arena {
         };
         let mut h = hash2(tag | (a as u64) << 32, b as u64);
         // One step per elimination (its two words).
-        for w in self.sps[k..k + 2 * n].as_chunks::<2>().0 {
+        for w in at_slice(&self.sps, k, k + 2 * n).as_chunks::<2>().0 {
             let x = w[0] as u64 | (w[1] as u64) << 32;
             h = (h.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
         }
@@ -616,7 +655,7 @@ impl Arena {
             spread(h),
             |&(id, k2)| {
                 k2 == h && {
-                    let (same, sp) = match (vals[id as usize], head) {
+                    let (same, sp) = match (*at(vals, id as usize), head) {
                         (Val::Const(n2, l2, sp), Val::Const(n1, l1, _)) => {
                             (n1 == n2 && l1 == l2, sp)
                         }
@@ -624,13 +663,13 @@ impl Arena {
                         _ => (false, Sp::NIL),
                     };
                     let i = sp.0 as usize;
-                    same && (sps[i] & LEN_BITS) as usize == n + xs.len()
-                        && sps[i + 1..i + 1 + 2 * n] == sps[k..k + 2 * n]
+                    same && (*at(sps, i) & LEN_BITS) as usize == n + xs.len()
+                        && at_slice(sps, i + 1, i + 1 + 2 * n) == at_slice(sps, k, k + 2 * n)
                         // Both words: an argument's second is `NONE`, a
                         // projection's is its index.
                         && xs.iter().enumerate().all(|(j, x)| {
                             let w = i + 1 + 2 * (n + j);
-                            sps[w] == x.0 && sps[w + 1] == NONE
+                            *at(sps, w) == x.0 && *at(sps, w + 1) == NONE
                         })
                 }
             },
@@ -701,7 +740,7 @@ impl Arena {
         buf.clear();
         let k = sp.0 as usize + 1;
         let n = self.sp_len(sp) as usize;
-        buf.extend_from_slice(&self.sps[k..k + 2 * n]);
+        buf.extend_from_slice(at_slice(&self.sps, k, k + 2 * n));
         buf
     }
 
@@ -763,7 +802,12 @@ impl Arena {
         }
         let k = sp.0 as usize + 1;
         let n = self.sp_len(sp) as usize;
-        out.extend(self.sps[k..k + 2 * n].iter().step_by(2).map(|&a| V(a)));
+        out.extend(
+            at_slice(&self.sps, k, k + 2 * n)
+                .iter()
+                .step_by(2)
+                .map(|&a| V(a)),
+        );
         true
     }
 
@@ -771,7 +815,7 @@ impl Arena {
 
     #[inline]
     pub fn env_len(&self, e: Env) -> u32 {
-        self.envs[e.0 as usize].len & LEN_BITS
+        at(&self.envs, e.0 as usize).len & LEN_BITS
     }
 
     #[inline]
@@ -823,35 +867,35 @@ impl Arena {
 
     #[inline]
     pub fn env_head(&self, e: Env) -> V {
-        self.envs[e.0 as usize].node.v
+        at(&self.envs, e.0 as usize).node.v
     }
 
     #[inline]
     pub fn env_tail(&self, e: Env) -> Env {
-        self.envs[e.0 as usize].node.prev
+        at(&self.envs, e.0 as usize).node.prev
     }
 
     /// The value of bound variable `i` (0 is the innermost).
     #[inline]
     pub fn lookup(&self, env: Env, i: u32) -> Option<V> {
-        let mut r = self.envs[env.0 as usize];
+        let mut r = *at(&self.envs, env.0 as usize);
         let len = r.len & LEN_BITS;
         if i >= len {
             return None;
         }
         if i < 8 {
             for _ in 0..i {
-                r = self.envs[r.node.prev.0 as usize];
+                r = *at(&self.envs, r.node.prev.0 as usize);
             }
             return Some(r.node.v);
         }
         let target = len - i;
         while r.len & LEN_BITS != target {
-            let j = self.envs[r.jump.0 as usize];
+            let j = *at(&self.envs, r.jump.0 as usize);
             r = if j.len & LEN_BITS >= target {
                 j
             } else {
-                self.envs[r.node.prev.0 as usize]
+                *at(&self.envs, r.node.prev.0 as usize)
             };
         }
         Some(r.node.v)
@@ -861,7 +905,7 @@ impl Arena {
     pub fn env_values(&self, mut env: Env, out: &mut Vec<V>) {
         out.clear();
         while env != Env::NIL {
-            let n = self.envs[env.0 as usize].node;
+            let n = at(&self.envs, env.0 as usize).node;
             out.push(n.v);
             env = n.prev;
         }
@@ -870,7 +914,7 @@ impl Arena {
     // ---- universe substitutions ----
 
     pub fn ls(&self, l: Ls) -> LsNode {
-        self.lss[l.0 as usize]
+        *at(&self.lss, l.0 as usize)
     }
 
     pub fn mk_ls(&mut self, params: NameList, levels: LevelList) -> Ls {
