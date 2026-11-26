@@ -89,7 +89,7 @@ impl<const WORDS: usize> EnvMemo<WORDS> {
     }
 }
 
-/// Inference keys use a tuple id and hold the inferred type and checked bit.
+/// Inference keys use a tuple id and hold the inferred type and check scope.
 #[derive(Default)]
 pub(super) struct InferMemo {
     table: Table,
@@ -98,6 +98,8 @@ pub(super) struct InferMemo {
 
 struct InferEntry {
     key: [u32; 3],
+    /// The type and its check scope: zero for unchecked, or `u32::MAX`
+    /// when the check is independent of the universe parameter list.
     result: [u32; 2],
 }
 

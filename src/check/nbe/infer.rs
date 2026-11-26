@@ -454,7 +454,7 @@ impl Nbe<'_> {
                 let i = entry as usize;
                 let words = self.infer_memo.get(i);
                 let ty = words[0];
-                if ty != NONE && (infer_only || words[1] != 0) {
+                if ty != NONE && (infer_only || self.infer_memo_checked(words[1])) {
                     if !infer_only && !has_level_param {
                         self.infer_slots[slot] = [e.0, key_env.0, NONE, ty];
                     }
@@ -538,10 +538,16 @@ impl Nbe<'_> {
             if let Some(k) = k
                 && self.checked_closed.contains(&k)
             {
-                let r = if c == NONE {
+                let r = if c != NONE {
+                    V(c)
+                } else if matches!(node, ExprNode::Lam(..)) {
+                    // Inference trims a lambda's environment.
                     self.infer_node(e, node, env, ls, true)?
                 } else {
-                    V(c)
+                    // The memo key is already available.
+                    let ty = self.infer_complex(e, node, env, ls, true)?;
+                    self.ikey_set_ty(key, ty);
+                    ty
                 };
                 self.ikey_set_checked(key, d.has_level_param());
                 return Ok(r);
@@ -662,11 +668,16 @@ impl Nbe<'_> {
         }
     }
 
-    fn ikey_checked(&self, k: IKey) -> bool {
+    fn ikey_checked(&mut self, k: IKey) -> bool {
         match k {
-            IKey::Memo(i) => self.infer_memo.get(i)[1] != 0,
+            IKey::Memo(i) => self.infer_memo_checked(self.infer_memo.get(i)[1]),
             IKey::Thunk(t) => self.a.checked(t),
         }
+    }
+
+    #[inline]
+    fn infer_memo_checked(&mut self, scope: u32) -> bool {
+        scope == u32::MAX || (scope != 0 && u64::from(scope) == self.lparams_key())
     }
 
     /// Mark `k` checked; under the declaration's universe parameters only
@@ -674,10 +685,16 @@ impl Nbe<'_> {
     fn ikey_set_checked(&mut self, k: IKey, levels: bool) {
         match k {
             IKey::Memo(i) => {
-                self.infer_memo.set(i, 1, 1);
-                if levels {
-                    self.level_checked_memo.push(i);
-                }
+                let scope = if levels {
+                    let key = self.lparams_key();
+                    if key >= u64::from(u32::MAX) {
+                        return;
+                    }
+                    key as u32
+                } else {
+                    u32::MAX
+                };
+                self.infer_memo.set(i, 1, scope);
             }
             IKey::Thunk(t) => {
                 self.a.set_checked(t);
@@ -1017,17 +1034,18 @@ impl Nbe<'_> {
     fn check_lambda(&mut self, e: ExprId, env: Env, ls: Ls) -> R<V> {
         let mut cur = e;
         let mut env2 = env;
-        let mut opened = Vec::new();
-        while let ExprNode::Lam(bi, n, dom, body) = self.st.node(cur) {
-            let s = self.infer_term(dom, env2, ls, false)?;
-            self.ensure_sort(s)?;
-            env2 = self.open_inferred_binder((bi, n, dom, body), env2, ls, &mut opened);
-            cur = body;
-        }
-        self.infer_term(cur, env2, ls, false)?;
-        for &x in opened.iter().rev() {
-            self.pop_fvar(x);
-        }
+        let base = self.infer_opened.len();
+        let result = (|| {
+            while let ExprNode::Lam(bi, n, dom, body) = self.st.node(cur) {
+                let s = self.infer_term(dom, env2, ls, false)?;
+                self.ensure_sort(s)?;
+                env2 = self.open_inferred_binder((bi, n, dom, body), env2, ls);
+                cur = body;
+            }
+            self.infer_term(cur, env2, ls, false)
+        })();
+        self.close_inferred_binders(base);
+        result?;
         let d = self.st.data(e);
         let env = self.trim_prune(env, d);
         let ls = if d.has_level_param() { ls } else { Ls::ID };
@@ -1041,7 +1059,6 @@ impl Nbe<'_> {
         (bi, name, dom, body): (BinderInfo, NameId, ExprId, ExprId),
         env: Env,
         ls: Ls,
-        opened: &mut Vec<V>,
     ) -> Env {
         let data = self.st.data(body);
         if !data.has_loose_bvars() {
@@ -1054,32 +1071,44 @@ impl Nbe<'_> {
         }
         let dv = self.thunk(dom, env, ls);
         let x = self.push_fvar(name, dv, None, bi);
-        opened.push(x);
+        self.infer_opened.push(x);
         let next = self.a.cons(env, x);
         self.ctx_push(env, dom, ls, next);
         next
     }
 
+    fn close_inferred_binders(&mut self, base: usize) {
+        while self.infer_opened.len() > base {
+            let x = self.infer_opened.pop().unwrap();
+            self.pop_fvar(x);
+        }
+    }
+
     fn infer_pi(&mut self, e: ExprId, env: Env, ls: Ls, infer_only: bool) -> R<V> {
         let mut cur = e;
         let mut env2 = env;
-        let mut us = Vec::new();
-        let mut opened = Vec::new();
-        while let ExprNode::Pi(bi, n, dom, body) = self.st.node(cur) {
-            let s = self.infer_term(dom, env2, ls, infer_only)?;
-            us.push(self.ensure_sort(s)?);
-            env2 = self.open_inferred_binder((bi, n, dom, body), env2, ls, &mut opened);
-            cur = body;
-        }
-        let s = self.infer_term(cur, env2, ls, infer_only)?;
-        let mut r = self.ensure_sort(s)?;
-        for &x in opened.iter().rev() {
-            self.pop_fvar(x);
-        }
-        for &u in us.iter().rev() {
-            r = univ::mk_imax(&mut self.st, u, r);
-        }
-        Ok(self.a.mk(Val::Sort(r)))
+        let opened = self.infer_opened.len();
+        let sorts = self.infer_sorts.len();
+        let result = (|| {
+            while let ExprNode::Pi(bi, n, dom, body) = self.st.node(cur) {
+                let s = self.infer_term(dom, env2, ls, infer_only)?;
+                let sort = self.ensure_sort(s)?;
+                self.infer_sorts.push(sort);
+                env2 = self.open_inferred_binder((bi, n, dom, body), env2, ls);
+                cur = body;
+            }
+            let s = self.infer_term(cur, env2, ls, infer_only)?;
+            self.ensure_sort(s)
+        })();
+        self.close_inferred_binders(opened);
+        let r = result.map(|mut r| {
+            for &u in self.infer_sorts[sorts..].iter().rev() {
+                r = univ::mk_imax(&mut self.st, u, r);
+            }
+            r
+        });
+        self.infer_sorts.truncate(sorts);
+        Ok(self.a.mk(Val::Sort(r?)))
     }
 
     fn infer_let(&mut self, e: ExprId, env: Env, ls: Ls, infer_only: bool) -> R<V> {
@@ -1114,9 +1143,12 @@ impl Nbe<'_> {
 
     /// Lean's `check_constant_val` for a declaration's type.
     pub fn check_type(&mut self, ty: ExprId) -> R<()> {
+        self.check_type_sort(ty).map(|_| ())
+    }
+
+    pub(in crate::check) fn check_type_sort(&mut self, ty: ExprId) -> R<LevelId> {
         let s = self.infer_term(ty, Env::NIL, Ls::ID, false)?;
-        self.ensure_sort(s)?;
-        Ok(())
+        self.ensure_sort(s)
     }
 
     pub fn check_is_prop(&mut self, ty: ExprId) -> R<bool> {
@@ -1128,14 +1160,51 @@ impl Nbe<'_> {
     pub fn check_value(&mut self, value: ExprId, ty: ExprId) -> R<()> {
         let tv = self.thunk(ty, Env::NIL, Ls::ID);
         if !self.check_against(value, Env::NIL, Ls::ID, tv)? {
-            let vt = self.infer_term(value, Env::NIL, Ls::ID, true)?;
-            return err(format!(
-                "declaration type mismatch, value has type {} but is expected to have type {}",
-                self.pp(vt),
-                self.pp(tv)
-            ));
+            return self.value_type_mismatch(value, tv);
         }
         Ok(())
+    }
+
+    /// Check a value against its already checked declaration type.
+    pub(in crate::check) fn check_decl_value(&mut self, value: ExprId, ty: ExprId) -> R<()> {
+        if !self.check_decl_value_type(value, ty)? {
+            let tv = self.thunk(ty, Env::NIL, Ls::ID);
+            return self.value_type_mismatch(value, tv);
+        }
+        Ok(())
+    }
+
+    fn value_type_mismatch(&mut self, value: ExprId, expected: V) -> R<()> {
+        let given = self.infer_term(value, Env::NIL, Ls::ID, true)?;
+        err(format!(
+            "declaration type mismatch, value has type {} but is expected to have type {}",
+            self.pp(given),
+            self.pp(expected)
+        ))
+    }
+
+    fn check_decl_value_type(&mut self, mut value: ExprId, mut ty: ExprId) -> R<bool> {
+        let mut env = Env::NIL;
+        let opened = self.infer_opened.len();
+        while let ExprNode::Lam(bi, n, dom, body) = self.st.node(value)
+            && let ExprNode::Pi(_, _, expected_dom, expected_body) = self.st.node(ty)
+            && dom == expected_dom
+        {
+            // Both annotations are the same term in the same environment.
+            // The declaration type check already verified the domain.
+            let dv = self.thunk(dom, env, Ls::ID);
+            let x = self.push_fvar(n, dv, None, bi);
+            let next = self.a.cons(env, x);
+            self.ctx_push(env, dom, Ls::ID, next);
+            self.infer_opened.push(x);
+            env = next;
+            value = body;
+            ty = expected_body;
+        }
+        let expected = self.thunk(ty, env, Ls::ID);
+        let result = self.check_against(value, env, Ls::ID, expected);
+        self.close_inferred_binders(opened);
+        result
     }
 
     /// The binder info of free variable `k`, for printing.

@@ -123,9 +123,6 @@ pub struct Nbe<'e> {
     /// A direct-mapped front of `infer_memo`: (term, environment,
     /// substitution, entry).
     pub(super) infer_slots: Box<[[u32; 4]; EAGER_SLOTS]>,
-    /// Entries of `infer_memo` checked under the declaration's universe
-    /// parameters, as `level_checked`.
-    pub(super) level_checked_memo: Vec<usize>,
     level_cache: lsub::Lsub<LevelId>,
     list_cache: lsub::Lsub<LevelList>,
     /// Universe parameter lists by their names (see `lsub::ParamClasses`).
@@ -155,6 +152,9 @@ pub struct Nbe<'e> {
     canon_fvar: IdMap<(V, V, u32), u32>,
     elims: Vec<Vec<val::Elim>>,
     terms: Vec<ExprId>,
+    /// Scratch stacks for nested Π and λ inference.
+    infer_opened: Vec<V>,
+    infer_sorts: Vec<LevelId>,
     /// Declarations found by name, a direct-mapped front for the
     /// environment's table: (name, index), or `NONE` names.
     found: Box<[std::cell::Cell<(u32, u32)>; 1 << FOUND_BITS]>,
@@ -299,7 +299,6 @@ impl<'e> Nbe<'e> {
             tuple_slots: val::table(val::NONE),
             infer_memo: Default::default(),
             infer_slots: val::table(val::NONE),
-            level_checked_memo: Vec::new(),
             level_cache: Default::default(),
             list_cache: Default::default(),
             param_classes: Default::default(),
@@ -321,6 +320,8 @@ impl<'e> Nbe<'e> {
             canon_fvar: IdMap::default(),
             elims: Vec::new(),
             terms: Vec::new(),
+            infer_opened: Vec::new(),
+            infer_sorts: Vec::new(),
             found: (0..1 << FOUND_BITS)
                 .map(|_| std::cell::Cell::new((val::NONE, 0)))
                 .collect::<Box<[_]>>()
@@ -390,8 +391,8 @@ impl<'e> Nbe<'e> {
     /// What the arena and the caches hold stays: a value means the same in
     /// every declaration (a free variable is identified by its type, value
     /// and depth), and the environment only grows. What depends on the
-    /// declaration goes: its universe parameters, and so which terms with
-    /// universe parameters are known to be well-formed. Past a size (or
+    /// declaration goes: its active universe parameters and checked thunk
+    /// flags that depend on them. Past a size (or
     /// this checker's share of memory), all of it goes.
     pub fn begin(&mut self, limit: u32) {
         self.end_scopes();
@@ -415,15 +416,14 @@ impl<'e> Nbe<'e> {
             self.ev_used = false;
         }
         self.terms.clear();
+        self.infer_opened.clear();
+        self.infer_sorts.clear();
         self.vargs.clear();
         self.eager_depth = 0;
         self.decl_steps = 0;
         self.open_count.clear();
         for v in self.level_checked.drain(..) {
             self.a.clear_checked(v);
-        }
-        for i in self.level_checked_memo.drain(..) {
-            self.infer_memo.set(i, 1, 0);
         }
         self.fresh = self.a.is_empty();
     }
@@ -550,6 +550,8 @@ impl<'e> Nbe<'e> {
         self.eager = false;
         shrink(&mut self.fvars);
         self.terms.clear();
+        shrink(&mut self.infer_opened);
+        shrink(&mut self.infer_sorts);
         self.vargs.clear();
         self.eager_depth = 0;
         shrink(&mut self.open_count);
@@ -571,7 +573,6 @@ impl<'e> Nbe<'e> {
         self.tuple_slots.fill([val::NONE; 5]);
         self.infer_memo.clear();
         self.infer_slots.fill([val::NONE; 4]);
-        self.level_checked_memo.clear();
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;
