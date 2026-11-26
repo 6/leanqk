@@ -10,7 +10,7 @@
 
 use std::cmp::Ordering;
 
-use crate::level::{LevelId, LevelList, LevelNode};
+use crate::level::{LevelId, LevelList, LevelNode, LevelParams};
 use crate::name::NameId;
 
 use super::store::Store;
@@ -300,16 +300,16 @@ pub fn geq(st: &mut Store<'_>, l1: LevelId, l2: LevelId) -> bool {
 
 /// A parameter of `l` not in `ps`, if any.
 pub fn undefined_param(st: &Store<'_>, l: LevelId, ps: &[NameId]) -> Option<NameId> {
-    if !st.level_has_param(l) {
-        return None;
-    }
-    match st.level(l) {
-        LevelNode::Zero => None,
-        LevelNode::Succ(a) => undefined_param(st, a, ps),
-        LevelNode::Max(a, b) | LevelNode::IMax(a, b) => {
-            undefined_param(st, a, ps).or_else(|| undefined_param(st, b, ps))
-        }
-        LevelNode::Param(p) => (!ps.contains(&p)).then_some(p),
+    match st.level_params(l) {
+        LevelParams::None => None,
+        LevelParams::One(p) => (!ps.contains(&p)).then_some(p),
+        LevelParams::Many => match st.level(l) {
+            LevelNode::Succ(a) => undefined_param(st, a, ps),
+            LevelNode::Max(a, b) | LevelNode::IMax(a, b) => {
+                undefined_param(st, a, ps).or_else(|| undefined_param(st, b, ps))
+            }
+            LevelNode::Zero | LevelNode::Param(_) => unreachable!(),
+        },
     }
 }
 

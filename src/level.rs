@@ -1,5 +1,5 @@
-//! Universe levels (`Lean.Level`), hash-consed. 12 bytes per node plus one
-//! flag byte. Also interned lists of levels, for `Expr.const` instances.
+//! Universe levels (`Lean.Level`), hash-consed with a summary of each
+//! level's parameters. Also interned lists of levels, for `Expr.const`.
 
 use hashbrown::HashTable;
 
@@ -43,6 +43,36 @@ impl Node for LevelNode {
     }
 }
 
+/// The parameter names of a level, summarized when it is interned.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LevelParams {
+    None,
+    One(NameId),
+    Many,
+}
+
+impl LevelParams {
+    pub(crate) fn of_node(node: LevelNode, params: impl Fn(LevelId) -> Self) -> Self {
+        match node {
+            LevelNode::Zero => Self::None,
+            LevelNode::Param(n) => Self::One(n),
+            LevelNode::Succ(l) => params(l),
+            LevelNode::Max(a, b) | LevelNode::IMax(a, b) => {
+                let pa = params(a);
+                if pa == Self::Many {
+                    return Self::Many;
+                }
+                let pb = params(b);
+                match (pa, pb) {
+                    (Self::None, p) | (p, Self::None) => p,
+                    (p, q) if p == q => p,
+                    _ => Self::Many,
+                }
+            }
+        }
+    }
+}
+
 /// Id of an interned list of levels. `LevelList::EMPTY` is `[]`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct LevelList(pub(crate) u32);
@@ -53,7 +83,7 @@ impl LevelList {
 
 pub struct Levels {
     arena: Interner<LevelNode>,
-    has_param: Vec<bool>,
+    params: Vec<LevelParams>,
     // Interned lists: concatenated elements, offsets (list `i` is from
     // `list_offs[i]` to `list_offs[i + 1]`), and a flag per list.
     list_data: Vec<LevelId>,
@@ -95,7 +125,7 @@ impl Levels {
         debug_assert_eq!(zero, LevelId::ZERO.0);
         Levels {
             arena,
-            has_param: vec![false],
+            params: vec![LevelParams::None],
             list_data: Vec::new(),
             list_offs: vec![0, 0],
             list_has_param: vec![false],
@@ -118,21 +148,19 @@ impl Levels {
 
     #[inline]
     pub fn has_param(&self, l: LevelId) -> bool {
-        self.has_param[l.index()]
+        self.params(l) != LevelParams::None
+    }
+
+    #[inline]
+    pub(crate) fn params(&self, l: LevelId) -> LevelParams {
+        self.params[l.index()]
     }
 
     pub fn intern(&mut self, node: LevelNode) -> Result<(LevelId, bool), Overflow> {
         let (id, fresh) = self.arena.intern(node)?;
         if fresh {
-            let hp = match node {
-                LevelNode::Zero => false,
-                LevelNode::Succ(l) => self.has_param(l),
-                LevelNode::Max(a, b) | LevelNode::IMax(a, b) => {
-                    self.has_param(a) || self.has_param(b)
-                }
-                LevelNode::Param(_) => true,
-            };
-            self.has_param.push(hp);
+            let params = LevelParams::of_node(node, |l| self.params(l));
+            self.params.push(params);
         }
         Ok((LevelId(id), fresh))
     }
@@ -194,14 +222,14 @@ impl Levels {
         list_table.insert_unique(h, id, |&id| {
             list_hash(list_at(list_data, list_offs, id as usize))
         });
-        let hp = ls.iter().any(|&l| self.has_param[l.index()]);
+        let hp = ls.iter().any(|&l| self.has_param(l));
         self.list_has_param.push(hp);
         Ok(LevelList(id))
     }
 
     pub fn heap_bytes(&self) -> usize {
         self.arena.heap_bytes()
-            + self.has_param.capacity()
+            + self.params.capacity() * size_of::<LevelParams>()
             + self.list_data.capacity() * 4
             + self.list_offs.capacity() * 4
             + self.list_has_param.capacity()

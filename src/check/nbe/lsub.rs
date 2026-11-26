@@ -72,6 +72,12 @@ impl<K: Key, V: Copy> Lsub<K, V> {
         {
             return Some(*v);
         }
+        self.get_slow(k)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn get_slow(&mut self, k: K) -> Option<V> {
         let v = *self.map.get(&k)?;
         self.put(k, v);
         Some(v)

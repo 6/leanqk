@@ -603,7 +603,7 @@ impl<'e> Nbe<'e> {
 
     // ---- universe substitutions ----
 
-    #[inline]
+    #[inline(always)]
     pub fn inst_level(&mut self, l: LevelId, ls: Ls) -> LevelId {
         if ls == Ls::ID || !self.st.level_has_param(l) {
             return l;
@@ -623,7 +623,7 @@ impl<'e> Nbe<'e> {
         r
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn inst_list(&mut self, ll: LevelList, ls: Ls) -> LevelList {
         if ls == Ls::ID || !self.st.list_has_param(ll) {
             return ll;
