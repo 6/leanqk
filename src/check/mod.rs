@@ -26,6 +26,7 @@ mod subst;
 pub mod tc;
 pub mod univ;
 
+use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
@@ -167,12 +168,11 @@ pub fn default_jobs() -> usize {
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
 }
 
-/// Check every declaration of `env` on `jobs` threads. Blocks are
-/// independent (each is checked against the declarations before it, in a
-/// fresh store), so threads take them in export order from a shared
-/// counter. The result does not depend on `jobs`: on failures, the one
-/// reported is the first in export order, and every block before it has
-/// been checked.
+/// Check every declaration of `env` on `jobs` threads. Each block is
+/// checked against its export prefix. Workers start with contiguous
+/// ranges and take unclaimed work from other ranges as they finish.
+/// On failure, the checker reports the first failing block in export
+/// order after checking every block before it.
 pub fn check_env_jobs(env: &Env, jobs: usize) -> Result<Report, Failure> {
     let fail = |msg: &str| Failure {
         kind: FailKind::Resource,
@@ -221,18 +221,24 @@ fn check_decls(env: &Env, decls: &[Decl], jobs: usize) -> Result<Report, BlockPr
     let times = std::env::var_os("NITROLEAN_DECL_TIMES")
         .and_then(|p| std::fs::File::create(p).ok())
         .map(|f| Mutex::new(std::io::LineWriter::new(f)));
+    let (jobs, stack) = thread_plan(jobs.clamp(1, env.blocks.len().max(1)));
+    let per_worker = env.blocks.len() / jobs;
+    let extra = env.blocks.len() % jobs;
+    let cut = |worker: usize| per_worker * worker + worker.min(extra);
+    let ranges = (0..jobs)
+        .map(|worker| cut(worker)..cut(worker + 1))
+        .collect();
     let shared = Shared {
         env,
         decls,
         ext: &ext,
-        next: AtomicUsize::new(0),
+        ranges: Mutex::new(ranges),
         first_fail: AtomicUsize::new(usize::MAX),
         failures: Mutex::new(Vec::new()),
         times,
         busy: AtomicUsize::new(0),
         budget: mem_budget(crate::stats::rss_bytes().unwrap_or(0)),
     };
-    let (jobs, stack) = thread_plan(jobs.clamp(1, env.blocks.len().max(1)));
     std::thread::scope(|s| {
         let workers: Vec<_> = (0..jobs)
             .map(|i| {
@@ -240,7 +246,7 @@ fn check_decls(env: &Env, decls: &[Decl], jobs: usize) -> Result<Report, BlockPr
                 std::thread::Builder::new()
                     .name(format!("nitrolean-check-{i}"))
                     .stack_size(stack)
-                    .spawn_scoped(s, move || worker(shared, jobs))
+                    .spawn_scoped(s, move || worker(shared, jobs, i))
                     .expect("spawn checker thread")
             })
             .collect();
@@ -272,8 +278,8 @@ struct Shared<'e> {
     env: &'e Env,
     decls: &'e [Decl],
     ext: &'e Ext,
-    /// The next block to check.
-    next: AtomicUsize,
+    /// One contiguous range of unclaimed blocks per worker.
+    ranges: Mutex<Vec<Range<usize>>>,
     /// The first block that failed, so far.
     first_fail: AtomicUsize,
     failures: Mutex<Vec<(usize, BlockProblem)>>,
@@ -284,6 +290,30 @@ struct Shared<'e> {
 }
 
 impl Shared<'_> {
+    fn claim(&self, worker: usize) -> Range<usize> {
+        let mut ranges = self.ranges.lock().unwrap();
+        if ranges[worker].is_empty() {
+            let (victim, pending) = ranges
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, pending)| pending.len())
+                .unwrap();
+            if pending.is_empty() {
+                return 0..0;
+            }
+            // Leave the victim's next blocks adjacent to its current work.
+            let len = pending.len();
+            let stolen = (len / 2).max(CHUNK).min(len);
+            let split = pending.end - stolen;
+            ranges[worker] = split..pending.end;
+            ranges[victim].end = split;
+        }
+        let range = &mut ranges[worker];
+        let start = range.start;
+        range.start = (start + CHUNK).min(range.end);
+        start..range.start
+    }
+
     /// Wait until this thread may start a block: the process is under the
     /// memory budget, or no other thread is busy. Then count it busy.
     fn enter(&self, jobs: usize, polls: &mut u32) {
@@ -310,7 +340,7 @@ impl Shared<'_> {
     }
 }
 
-fn worker(sh: &Shared<'_>, jobs: usize) {
+fn worker(sh: &Shared<'_>, jobs: usize, worker: usize) {
     let env = sh.env;
     let store = || Store::with_decls(env, sh.decls, !sh.ext.nat_ops_complete);
     let mut tc = Tc::new(store(), sh.ext, 0);
@@ -319,14 +349,20 @@ fn worker(sh: &Shared<'_>, jobs: usize) {
     let mut end = 0;
     let mut polls = 0;
     loop {
-        // Runs of consecutive blocks, so that one worker's caches see
-        // neighbouring declarations.
         if i == end {
-            i = sh.next.fetch_add(CHUNK, SeqCst);
-            end = (i + CHUNK).min(env.blocks.len());
+            let range = sh.claim(worker);
+            if range.is_empty() {
+                return;
+            }
+            // The evaluator caches assume the visible export prefix grows.
+            if range.start < end {
+                nb = Nbe::new(store(), sh.ext);
+            }
+            i = range.start;
+            end = range.end;
         }
         // Blocks after a failure need not be checked.
-        if i >= env.blocks.len() || i > sh.first_fail.load(SeqCst) {
+        if i > sh.first_fail.load(SeqCst) {
             return;
         }
         let b = &env.blocks[i];
