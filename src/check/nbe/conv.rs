@@ -990,22 +990,18 @@ impl Nbe<'_> {
         matches!(self.a.get(e), Val::Const(n, ls, Sp::NIL) if Some(n) == self.ext.bool_true && ls == LevelList::EMPTY)
     }
 
-    /// The last elimination of a neutral, if it is a projection: the
-    /// structure and the field.
-    fn proj_parts(&mut self, v: V) -> Option<(V, crate::name::NameId, u32)> {
-        let (head, sp) = match self.a.get(v) {
-            Val::Const(n, l, sp) => (Val::Const(n, l, Sp::NIL), sp),
-            Val::FVar(k, sp) => (Val::FVar(k, Sp::NIL), sp),
+    /// The spine and field of a neutral ending in a projection.
+    fn proj_tail(&self, head: Val) -> Option<(Sp, u32, crate::name::NameId, u32)> {
+        let sp = match head {
+            Val::Const(_, _, sp) | Val::FVar(_, sp) => sp,
             _ => return None,
         };
         if sp == Sp::NIL {
             return None;
         }
-        match self.a.sp_last_elim(sp) {
-            Elim::Proj(s, i) => {
-                let pre = self.a.sp_prefix(sp, self.a.sp_len(sp) - 1);
-                Some((self.with_spine(head, pre), s, i))
-            }
+        let prefix_len = self.a.sp_len(sp) - 1;
+        match self.a.sp_elim(sp, prefix_len) {
+            Elim::Proj(s, i) => Some((sp, prefix_len, s, i)),
             _ => None,
         }
     }
@@ -1042,7 +1038,8 @@ impl Nbe<'_> {
         if let Some(r) = self.lazy_delta_reduction(&mut tn, &mut sn)? {
             return Ok(r);
         }
-        match (self.a.get(tn), self.a.get(sn)) {
+        let (th, sh) = (self.a.get(tn), self.a.get(sn));
+        match (th, sh) {
             (Val::Const(a, la, Sp::NIL), Val::Const(b, lb, Sp::NIL))
                 if a == b && self.is_def_eq_levels(la, lb) =>
             {
@@ -1051,12 +1048,15 @@ impl Nbe<'_> {
             (Val::FVar(a, Sp::NIL), Val::FVar(b, Sp::NIL)) if a == b => return Ok(true),
             _ => {}
         }
-        if let Some((tx, sa, ia)) = self.proj_parts(tn)
-            && let Some((sx, sb, ib)) = self.proj_parts(sn)
+        if let Some((tsp, tlen, sa, ia)) = self.proj_tail(th)
+            && let Some((ssp, slen, sb, ib)) = self.proj_tail(sh)
             && sa == sb
             && ia == ib
         {
-            let (mut tc, mut sc) = (tx, sx);
+            let tpre = self.a.sp_prefix(tsp, tlen);
+            let mut tc = self.with_spine(th, tpre);
+            let spre = self.a.sp_prefix(ssp, slen);
+            let mut sc = self.with_spine(sh, spre);
             if self.lazy_delta_proj_reduction(&mut tc, &mut sc, sa, ia)? {
                 return Ok(true);
             }
@@ -1379,8 +1379,7 @@ impl Nbe<'_> {
                 return s[7] != 0;
             }
             *budget -= 1;
-            let r = self.syn_eq_t(f_l, e_l, l_l, f_r, e_r, l_r, depth, budget)
-                && self.syn_eq_t(a_l, e_l, l_l, a_r, e_r, l_r, depth, budget);
+            let r = self.syn_eq_t_apps(f_l, a_l, e_l, l_l, f_r, a_r, e_r, l_r, depth, budget);
             if r || *budget > 0 {
                 let mut e = [0; 8];
                 e[..7].copy_from_slice(&key);
@@ -1390,6 +1389,42 @@ impl Nbe<'_> {
             return r;
         }
         self.syn_eq_t_node(t_l, e_l, l_l, t_r, e_r, l_r, depth, budget)
+    }
+
+    /// Compare arguments as we follow paired application heads. The caller
+    /// can memoize the outer pair. Identical prefixes go through the term ID
+    /// shortcut, which also checks the context they use.
+    #[allow(clippy::too_many_arguments)]
+    fn syn_eq_t_apps(
+        &mut self,
+        mut f_l: crate::expr::ExprId,
+        mut a_l: crate::expr::ExprId,
+        e_l: Env,
+        l_l: super::val::Ls,
+        mut f_r: crate::expr::ExprId,
+        mut a_r: crate::expr::ExprId,
+        e_r: Env,
+        l_r: super::val::Ls,
+        depth: SynDepth,
+        budget: &mut u32,
+    ) -> bool {
+        loop {
+            if !self.syn_eq_t(a_l, e_l, l_l, a_r, e_r, l_r, depth, budget) {
+                return false;
+            }
+            if f_l == f_r || *budget == 0 {
+                break;
+            }
+            let (ExprNode::App(g_l, b_l), ExprNode::App(g_r, b_r)) =
+                (self.st.node(f_l), self.st.node(f_r))
+            else {
+                break;
+            };
+            *budget -= 1;
+            (f_l, a_l) = (g_l, b_l);
+            (f_r, a_r) = (g_r, b_r);
+        }
+        self.syn_eq_t(f_l, e_l, l_l, f_r, e_r, l_r, depth, budget)
     }
 
     /// For one term under the same binders and universe substitution, only
@@ -1488,8 +1523,7 @@ impl Nbe<'_> {
         }
         match (n_l, n_r) {
             (ExprNode::App(f_l, a_l), ExprNode::App(f_r, a_r)) => {
-                self.syn_eq_t(f_l, e_l, l_l, f_r, e_r, l_r, depth, budget)
-                    && self.syn_eq_t(a_l, e_l, l_l, a_r, e_r, l_r, depth, budget)
+                self.syn_eq_t_apps(f_l, a_l, e_l, l_l, f_r, a_r, e_r, l_r, depth, budget)
             }
             (ExprNode::Lam(_, _, a_l, b_l), ExprNode::Lam(_, _, a_r, b_r))
             | (ExprNode::Pi(_, _, a_l, b_l), ExprNode::Pi(_, _, a_r, b_r)) => {
