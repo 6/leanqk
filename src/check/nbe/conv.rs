@@ -76,7 +76,7 @@ impl PairCache {
     }
 }
 
-/// Minimum work to memoize a failed value comparison or a mixed comparison.
+/// Minimum work to memoize a failed value comparison.
 const SYN_MEMO_MIN: u32 = 4;
 
 fn compare_hints(h_l: Hints, h_r: Hints) -> i32 {
@@ -1516,7 +1516,14 @@ impl Nbe<'_> {
                 None => false,
             };
         }
-        if !matches!(node, ExprNode::App(..) | ExprNode::Proj(..)) {
+        if !matches!(
+            node,
+            ExprNode::App(..)
+                | ExprNode::Proj(..)
+                | ExprNode::Lam(..)
+                | ExprNode::Pi(..)
+                | ExprNode::Let(..)
+        ) {
             return self.syn_eq_vt_node(x, t, node, e, l, k, budget, flip);
         }
 
@@ -1534,7 +1541,8 @@ impl Nbe<'_> {
         }
         let before = *budget;
         let equal = self.syn_eq_vt_node(x, t, node, e, l, k, budget, flip);
-        if before - *budget >= SYN_MEMO_MIN && (equal || *budget > 0) {
+        // An exhausted budget can make a negative result inconclusive.
+        if equal || (before - *budget >= 2 && *budget > 0) {
             let mut entry = [0; 8];
             entry[..7].copy_from_slice(&key);
             entry[7] = u32::from(equal);
