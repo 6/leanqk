@@ -527,6 +527,8 @@ impl Arena {
             h = (h.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
         }
         let h = h32(h);
+        #[cfg(test)]
+        let h = if tests::COLLIDE.get() { 7 } else { h };
         let Self {
             vals,
             sps,
@@ -548,10 +550,12 @@ impl Arena {
                     let i = sp.0 as usize;
                     same && (sps[i] & LEN_BITS) as usize == n + xs.len()
                         && sps[i + 1..i + 1 + 2 * n] == sps[k..k + 2 * n]
-                        && xs
-                            .iter()
-                            .enumerate()
-                            .all(|(j, x)| sps[i + 1 + 2 * (n + j)] == x.0)
+                        // Both words: an argument's second is `NONE`, a
+                        // projection's is its index.
+                        && xs.iter().enumerate().all(|(j, x)| {
+                            let w = i + 1 + 2 * (n + j);
+                            sps[w] == x.0 && sps[w + 1] == NONE
+                        })
                 }
             },
             |&(_, k)| spread(k),
@@ -812,5 +816,48 @@ impl Arena {
         lss.push(node);
         lstable.insert_unique(spread(h), (id, h), |&(_, k)| spread(k));
         Ls(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::level::{LevelId, LevelList};
+    use std::cell::Cell;
+
+    thread_local! {
+        /// Make every neutral hash the same.
+        pub(super) static COLLIDE: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// `c.(proj #a 0)` and `c a`, made in the order `proj_first` says,
+    /// under colliding hashes: two values.
+    fn proj_and_arg(proj_first: bool) -> (V, V) {
+        COLLIDE.set(true);
+        let mut a = Arena::new();
+        let x = a.mk(Val::Sort(LevelId::ZERO));
+        let c = Val::Const(NameId(5), LevelList::EMPTY, Sp::NIL);
+        // A projection whose first word is the argument's id.
+        let proj = |a: &mut Arena| {
+            let sp = a.snoc(Sp::NIL, Elim::Proj(NameId(x.0), 0));
+            a.mk(Val::Const(NameId(5), LevelList::EMPTY, sp))
+        };
+        let r = if proj_first {
+            let p = proj(&mut a);
+            (p, a.neutral(c, &[x]))
+        } else {
+            let q = a.neutral(c, &[x]);
+            (proj(&mut a), q)
+        };
+        COLLIDE.set(false);
+        r
+    }
+
+    #[test]
+    fn neutral_arg_is_not_projection() {
+        for proj_first in [true, false] {
+            let (p, q) = proj_and_arg(proj_first);
+            assert_ne!(p, q, "proj_first: {proj_first}");
+        }
     }
 }
