@@ -281,9 +281,9 @@ impl Nbe<'_> {
         let slot = match table.find_or_slot(h, |i| {
             let i = i as usize;
             // Equal ranges and hole masks give equal numbers of values.
-            val::at_slice(words, i, i + head.len()) == head
-                && val::at_slice(words, i + head.len(), i + len)
-                    == val::at_slice(words, base + head.len(), end)
+            // Word by word: a call to compare memory costs more than the
+            // loop for records this short.
+            (0..len).all(|j| *val::at(words, i + j) == *val::at(words, base + j))
         }) {
             Ok(i) => {
                 words.truncate(base);
