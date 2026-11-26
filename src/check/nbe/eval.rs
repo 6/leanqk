@@ -22,6 +22,10 @@ const EAGER_ALL: bool = true;
 /// the environment the term reads (`eager`), not through a thunk.
 const EAGER_MEMO: bool = true;
 
+/// Whether `thunk` looks an application, `let` or projection up in the
+/// eager front itself, before the rest (out of line).
+const THUNK_EAGER_FRONT: bool = true;
+
 /// Whether `eager` remembers in a direct-mapped table only
 /// (`Nbe::eager_direct`), not a growing one.
 const EAGER_DIRECT: bool = true;
@@ -133,11 +137,30 @@ impl Nbe<'_> {
 
     /// `e` in `env`, unevaluated unless that is as cheap as a thunk.
     pub fn thunk(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        if let ExprNode::BVar(i) = self.st.node(e)
+            && let Some(v) = self.a.lookup(env, i)
+        {
+            return v;
+        }
+        if THUNK_EAGER_FRONT
+            && EAGER_MEMO
+            && matches!(
+                self.st.node(e),
+                ExprNode::App(..) | ExprNode::Let(..) | ExprNode::Proj(..)
+            )
+            && self.eager_depth < EAGER_DEPTH
+        {
+            return self.eager(e, env, ls);
+        }
+        self.thunk_other(e, env, ls)
+    }
+
+    /// `thunk` but of a variable found: out of line, so that a variable
+    /// costs no frame for the rest.
+    #[inline(never)]
+    fn thunk_other(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         match self.st.node(e) {
-            ExprNode::BVar(i) => match self.a.lookup(env, i) {
-                Some(v) => v,
-                None => self.bottom(Sp::NIL),
-            },
+            ExprNode::BVar(_) => self.bottom(Sp::NIL),
             ExprNode::Sort(_)
             | ExprNode::Const(..)
             | ExprNode::Lam(..)
