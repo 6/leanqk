@@ -35,7 +35,7 @@ use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
 use super::ext::Ext;
-use super::store::{IdMap, IdSet, Store};
+use super::store::{IdMap, Store};
 use super::tc::{KErr, R, Tc};
 use super::univ;
 use val::{Arena, Ls, V};
@@ -185,7 +185,7 @@ pub struct Nbe<'e> {
     /// or under the binders of a context (`ctxs`), with (the id of) the
     /// universe parameters they were checked under, packed in one word
     /// (`infer_term`): they stay well-typed as the environment grows.
-    checked_closed: IdSet<u64>,
+    checked_closed: crate::hash::U64Set,
     /// Contexts of open terms in `checked_closed`, ids from 1 (0 is the
     /// empty context): the context with one more binder, of type the term
     /// of the environment `.1`, after `.0`.
@@ -335,7 +335,7 @@ impl<'e> Nbe<'e> {
             trim_holes_memo: val::table(val::NONE),
             not_proof: IdMap::default(),
             name_exprs: 0,
-            checked_closed: IdSet::default(),
+            checked_closed: Default::default(),
             ctxs: IdMap::default(),
             ctx_of: Vec::new(),
             lparams_key: None,
@@ -370,7 +370,7 @@ impl<'e> Nbe<'e> {
             + self.infer_memo.heap_bytes()
             + self.eager_memo.heap_bytes()
             + map(&self.bvar_use)
-            + self.checked_closed.capacity() * (size_of::<u64>() + 1)
+            + self.checked_closed.capacity() * size_of::<u64>()
             + map(&self.ctxs)
     }
 
@@ -588,7 +588,7 @@ impl<'e> Nbe<'e> {
             self.eager_memo = Default::default();
             if self.kept_bytes() > self.cache_share {
                 self.bvar_use = IdMap::default();
-                self.checked_closed = IdSet::default();
+                self.checked_closed = Default::default();
                 self.ctxs = IdMap::default();
                 self.lparams_ids = Default::default();
             }
