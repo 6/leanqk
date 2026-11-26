@@ -22,7 +22,7 @@ use num_bigint::BigUint;
 use crate::env::{Decl, Env, NameList, RecRule, RuleList};
 use crate::expr::{BigId, BinderInfo, ExprData, ExprId, ExprNode, LetBinder, LetId, big_hash};
 use crate::intern::{Interner, Node};
-use crate::level::{LevelId, LevelList, LevelNode, list_hash};
+use crate::level::{LevelId, LevelList, LevelNode, list_at, list_hash};
 use crate::name::{NameId, NameNode};
 use crate::slab::{BLOCK, Block, Reader};
 use crate::strings::StrId;
@@ -68,7 +68,8 @@ pub struct Store<'e> {
     levels: Interner<LevelNode>,
     level_hp: Vec<bool>,
     list_data: Vec<LevelId>,
-    list_ends: Vec<u32>,
+    /// List `i` is from `list_offs[i]` to `list_offs[i + 1]`.
+    list_offs: Vec<u32>,
     list_hp: Vec<bool>,
     list_table: HashTable<u32>,
     /// Expression nodes and their data, the environment's and this
@@ -128,7 +129,7 @@ impl<'e> Store<'e> {
             levels: Interner::new("too many levels"),
             level_hp: Vec::new(),
             list_data: Vec::new(),
-            list_ends: Vec::new(),
+            list_offs: vec![0],
             list_hp: Vec::new(),
             list_table: HashTable::new(),
             nodes: env.exprs.node_reader(),
@@ -346,16 +347,12 @@ impl<'e> Store<'e> {
         self.mk_level(LevelNode::Param(n))
     }
 
+    #[inline(always)]
     fn local_list(&self, i: usize) -> &[LevelId] {
-        let start = if i == 0 {
-            0
-        } else {
-            self.list_ends[i - 1] as usize
-        };
-        &self.list_data[start..self.list_ends[i] as usize]
+        list_at(&self.list_data, &self.list_offs, i)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn list(&self, l: LevelList) -> &[LevelId] {
         if is_local(l.0) {
             self.local_list((l.0 & !LOCAL) as usize)
@@ -384,25 +381,21 @@ impl<'e> Store<'e> {
         let h = list_hash(ls);
         let Self {
             list_data,
-            list_ends,
+            list_offs,
             list_table,
             ..
         } = self;
-        let slice = |i: usize| {
-            let start = if i == 0 { 0 } else { list_ends[i - 1] as usize };
-            &list_data[start..list_ends[i] as usize]
-        };
-        if let Some(&id) = list_table.find(h, |&id| slice(id as usize) == ls) {
+        if let Some(&id) =
+            list_table.find(h, |&id| list_at(list_data, list_offs, id as usize) == ls)
+        {
             return LevelList(id | LOCAL);
         }
-        let id = list_ends.len() as u32;
+        let id = (list_offs.len() - 1) as u32;
         list_data.extend_from_slice(ls);
-        list_ends.push(list_data.len() as u32);
-        let (list_data, list_ends) = (&*list_data, &*list_ends);
+        list_offs.push(list_data.len() as u32);
+        let (list_data, list_offs) = (&*list_data, &*list_offs);
         list_table.insert_unique(h, id, |&id| {
-            let i = id as usize;
-            let start = if i == 0 { 0 } else { list_ends[i - 1] as usize };
-            list_hash(&list_data[start..list_ends[i] as usize])
+            list_hash(list_at(list_data, list_offs, id as usize))
         });
         let hp = ls.iter().any(|&l| self.level_has_param(l));
         self.list_hp.push(hp);

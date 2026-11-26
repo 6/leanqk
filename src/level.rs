@@ -54,9 +54,10 @@ impl LevelList {
 pub struct Levels {
     arena: Interner<LevelNode>,
     has_param: Vec<bool>,
-    // Interned lists: concatenated elements, end offsets, and a flag per list.
+    // Interned lists: concatenated elements, offsets (list `i` is from
+    // `list_offs[i]` to `list_offs[i + 1]`), and a flag per list.
     list_data: Vec<LevelId>,
-    list_ends: Vec<u32>,
+    list_offs: Vec<u32>,
     list_has_param: Vec<bool>,
     list_table: HashTable<u32>,
 }
@@ -81,6 +82,14 @@ pub(crate) fn list_hash(ls: &[LevelId]) -> u64 {
     }
 }
 
+/// List `i` of a store of lists: `data`, with `offs` (list `i` is from
+/// `offs[i]` to `offs[i + 1]`).
+#[inline(always)]
+pub(crate) fn list_at<'a>(data: &'a [LevelId], offs: &[u32], i: usize) -> &'a [LevelId] {
+    let [a, b] = *offs[i..].first_chunk().expect("a list id");
+    &data[a as usize..b as usize]
+}
+
 impl Levels {
     pub fn new() -> Self {
         let mut arena = Interner::new("too many universe levels");
@@ -90,7 +99,7 @@ impl Levels {
             arena,
             has_param: vec![false],
             list_data: Vec::new(),
-            list_ends: vec![0],
+            list_offs: vec![0, 0],
             list_has_param: vec![false],
             list_table: HashTable::new(),
         }
@@ -132,17 +141,12 @@ impl Levels {
 
     /// Number of interned level lists, counting `[]`.
     pub fn list_count(&self) -> usize {
-        self.list_ends.len()
+        self.list_offs.len() - 1
     }
 
+    #[inline(always)]
     pub fn list(&self, l: LevelList) -> &[LevelId] {
-        let i = l.0 as usize;
-        let start = if i == 0 {
-            0
-        } else {
-            self.list_ends[i - 1] as usize
-        };
-        &self.list_data[start..self.list_ends[i] as usize]
+        list_at(&self.list_data, &self.list_offs, l.0 as usize)
     }
 
     pub fn list_has_param(&self, l: LevelList) -> bool {
@@ -172,29 +176,25 @@ impl Levels {
         let h = list_hash(ls);
         let Self {
             list_data,
-            list_ends,
+            list_offs,
             list_table,
             ..
         } = self;
-        let slice = |i: usize| {
-            let start = if i == 0 { 0 } else { list_ends[i - 1] as usize };
-            &list_data[start..list_ends[i] as usize]
-        };
-        if let Some(&id) = list_table.find(h, |&id| slice(id as usize) == ls) {
+        if let Some(&id) =
+            list_table.find(h, |&id| list_at(list_data, list_offs, id as usize) == ls)
+        {
             return Ok(LevelList(id));
         }
         let end = list_data.len() + ls.len();
-        if end > u32::MAX as usize || list_ends.len() >= u32::MAX as usize {
+        if end > u32::MAX as usize || list_offs.len() > u32::MAX as usize {
             return Err(Overflow("too many universe level lists"));
         }
-        let id = list_ends.len() as u32;
+        let id = (list_offs.len() - 1) as u32;
         list_data.extend_from_slice(ls);
-        list_ends.push(end as u32);
-        let (list_data, list_ends) = (&*list_data, &*list_ends);
+        list_offs.push(end as u32);
+        let (list_data, list_offs) = (&*list_data, &*list_offs);
         list_table.insert_unique(h, id, |&id| {
-            let i = id as usize;
-            let start = if i == 0 { 0 } else { list_ends[i - 1] as usize };
-            list_hash(&list_data[start..list_ends[i] as usize])
+            list_hash(list_at(list_data, list_offs, id as usize))
         });
         let hp = ls.iter().any(|&l| self.has_param[l.index()]);
         self.list_has_param.push(hp);
@@ -205,7 +205,7 @@ impl Levels {
         self.arena.heap_bytes()
             + self.has_param.capacity()
             + self.list_data.capacity() * 4
-            + self.list_ends.capacity() * 4
+            + self.list_offs.capacity() * 4
             + self.list_has_param.capacity()
             + self.list_table.capacity() * 5
     }
