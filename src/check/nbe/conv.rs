@@ -196,23 +196,16 @@ impl Nbe<'_> {
         })
     }
 
-    /// The arguments after the last projection of a neutral's spine, and
-    /// the spine before them.
-    fn split_args(&mut self, sp: Sp, out: &mut Vec<V>) -> Sp {
-        out.clear();
-        let n = self.a.sp_len(sp);
-        let mut k = n;
-        while k > 0 {
-            match self.a.sp_elim(sp, k - 1) {
-                Elim::Arg(v) => {
-                    out.push(v);
-                    k -= 1;
+    /// The offset of the trailing arguments, past the last projection.
+    fn trailing_args_start(&self, sp: Sp, len: u32) -> u32 {
+        if self.a.sp_has_proj(sp) {
+            for i in (0..len).rev() {
+                if matches!(self.a.sp_elim(sp, i), Elim::Proj(..)) {
+                    return i + 1;
                 }
-                Elim::Proj(..) => break,
             }
         }
-        out.reverse();
-        self.a.sp_prefix(sp, k)
+        0
     }
 
     /// Whether the term `d`, under binders whose domains are `ctx`
@@ -511,17 +504,22 @@ impl Nbe<'_> {
             ),
             _ => return Ok(false),
         };
-        let mut ta = Vec::new();
-        let mut sa = Vec::new();
-        let tpre = self.split_args(tsp, &mut ta);
-        let spre = self.split_args(ssp, &mut sa);
-        if ta.is_empty() || sa.is_empty() || ta.len() != sa.len() {
+        let tl = self.a.sp_len(tsp);
+        let sl = self.a.sp_len(ssp);
+        let ti = self.trailing_args_start(tsp, tl);
+        let si = self.trailing_args_start(ssp, sl);
+        let len = tl - ti;
+        if len == 0 || len != sl - si {
             return Ok(false);
         }
-        let tf = self.with_spine(th, tpre);
-        let sf = self.with_spine(sh, spre);
-        if !self.is_def_eq(tf, sf)? {
-            return Ok(false);
+        let tpre = self.a.sp_prefix(tsp, ti);
+        let spre = self.a.sp_prefix(ssp, si);
+        if th != sh || tpre != spre {
+            let tf = self.with_spine(th, tpre);
+            let sf = self.with_spine(sh, spre);
+            if !self.is_def_eq(tf, sf)? {
+                return Ok(false);
+            }
         }
         // The heads are equal, so (as in `is_def_eq_args`) proof arguments
         // of the same constant at the same levels need no comparison.
@@ -533,11 +531,16 @@ impl Nbe<'_> {
             }
             _ => 0,
         };
-        for i in 0..ta.len() {
+        for i in 0..len {
             if i < 64 && props & 1 << i != 0 {
                 continue;
             }
-            if !self.is_def_eq(ta[i], sa[i])? {
+            let (Elim::Arg(a), Elim::Arg(b)) =
+                (self.a.sp_elim(tsp, ti + i), self.a.sp_elim(ssp, si + i))
+            else {
+                unreachable!("trailing arguments")
+            };
+            if !self.is_def_eq(a, b)? {
                 return Ok(false);
             }
         }
