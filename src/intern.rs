@@ -490,17 +490,14 @@ impl<T: Node> Big<T> {
         let lines = IdTable::lines_for(n);
         let nodes = &self.nodes;
         // A table line is picked by the low half of the hash (scaled), so
-        // in the order of that half, the ids fill the table from start to
-        // end, each at the first free slot from its line on: no probing,
-        // and equal keys (equal hashes) come one after the other. So hash
-        // the nodes into buckets by the top bits of that half, and sort
-        // each bucket by the rest (radix sort, as the table is filled a
-        // bucket at a time).
+        // in the order of lines, the ids fill the table from start to end,
+        // each at the first free slot from its line on: no probing, and
+        // equal keys (equal hashes) are among the entries of one line. So
+        // hash the nodes into buckets by the top bits of that half, and
+        // sort each bucket by line (as the table is filled a bucket at a
+        // time).
         const BITS: u32 = 10;
         const BUCKETS: usize = 1 << BITS;
-        // The rest, sorted on in two passes.
-        const DIGIT: u32 = 11;
-        const _: () = assert!(BITS + 2 * DIGIT == 32);
         // The buckets are kept in groups, each freed once its buckets are
         // in the table, and the table's slots are only written (zeroed)
         // as the buckets reach them: the two are not all in memory at
@@ -528,14 +525,15 @@ impl<T: Node> Big<T> {
                 spill.push((h, id));
             }
         }
-        let digit = |l: u32, d: u32| (l >> (d * DIGIT)) as usize & ((1 << DIGIT) - 1);
-        // Each pass writes all of a bucket's entries, so these are never
-        // cleared.
-        let mut tmp: Vec<[u32; 3]> = vec![[0; 3]; cap];
+        // Each bucket's entries go to `sorted` in the order of their
+        // lines (counted by line, from the bucket's first): the order
+        // within a line does not matter to a probe.
         let mut sorted: Vec<[u32; 3]> = vec![[0; 3]; cap];
         let total = lines * LINE;
         let mut slots: Vec<AtomicU64> = Vec::with_capacity(total);
         let lines = lines as u64;
+        let line_of = |l: u32| ((l as u64 * lines) >> 32) as usize;
+        let mut count: Vec<u32> = vec![0; (lines >> BITS) as usize + 2];
         // The slot after the last one filled.
         let mut next = 0usize;
         let mut added = 0usize;
@@ -544,54 +542,50 @@ impl<T: Node> Big<T> {
                 map.release((b - PER) * cap..b * cap);
             }
             let bucket = &map.ents()[b * cap..b * cap + k];
+            let first = line_of((b as u32) << (32 - BITS));
+            let end = line_of(((b as u32) << (32 - BITS)) | ((1 << (32 - BITS)) - 1)) + 1;
             // The slots this bucket can reach: from its last line on, `k`
             // at most.
-            let end = ((((b as u64 + 1) << (32 - BITS)) * lines) >> 32) as usize + 1;
             let reach = (next.max(end * LINE) + k).min(total);
             if slots.len() < reach {
                 slots.resize_with(reach, || AtomicU64::new(0));
             }
-            let mut count = [[0u32; 1 << DIGIT]; 2];
+            let count = &mut count[..end - first];
+            count.fill(0);
             for e in bucket {
-                let l = low(e);
-                count[0][digit(l, 0)] += 1;
-                count[1][digit(l, 1)] += 1;
+                count[line_of(low(e)) - first] += 1;
             }
-            for c in &mut count {
-                let mut sum = 0;
-                for x in c.iter_mut() {
-                    (*x, sum) = (sum, sum + *x);
-                }
-            }
-            let tmp = &mut tmp[..k];
-            for e in bucket {
-                let e = [low(e), u32_at(e, 4), u32_at(e, 8)];
-                let c = &mut count[0][digit(e[0], 0)];
-                tmp[*c as usize] = e;
-                *c += 1;
+            let mut sum = 0;
+            for x in count.iter_mut() {
+                (*x, sum) = (sum, sum + *x);
             }
             let sorted = &mut sorted[..k];
-            for e in tmp.iter() {
-                let c = &mut count[1][digit(e[0], 1)];
-                sorted[*c as usize] = *e;
+            for e in bucket {
+                let e = [low(e), u32_at(e, 4), u32_at(e, 8)];
+                let c = &mut count[line_of(e[0]) - first];
+                sorted[*c as usize] = e;
                 *c += 1;
             }
-            // Unlike the first entry's.
-            let mut last = sorted.first().map_or(0, |e| !e[0]);
+            // Equal keys have equal hashes, so are on one line: the low
+            // hash bits of the line's entries so far, a quick test.
+            let (mut line_at, mut group, mut seen) = (usize::MAX, 0, 0u64);
             let spilled = spill.len();
             for (i, &[l, hi, id]) in sorted.iter().enumerate() {
-                // An equal key has an equal hash, so it is among the ones
-                // just before with the same low half.
-                if l == last
-                    && let Some(d) = equal_before(nodes, sorted, i)
+                let line = line_of(l);
+                if line != line_at {
+                    (line_at, group, seen) = (line, i, 0);
+                }
+                let bit = 1 << (l % 64);
+                if seen & bit != 0
+                    && let Some(d) = equal_in(nodes, &sorted[group..i], [l, hi, id])
                 {
                     return Err(d);
                 }
-                last = l;
+                seen |= bit;
                 // The first slot from its line on that is after the last
                 // filled: the slots between are all in use, as a probe
                 // needs.
-                let at = next.max(((l as u64 * lines) >> 32) as usize * LINE);
+                let at = next.max(line * LINE);
                 let tagged = tag_of((hi as u64) << 32) | id as u64;
                 match slots.get_mut(at) {
                     Some(s) => {
@@ -633,22 +627,17 @@ impl<T: Node> Big<T> {
     }
 }
 
-/// Whether entry `i` of `sorted` (hash halves and id, in hash order) is
-/// a node equal to one before it: their ids (the later, the earlier).
+/// Whether entry `e` (hash halves and id) is a node equal to one of
+/// `before`: their ids (the later, the earlier).
 #[cold]
 #[inline(never)]
-fn equal_before<T: Node>(nodes: &Slab<T>, sorted: &[[u32; 3]], i: usize) -> Option<(u32, u32)> {
-    let [l, hi, id] = sorted[i];
+fn equal_in<T: Node>(nodes: &Slab<T>, before: &[[u32; 3]], e: [u32; 3]) -> Option<(u32, u32)> {
+    let [l, hi, id] = e;
     let node = nodes.get(id);
-    for &[l2, hi2, other] in sorted[..i].iter().rev() {
-        if l2 != l {
-            break;
-        }
-        if hi2 == hi && nodes.get(other).same(node) {
-            return Some((id.max(other), id.min(other)));
-        }
-    }
-    None
+    before.iter().find_map(|&[l2, hi2, other]| {
+        (l2 == l && hi2 == hi && nodes.get(other).same(node))
+            .then(|| (id.max(other), id.min(other)))
+    })
 }
 
 /// The buckets of [`Big::index`]: entries of 12 bytes.
