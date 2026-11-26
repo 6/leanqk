@@ -87,10 +87,19 @@ fn h32(h: u64) -> u32 {
 /// arena that made them (and caches holding ids are cleared with it).
 #[inline(always)]
 #[allow(unsafe_code)]
-fn at<T>(v: &[T], i: usize) -> &T {
+pub(super) fn at<T>(v: &[T], i: usize) -> &T {
     debug_assert!(i < v.len(), "arena index {i} out of bounds");
     // SAFETY: as above, `i` is below the length.
     unsafe { v.get_unchecked(i) }
+}
+
+/// `&v[a..b]`, with the bounds checked in debug builds only (as `at`).
+#[inline(always)]
+#[allow(unsafe_code)]
+pub(super) fn at_slice<T>(v: &[T], a: usize, b: usize) -> &[T] {
+    debug_assert!(a <= b && b <= v.len(), "arena range {a}..{b} out of bounds");
+    // SAFETY: as above, the range is inside `v`.
+    unsafe { v.get_unchecked(a..b) }
 }
 
 #[inline(always)]
@@ -621,7 +630,7 @@ impl Arena {
         };
         let mut h = hash2(tag | (a as u64) << 32, b as u64);
         // One step per elimination (its two words).
-        for w in self.sps[k..k + 2 * n].as_chunks::<2>().0 {
+        for w in at_slice(&self.sps, k, k + 2 * n).as_chunks::<2>().0 {
             let x = w[0] as u64 | (w[1] as u64) << 32;
             h = (h.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
         }
@@ -643,7 +652,7 @@ impl Arena {
             spread(h),
             |&(id, k2)| {
                 k2 == h && {
-                    let (same, sp) = match (vals[id as usize], head) {
+                    let (same, sp) = match (*at(vals, id as usize), head) {
                         (Val::Const(n2, l2, sp), Val::Const(n1, l1, _)) => {
                             (n1 == n2 && l1 == l2, sp)
                         }
@@ -651,13 +660,13 @@ impl Arena {
                         _ => (false, Sp::NIL),
                     };
                     let i = sp.0 as usize;
-                    same && (sps[i] & LEN_BITS) as usize == n + xs.len()
-                        && sps[i + 1..i + 1 + 2 * n] == sps[k..k + 2 * n]
+                    same && (*at(sps, i) & LEN_BITS) as usize == n + xs.len()
+                        && at_slice(sps, i + 1, i + 1 + 2 * n) == at_slice(sps, k, k + 2 * n)
                         // Both words: an argument's second is `NONE`, a
                         // projection's is its index.
                         && xs.iter().enumerate().all(|(j, x)| {
                             let w = i + 1 + 2 * (n + j);
-                            sps[w] == x.0 && sps[w + 1] == NONE
+                            *at(sps, w) == x.0 && *at(sps, w + 1) == NONE
                         })
                 }
             },
