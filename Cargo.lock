@@ -286,6 +286,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "clap",
  "hashbrown",
+ "libc",
  "libmimalloc-sys",
  "memmap2",
  "num-bigint",
