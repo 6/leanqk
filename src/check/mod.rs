@@ -68,8 +68,65 @@ pub struct Report {
 /// Blocks a worker takes at a time.
 const CHUNK: usize = 32;
 
-/// Stack for each checker thread: the checker recurses on terms.
+/// Stack for each checker thread: the checker recurses on terms. Under a
+/// limit on address space, see [`thread_plan`].
 const STACK_BYTES: usize = 1 << 30;
+/// The least stack a checker thread gets under a limit on address space
+/// (the corpus's deepest cases need about 8 MiB).
+const MIN_STACK_BYTES: usize = 256 << 20;
+/// The stack of a lone checker thread when even [`MIN_STACK_BYTES`] does
+/// not fit.
+const LAST_STACK_BYTES: usize = 32 << 20;
+
+/// Checker threads and the stack of each, for `jobs` wanted. With no limit
+/// on address space (`ulimit -v`), or room for them, `jobs` threads of
+/// [`STACK_BYTES`]. Else the stacks share half the room left under the
+/// limit (the other half is for checking), each at least
+/// [`MIN_STACK_BYTES`], with fewer threads if they do not fit. The verdict
+/// does not depend on the number of threads.
+fn thread_plan(jobs: usize) -> (usize, usize) {
+    let room = match (address_space_limit(), address_space_used()) {
+        (Some(lim), Some(used)) => lim.saturating_sub(used) / 2,
+        (Some(lim), None) => lim / 2,
+        (None, _) => return (jobs, STACK_BYTES),
+    };
+    plan_for_room(jobs, usize::try_from(room).unwrap_or(usize::MAX))
+}
+
+/// [`thread_plan`] with `room` bytes for the stacks.
+fn plan_for_room(jobs: usize, room: usize) -> (usize, usize) {
+    if room / STACK_BYTES >= jobs {
+        return (jobs, STACK_BYTES);
+    }
+    if room < MIN_STACK_BYTES {
+        return (1, (room >> 20 << 20).max(LAST_STACK_BYTES));
+    }
+    let stack = ((room / jobs) >> 20 << 20).max(MIN_STACK_BYTES);
+    (jobs.min(room / stack), stack)
+}
+
+/// The soft limit on this process's address space, if any.
+fn address_space_limit() -> Option<u64> {
+    let limits = std::fs::read_to_string("/proc/self/limits").ok()?;
+    let soft = limits
+        .lines()
+        .find_map(|l| l.strip_prefix("Max address space"))?
+        .split_whitespace()
+        .next()?;
+    soft.parse().ok()
+}
+
+/// The address space this process takes now.
+fn address_space_used() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let kib = status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmSize:"))?
+        .trim()
+        .strip_suffix("kB")?
+        .trim();
+    Some(kib.parse::<u64>().ok()? << 10)
+}
 
 /// Check every declaration of `env`, on as many threads as
 /// [`default_jobs`] says, stopping at the first failure.
@@ -174,14 +231,14 @@ fn check_decls(env: &Env, decls: &[Decl], jobs: usize) -> Result<Report, BlockPr
         busy: AtomicUsize::new(0),
         budget: mem_budget(crate::stats::rss_bytes().unwrap_or(0)),
     };
-    let jobs = jobs.clamp(1, env.blocks.len().max(1));
+    let (jobs, stack) = thread_plan(jobs.clamp(1, env.blocks.len().max(1)));
     std::thread::scope(|s| {
         let workers: Vec<_> = (0..jobs)
             .map(|i| {
                 let shared = &shared;
                 std::thread::Builder::new()
                     .name(format!("nitrolean-check-{i}"))
-                    .stack_size(STACK_BYTES)
+                    .stack_size(stack)
                     .spawn_scoped(s, move || worker(shared, jobs))
                     .expect("spawn checker thread")
             })
@@ -776,5 +833,32 @@ fn compare_decl(tc: &Tc<'_>, g: &Decl, x: &Decl) -> R<DeclKind> {
             })
         }
         _ => bad("kind of declaration"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thread_stacks_fit_the_room() {
+        const G: usize = 1 << 30;
+        // Room for all: full stacks.
+        assert_eq!(plan_for_room(4, 64 * G), (4, STACK_BYTES));
+        assert_eq!(plan_for_room(4, 4 * G), (4, STACK_BYTES));
+        // Shared room, then fewer threads at the floor.
+        assert_eq!(plan_for_room(4, 2 * G), (4, G / 2));
+        assert_eq!(plan_for_room(64, 2 * G), (8, MIN_STACK_BYTES));
+        assert_eq!(plan_for_room(2, 300 << 20), (1, MIN_STACK_BYTES));
+        // Next to nothing: one thread, a small stack.
+        assert_eq!(plan_for_room(8, 100 << 20), (1, 100 << 20));
+        assert_eq!(plan_for_room(8, 0), (1, LAST_STACK_BYTES));
+        for jobs in 1..100 {
+            for room in [0, 1 << 20, 300 << 20, 3 * G, 7 * G + 12345, 200 * G] {
+                let (n, stack) = plan_for_room(jobs, room);
+                assert!((1..=jobs).contains(&n) && stack <= STACK_BYTES);
+                assert!(n == 1 || n * stack <= room);
+            }
+        }
     }
 }
