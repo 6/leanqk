@@ -699,11 +699,6 @@ impl Nbe<'_> {
         Ok(None)
     }
 
-    fn unfold_cheap(&mut self, e: V, d: &crate::env::Decl) -> R<V> {
-        let u = self.unfold_known_definition(e, d).expect("delta");
-        self.whnf_core(u, false, true)
-    }
-
     /// Whether the arguments of two applications of the abbreviation `d`
     /// (spines `a` and `b`) are worth comparing before unfolding: not when
     /// `d` is an eliminator in disguise (a recursor, casesOn or matcher at

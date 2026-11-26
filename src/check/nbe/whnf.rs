@@ -549,17 +549,25 @@ impl Nbe<'_> {
         self.unfold_delta(v, &d, ls, sp)
     }
 
-    /// Unfold with metadata already validated for this value by `is_delta`.
-    pub(super) fn unfold_known_definition(&mut self, v: V, d: &Decl) -> Option<V> {
+    /// Take the chosen lazy delta step using metadata validated by `is_delta`.
+    pub(super) fn unfold_cheap(&mut self, v: V, d: &Decl) -> R<V> {
         let v = self.force(v);
         let m = self.a.r(v).delta;
-        if m != NONE {
-            return Some(V(m));
-        }
-        let Val::Const(_, ls, sp) = self.a.get(v) else {
-            unreachable!()
+        let r = if m != NONE {
+            V(m)
+        } else {
+            let Val::Const(_, ls, sp) = self.a.get(v) else {
+                unreachable!()
+            };
+            if super::cases::CASES_DIRECT
+                && let Some(branch) = self.cases_direct(d, ls, sp)?
+            {
+                branch
+            } else {
+                self.unfold_delta(v, d, ls, sp).expect("delta")
+            }
         };
-        self.unfold_delta(v, d, ls, sp)
+        self.whnf_core(r, false, true)
     }
 
     fn unfold_delta(&mut self, v: V, d: &Decl, ls: LevelList, sp: Sp) -> Option<V> {
@@ -867,7 +875,7 @@ impl Nbe<'_> {
                 }
             }
             if super::cases::CASES_DIRECT
-                && let Some(n) = self.cases_direct(t_l)?
+                && let Some(n) = self.cases_direct(&d, ls, sp)?
             {
                 t = n;
                 continue;
