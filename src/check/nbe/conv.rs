@@ -1488,7 +1488,47 @@ impl Nbe<'_> {
             return false;
         }
         *budget -= 1;
-        if let ExprNode::BVar(j) = self.st.node(t) {
+        let node = self.st.node(t);
+        if !matches!(node, ExprNode::App(..) | ExprNode::Proj(..)) {
+            return self.syn_eq_vt_node(x, t, node, e, l, k, budget, flip);
+        }
+
+        // The term-pair memo uses binder depths; the sentinel reserves a
+        // separate key space for a value compared with an open term.
+        let key = [x.0, t.0, e.0, l.0, k, u32::from(flip), u32::MAX];
+        let h = crate::hash::hash2(
+            u64::from(x.0) << 32 | u64::from(t.0),
+            (u64::from(e.0) << 32 | u64::from(l.0)) ^ u64::from(k),
+        );
+        let i = (h >> 52) as usize & (super::SYN_T - 1);
+        let entry = self.syn_t[i];
+        if entry[..7] == key {
+            return entry[7] != 0;
+        }
+        let before = *budget;
+        let equal = self.syn_eq_vt_node(x, t, node, e, l, k, budget, flip);
+        if before - *budget >= SYN_FAIL_MIN && (equal || *budget > 0) {
+            let mut entry = [0; 8];
+            entry[..7].copy_from_slice(&key);
+            entry[7] = u32::from(equal);
+            self.syn_t[i] = entry;
+        }
+        equal
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn syn_eq_vt_node(
+        &mut self,
+        x: V,
+        t: crate::expr::ExprId,
+        node: ExprNode,
+        e: super::val::Env,
+        l: super::val::Ls,
+        k: u32,
+        budget: &mut u32,
+        flip: bool,
+    ) -> bool {
+        if let ExprNode::BVar(j) = node {
             if j < k {
                 return false;
             }
@@ -1497,8 +1537,18 @@ impl Nbe<'_> {
                 None => false,
             };
         }
-        let x = self.forced_or(x);
-        match self.a.get(x) {
+        let head = self.a.get(x);
+        let head = if matches!(head, Val::Thunk(..)) {
+            let forced = self.forced_or(x);
+            if forced == x {
+                head
+            } else {
+                self.a.get(forced)
+            }
+        } else {
+            head
+        };
+        match head {
             Val::Thunk(t_l, e_l, l_l) | Val::Lam(t_l, e_l, l_l) | Val::Pi(t_l, e_l, l_l) => {
                 if flip {
                     self.syn_eq_t(t, e, l, k, t_l, e_l, l_l, 0, 0, budget)
@@ -1507,11 +1557,10 @@ impl Nbe<'_> {
                 }
             }
             Val::Const(_, _, sp) | Val::FVar(_, sp) => {
-                let head = self.a.get(x);
-                let mut cur = t;
+                let mut node = node;
                 let mut m = self.a.sp_len(sp);
                 loop {
-                    match self.st.node(cur) {
+                    match node {
                         ExprNode::BVar(j) if j >= k => {
                             let Some(y) = self.a.lookup(e, j - k) else {
                                 return false;
@@ -1528,14 +1577,14 @@ impl Nbe<'_> {
                             if !self.syn_eq_vt(y, a, e, l, k, budget, flip) {
                                 return false;
                             }
-                            cur = f;
+                            node = self.st.node(f);
                             m -= 1;
                         }
                         ExprNode::Proj(s_r, i_r, b) if m > 0 => {
                             if self.a.sp_elim(sp, m - 1) != Elim::Proj(s_r, i_r) {
                                 return false;
                             }
-                            cur = b;
+                            node = self.st.node(b);
                             m -= 1;
                         }
                         n => {
@@ -1556,12 +1605,12 @@ impl Nbe<'_> {
                     }
                 }
             }
-            Val::Sort(a) => match self.st.node(t) {
+            Val::Sort(a) => match node {
                 ExprNode::Sort(b) => self.inst_level(b, l) == a,
                 _ => false,
             },
-            Val::Nat(lo, hi) => self.st.node(t) == ExprNode::NatSmall(lo, hi),
-            Val::Str(s) => self.st.node(t) == ExprNode::Str(s),
+            Val::Nat(lo, hi) => node == ExprNode::NatSmall(lo, hi),
+            Val::Str(s) => node == ExprNode::Str(s),
             _ => false,
         }
     }
