@@ -9,7 +9,7 @@ use crate::name::NameId;
 use crate::strings::Overflow;
 
 /// Id of an interned level. `LevelId::ZERO` is `Level.zero`.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct LevelId(pub(crate) u32);
 
 impl LevelId {
@@ -74,7 +74,7 @@ impl LevelParams {
 }
 
 /// Id of an interned list of levels. `LevelList::EMPTY` is `[]`.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
 pub struct LevelList(pub(crate) u32);
 
 impl LevelList {

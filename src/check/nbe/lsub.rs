@@ -41,15 +41,15 @@ impl Key for (crate::level::LevelList, super::val::Ls) {
 }
 
 pub struct Lsub<K, V> {
-    /// Slot `i` holds a key whose hash is `i` and its value; `None` empty.
-    slots: Box<[Option<(K, V)>; SLOTS]>,
+    // Key zero denotes an empty slot. The callers handle Ls::ID directly.
+    direct: Box<[(u64, V); SLOTS]>,
     map: IdMap<K, V>,
 }
 
-impl<K: Copy, V: Copy> Default for Lsub<K, V> {
+impl<K: Copy, V: Copy + Default> Default for Lsub<K, V> {
     fn default() -> Self {
         Lsub {
-            slots: vec![None; SLOTS]
+            direct: vec![(0, V::default()); SLOTS]
                 .into_boxed_slice()
                 .try_into()
                 .unwrap_or_else(|_| unreachable!()),
@@ -66,11 +66,13 @@ fn slot(bits: u64) -> usize {
 impl<K: Key, V: Copy> Lsub<K, V> {
     #[inline]
     pub fn get(&mut self, k: K) -> Option<V> {
-        if LSUB_DIRECT
-            && let Some((k2, v)) = &self.slots[slot(k.bits())]
-            && *k2 == k
-        {
-            return Some(*v);
+        let bits = k.bits();
+        debug_assert_ne!(bits, 0);
+        if LSUB_DIRECT {
+            let (key, value) = self.direct[slot(bits)];
+            if key == bits {
+                return Some(value);
+            }
         }
         self.get_slow(k)
     }
@@ -93,7 +95,9 @@ impl<K: Key, V: Copy> Lsub<K, V> {
         if !LSUB_DIRECT {
             return;
         }
-        self.slots[slot(k.bits())] = Some((k, v));
+        let bits = k.bits();
+        debug_assert_ne!(bits, 0);
+        self.direct[slot(bits)] = (bits, v);
     }
 }
 
@@ -104,7 +108,9 @@ impl<K: Copy, V: Copy> Cap for Lsub<K, V> {
 
     fn clear_keep(&mut self) {
         self.map.clear_keep();
-        self.slots.fill(None);
+        for (key, _) in self.direct.iter_mut() {
+            *key = 0;
+        }
     }
 }
 
