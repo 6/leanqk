@@ -26,6 +26,7 @@ path = "src/bin/nlean.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 hashbrown = "0.17"
+libc = "0.2"
 memmap2 = "0.9"
 libmimalloc-sys = { version = "0.1.49", default-features = false }
 num-bigint = "0.5"
