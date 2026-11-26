@@ -1507,6 +1507,15 @@ impl Nbe<'_> {
         }
         *budget -= 1;
         let node = self.st.node(t);
+        if let ExprNode::BVar(j) = node {
+            if j < k {
+                return false;
+            }
+            return match self.a.lookup(e, j - k) {
+                Some(y) => self.syn_eq_v(x, y, budget),
+                None => false,
+            };
+        }
         if !matches!(node, ExprNode::App(..) | ExprNode::Proj(..)) {
             return self.syn_eq_vt_node(x, t, node, e, l, k, budget, flip);
         }
@@ -1546,15 +1555,6 @@ impl Nbe<'_> {
         budget: &mut u32,
         flip: bool,
     ) -> bool {
-        if let ExprNode::BVar(j) = node {
-            if j < k {
-                return false;
-            }
-            return match self.a.lookup(e, j - k) {
-                Some(y) => self.syn_eq_v(x, y, budget),
-                None => false,
-            };
-        }
         let head = self.a.get(x);
         let head = if matches!(head, Val::Thunk(..)) {
             let forced = self.forced_or(x);
