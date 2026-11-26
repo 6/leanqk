@@ -21,10 +21,6 @@ fn err<T>(msg: impl Into<String>) -> R<T> {
 /// (`syn_eq_term`) before the domain's value is made.
 const SYN_DOM: bool = true;
 
-/// Whether `infer_term` remembers types by the environment entries a term
-/// reads (`memo`), not through a thunk.
-const INFER_MEMO: bool = true;
-
 /// Past this many environment entries in range, `infer_term`'s memo goes
 /// through a thunk.
 const INFER_MEMO_RANGE: u32 = 32;
@@ -389,9 +385,43 @@ impl Nbe<'_> {
         if !d.has_loose_bvars() && !d.has_fvar() && !d.has_level_param() {
             return self.infer_closed(e, node, infer_only);
         }
+        let key_env = if d.has_loose_bvars() { env } else { Env::NIL };
+        let has_level_param = d.has_level_param();
+        let key_ls = if has_level_param { ls } else { Ls::ID };
+        let hash = crate::hash::hash2(e.0 as u64 | (key_ls.0 as u64) << 32, key_env.0 as u64);
+        let slot = (hash >> 50) as usize & (EAGER_SLOTS - 1);
+        let [expr, cached_env, cached_ls, entry] = self.infer_slots[slot];
+        let key = if expr == e.0 && cached_env == key_env.0 && cached_ls == key_ls.0 {
+            IKey::Memo(entry as usize)
+        } else if !has_level_param && expr == e.0 && cached_env == key_env.0 && cached_ls == NONE {
+            return Ok(V(entry));
+        } else {
+            let key = self.infer_key(e, d, key_env, key_ls);
+            if let IKey::Memo(i) = key {
+                self.infer_slots[slot] = [e.0, key_env.0, key_ls.0, i as u32];
+            }
+            key
+        };
+        let ty = self.infer_memoized(e, node, d, (env, ls), infer_only, key)?;
+        if !infer_only && !has_level_param {
+            // This check survives declaration changes. The tagged slot
+            // can return the type directly on subsequent exact hits.
+            self.infer_slots[slot] = [e.0, key_env.0, NONE, ty.0];
+        }
+        Ok(ty)
+    }
+
+    fn infer_memoized(
+        &mut self,
+        e: ExprId,
+        node: ExprNode,
+        d: ExprData,
+        (env, ls): (Env, Ls),
+        infer_only: bool,
+        key: IKey,
+    ) -> R<V> {
         // A memo keyed by the term in its environment, without the entries
         // it does not use.
-        let key = self.infer_key(e, d, env, ls);
         let c = self.ikey_ty(key);
         if c != super::val::NONE && (infer_only || self.ikey_checked(key)) {
             return Ok(V(c));
@@ -420,7 +450,11 @@ impl Nbe<'_> {
             if let Some(k) = k
                 && self.checked_closed.contains(&k)
             {
-                let r = self.infer_node(e, node, env, ls, true)?;
+                let r = if c == NONE {
+                    self.infer_node(e, node, env, ls, true)?
+                } else {
+                    V(c)
+                };
                 self.ikey_set_checked(key, d.has_level_param());
                 return Ok(r);
             }
@@ -494,34 +528,24 @@ impl Nbe<'_> {
     /// The key of `infer_term`'s memo for `e` in `env` under `ls`: by the
     /// entries `e` reads (`memo`), or else a thunk.
     fn infer_key(&mut self, e: ExprId, d: ExprData, env: Env, ls: Ls) -> IKey {
-        if INFER_MEMO {
-            let sh = crate::hash::hash2(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
-            let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
-            let s = self.infer_slots[si];
-            if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
-                return IKey::Memo(s[3] as usize);
-            }
-            let holes = if self.key_is_trim(e) {
-                d.unused_low() as u64
-            } else {
-                // Where terms are inferred again and again, sharper.
-                !self.used_bvars(e)
-            };
-            if let Some(k) = self.memo_key(e, env, ls, holes, INFER_MEMO_RANGE) {
-                let none = super::val::NONE;
-                let (i, _) =
-                    Self::memo_find_or_add(&mut self.vargs, &mut self.infer_memo, k, [none, 0]);
-                self.infer_slots[si] = [e.0, env.0, ls.0, i as u32];
-                return IKey::Memo(i);
-            }
+        let trim = self.key_is_trim(e);
+        let holes = if trim {
+            d.unused_low() as u64
+        } else {
+            // Where terms are inferred again and again, sharper.
+            !self.used_bvars(e)
+        };
+        if let Some(k) = self.memo_key(e, env, ls, holes, INFER_MEMO_RANGE) {
+            let (i, _) =
+                Self::memo_find_or_add(&mut self.vargs, &mut self.infer_memo, k, [NONE, 0]);
+            return IKey::Memo(i);
         }
-        IKey::Thunk(if self.key_is_trim(e) {
+        IKey::Thunk(if trim {
             // The key is the term's thunk, likely made already.
             self.thunk_value(e, env, ls)
         } else {
             let kenv = self.key_env(env, e);
-            let kls = if d.has_level_param() { ls } else { Ls::ID };
-            self.a.mk(Val::Thunk(e, kenv, kls))
+            self.a.mk(Val::Thunk(e, kenv, ls))
         })
     }
 
