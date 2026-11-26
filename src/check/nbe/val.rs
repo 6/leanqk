@@ -735,10 +735,7 @@ impl Arena {
                     let w = *at(sps, j);
                     sps.push(w);
                 }
-                for x in xs {
-                    sps.push(x.0);
-                    sps.push(NONE);
-                }
+                sps.extend(xs.iter().flat_map(|x| [x.0, NONE]));
                 Sp(id as u32)
             }
         };
