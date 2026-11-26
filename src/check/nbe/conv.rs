@@ -1511,7 +1511,7 @@ impl Nbe<'_> {
                     return false;
                 }
                 return match self.a.lookup(e_l, i - k_l) {
-                    Some(x) => self.syn_eq_vt_loaded(
+                    Some(x) => self.syn_eq_vt_loaded::<false>(
                         x,
                         t_r,
                         n_r,
@@ -1519,7 +1519,6 @@ impl Nbe<'_> {
                         l_r,
                         depth.right_total(),
                         budget,
-                        false,
                     ),
                     None => false,
                 };
@@ -1530,7 +1529,7 @@ impl Nbe<'_> {
                     return false;
                 }
                 return match self.a.lookup(e_r, j - k_r) {
-                    Some(y) => self.syn_eq_vt_loaded(
+                    Some(y) => self.syn_eq_vt_loaded::<true>(
                         y,
                         t_l,
                         n_l,
@@ -1538,7 +1537,6 @@ impl Nbe<'_> {
                         l_l,
                         depth.left_total(),
                         budget,
-                        true,
                     ),
                     None => false,
                 };
@@ -1593,14 +1591,14 @@ impl Nbe<'_> {
         l: super::val::Ls,
     ) -> bool {
         let mut budget = SYN_BUDGET;
-        self.syn_eq_vt_loaded(x, t, self.st.node(t), e, l, 0, &mut budget, false)
+        self.syn_eq_vt_loaded::<false>(x, t, self.st.node(t), e, l, 0, &mut budget)
     }
 
     /// The value `x` (outside every binder) against the term `t` in `e`
     /// under `k` binders: `t` may not use those binders.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
-    fn syn_eq_vt_loaded(
+    fn syn_eq_vt_loaded<const FLIP: bool>(
         &mut self,
         x: V,
         t: crate::expr::ExprId,
@@ -1609,7 +1607,6 @@ impl Nbe<'_> {
         l: super::val::Ls,
         k: u32,
         budget: &mut u32,
-        flip: bool,
     ) -> bool {
         if *budget == 0 {
             return false;
@@ -1635,13 +1632,13 @@ impl Nbe<'_> {
                 | ExprNode::Pi(..)
                 | ExprNode::Let(..)
         ) {
-            return self.syn_eq_vt_node(x, t, node, e, l, k, budget, flip);
+            return self.syn_eq_vt_node::<FLIP>(x, t, node, e, l, k, budget);
         }
-        self.syn_eq_vt_memo(x, t, node, e, l, k, budget, flip)
+        self.syn_eq_vt_memo::<FLIP>(x, t, node, e, l, k, budget)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn syn_eq_vt_memo(
+    fn syn_eq_vt_memo<const FLIP: bool>(
         &mut self,
         x: V,
         t: crate::expr::ExprId,
@@ -1650,11 +1647,10 @@ impl Nbe<'_> {
         l: super::val::Ls,
         k: u32,
         budget: &mut u32,
-        flip: bool,
     ) -> bool {
         // Term pairs have a binder depth bounded by SYN_BUDGET in word 6.
         // Reserve u32::MAX there for value–term pairs.
-        let key = [x.0, t.0, e.0, l.0, k, u32::from(flip), u32::MAX];
+        let key = [x.0, t.0, e.0, l.0, k, u32::from(FLIP), u32::MAX];
         let h = crate::hash::hash2(
             u64::from(x.0) << 32 | u64::from(t.0),
             (u64::from(e.0) << 32 | u64::from(l.0)) ^ u64::from(k),
@@ -1665,7 +1661,7 @@ impl Nbe<'_> {
             return entry[7] != 0;
         }
         let before = *budget;
-        let equal = self.syn_eq_vt_node(x, t, node, e, l, k, budget, flip);
+        let equal = self.syn_eq_vt_node::<FLIP>(x, t, node, e, l, k, budget);
         // An exhausted budget can make a negative result inconclusive.
         if equal || (before - *budget >= 2 && *budget > 0) {
             let mut entry = [0; 8];
@@ -1677,7 +1673,7 @@ impl Nbe<'_> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn syn_eq_vt_node(
+    fn syn_eq_vt_node<const FLIP: bool>(
         &mut self,
         x: V,
         t: crate::expr::ExprId,
@@ -1686,7 +1682,6 @@ impl Nbe<'_> {
         l: super::val::Ls,
         k: u32,
         budget: &mut u32,
-        flip: bool,
     ) -> bool {
         let head = self.a.get(x);
         let head = if matches!(head, Val::Thunk(..)) {
@@ -1701,7 +1696,7 @@ impl Nbe<'_> {
         };
         match head {
             Val::Thunk(t_l, e_l, l_l) | Val::Lam(t_l, e_l, l_l) | Val::Pi(t_l, e_l, l_l) => {
-                if flip {
+                if FLIP {
                     self.syn_eq_t(t, e, l, t_l, e_l, l_l, SynDepth::left(k), budget)
                 } else {
                     self.syn_eq_t(t_l, e_l, l_l, t, e, l, SynDepth::right(k), budget)
@@ -1729,7 +1724,7 @@ impl Nbe<'_> {
                                 return false;
                             }
                             let arg = self.st.node(a);
-                            if !self.syn_eq_vt_loaded(y, a, arg, e, l, k, budget, flip) {
+                            if !self.syn_eq_vt_loaded::<FLIP>(y, a, arg, e, l, k, budget) {
                                 return false;
                             }
                             node = self.st.node(f);
