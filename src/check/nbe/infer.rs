@@ -10,8 +10,8 @@ use crate::name::NameId;
 
 use super::super::tc::{KErr, NAT_MAX_BYTES, R};
 use super::super::univ;
-use super::val::{Elim, Env, Ls, Sp, V, Val};
-use super::{BOTTOM, Nbe};
+use super::val::{Elim, Env, Ls, NONE, Sp, V, Val};
+use super::{BOTTOM, EAGER_SLOTS, Nbe};
 
 fn err<T>(msg: impl Into<String>) -> R<T> {
     Err(KErr::new(msg.into()))
@@ -382,9 +382,12 @@ impl Nbe<'_> {
             }
             _ => {}
         }
+        let d = self.st.data(e);
+        if !d.has_loose_bvars() && !d.has_fvar() && !d.has_level_param() {
+            return self.infer_closed(e, node, infer_only);
+        }
         // A memo keyed by the term in its environment, without the entries
         // it does not use.
-        let d = self.st.data(e);
         let key = self.infer_key(e, d, env, ls);
         let c = self.ikey_ty(key);
         if c != super::val::NONE && (infer_only || self.ikey_checked(key)) {
@@ -422,19 +425,8 @@ impl Nbe<'_> {
         } else {
             None
         };
-        let r = match node {
-            ExprNode::App(f, a) => self.infer_app(f, a, env, ls, infer_only)?,
-            ExprNode::Lam(..) => self.check_lambda(e, env, ls)?,
-            ExprNode::Pi(..) => self.infer_pi(e, env, ls, infer_only)?,
-            ExprNode::Let(..) => self.infer_let(e, env, ls, infer_only)?,
-            ExprNode::Proj(s, i, x) => {
-                let xt = self.infer_term(x, env, ls, infer_only)?;
-                let xv = self.thunk(x, env, ls);
-                self.proj_type(xv, xt, s, i)?
-            }
-            _ => unreachable!(),
-        };
-        if c == super::val::NONE {
+        let r = self.infer_complex(e, node, env, ls, infer_only)?;
+        if c == NONE {
             self.ikey_set_ty(key, r);
         }
         if !infer_only && !self.ikey_checked(key) {
@@ -443,7 +435,54 @@ impl Nbe<'_> {
         if let Some(k) = ck {
             self.checked_closed.insert(k);
         }
-        Ok(if c == super::val::NONE { r } else { V(c) })
+        Ok(if c == NONE { r } else { V(c) })
+    }
+
+    /// Terms with no free variables or universe parameters have one type
+    /// per expression id. A slot tagged with `NONE` in the environment
+    /// word stores the type itself and whether the term was checked.
+    fn infer_closed(&mut self, e: ExprId, node: ExprNode, infer_only: bool) -> R<V> {
+        let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - EAGER_SLOTS.ilog2())) as usize;
+        let [expr, tag, checked, ty] = self.infer_slots[i];
+        let cached = expr == e.0 && tag == NONE;
+        if cached && (infer_only || checked != 0) {
+            return Ok(V(ty));
+        }
+        let shared = !infer_only && !self.st.is_local_expr(e);
+        let checked_before = shared && self.checked_closed.contains(&(e.0 as u64));
+        let ty = if cached && checked_before {
+            V(ty)
+        } else {
+            self.infer_complex(e, node, Env::NIL, Ls::ID, infer_only || checked_before)?
+        };
+        if shared && !checked_before {
+            self.checked_closed.insert(e.0 as u64);
+        }
+        self.infer_slots[i] = [e.0, NONE, u32::from(!infer_only), ty.0];
+        Ok(ty)
+    }
+
+    fn infer_complex(
+        &mut self,
+        e: ExprId,
+        node: ExprNode,
+        env: Env,
+        ls: Ls,
+        infer_only: bool,
+    ) -> R<V> {
+        match node {
+            ExprNode::App(f, a) => self.infer_app(f, a, env, ls, infer_only),
+            ExprNode::Lam(..) if infer_only => Ok(self.a.mk(Val::PiInfer(e, env, ls))),
+            ExprNode::Lam(..) => self.check_lambda(e, env, ls),
+            ExprNode::Pi(..) => self.infer_pi(e, env, ls, infer_only),
+            ExprNode::Let(..) => self.infer_let(e, env, ls, infer_only),
+            ExprNode::Proj(s, i, x) => {
+                let xt = self.infer_term(x, env, ls, infer_only)?;
+                let xv = self.thunk(x, env, ls);
+                self.proj_type(xv, xt, s, i)
+            }
+            _ => unreachable!(),
+        }
     }
 
     /// The key of `infer_term`'s memo for `e` in `env` under `ls`: by the
