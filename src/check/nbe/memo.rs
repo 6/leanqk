@@ -20,6 +20,9 @@ const FAST_KEYS: bool = true;
 /// The id of no values read (`FAST_KEYS`).
 const EMPTY_TUPLE: u32 = val::NONE - 1;
 
+/// The bit of a tuple id that is an environment's id (`read_tuple`).
+const WHOLE_ENV: u32 = 1 << 31;
+
 /// Slots of `Nbe::tuple_slots`.
 pub(super) const TUPLE_SLOTS: usize = 1 << 14;
 
@@ -245,6 +248,11 @@ impl Nbe<'_> {
     /// The id of the values of the first `n` entries of `env` but those
     /// `holes` sets (from bit 64 on, all): equal values, equal ids.
     fn read_tuple(&mut self, env: Env, n: u32, holes: u64) -> u32 {
+        // All of a whole environment: environments are hash-consed, so its
+        // id names its values (with the top bit, which no record id has).
+        if n < 64 && holes & ((1u64 << n) - 1) == 0 && n == self.a.env_len(env) {
+            return env.0 | WHOLE_ENV;
+        }
         let si = (crate::hash::hash_front(env.0 as u64 | (n as u64) << 32, holes) >> 50) as usize
             & (TUPLE_SLOTS - 1);
         let s = self.tuple_slots[si];
@@ -302,7 +310,7 @@ impl Nbe<'_> {
             Err(slot) => slot,
         };
         assert!(
-            end <= EMPTY_TUPLE as usize,
+            end < WHOLE_ENV as usize,
             "nitrolean: resource limit: memo too large"
         );
         let id = base as u32;
