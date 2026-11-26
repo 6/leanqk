@@ -11,6 +11,34 @@ use std::alloc::{GlobalAlloc, Layout};
 
 use libmimalloc_sys as mi;
 
+/// `mi_option_purge_delay` in mimalloc v3's `mi_option_t` (the bindings
+/// do not name it).
+const MI_OPTION_PURGE_DELAY: std::ffi::c_int = 15;
+
+unsafe extern "C" {
+    fn mi_option_get(option: std::ffi::c_int) -> std::ffi::c_long;
+    fn mi_option_set_default(option: std::ffi::c_int, value: std::ffi::c_long);
+}
+
+/// Return freed memory to the system at once rather than after mimalloc
+/// v3's default second: the checker's workers free a declaration's terms
+/// in bulk and allocate the next one's, and pages held for that second
+/// added some 150 MB to the peak on Mathlib at 8 jobs (and some 100 MB at
+/// one), at no measurable cost in time or instructions.
+/// `MIMALLOC_PURGE_DELAY` in the environment still decides.
+pub fn configure() {
+    // SAFETY: plain option calls, before any thread is started.
+    unsafe {
+        // The index names that option: v3 defaults it to 1000 (unless the
+        // environment set it; then `set_default` leaves it).
+        debug_assert!(
+            std::env::var_os("MIMALLOC_PURGE_DELAY").is_some()
+                || mi_option_get(MI_OPTION_PURGE_DELAY) == 1000
+        );
+        mi_option_set_default(MI_OPTION_PURGE_DELAY, 0);
+    }
+}
+
 /// What `mi_malloc` guarantees (`MI_MAX_ALIGN_SIZE`).
 const MIN_ALIGN: usize = 16;
 

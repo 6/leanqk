@@ -8,5 +8,6 @@ mod alloc;
 static GLOBAL: alloc::Mi = alloc::Mi;
 
 fn main() -> std::process::ExitCode {
+    alloc::configure();
     nitrolean::cli::main()
 }
