@@ -21,6 +21,7 @@ mod infer;
 mod lsub;
 mod memo;
 mod readback;
+mod stable_queries;
 pub mod val;
 mod whnf;
 
@@ -135,6 +136,7 @@ pub struct Nbe<'e> {
     lazy_values: IdMap<ExprId, ExprId>,
     /// What is known of pairs of values (`conv::EQ` and the other bits).
     pairs: conv::PairCache,
+    stable_queries: Option<Box<stable_queries::Queries>>,
     /// Terms with universe parameters marked checked in this declaration.
     level_checked: Vec<V>,
     fresh: bool,
@@ -303,6 +305,7 @@ impl<'e> Nbe<'e> {
             const_value: IdMap::default(),
             lazy_values: IdMap::default(),
             pairs: conv::PairCache::default(),
+            stable_queries: stable_queries::Queries::from_env(),
             level_checked: Vec::new(),
             fresh: true,
             syn_t: val::table(val::NONE),
@@ -528,6 +531,9 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.canon_fvar);
         shrink(&mut self.level_checked);
         self.a.clear();
+        if let Some(cache) = &mut self.stable_queries {
+            cache.reset();
+        }
         self.prunes.fill([val::NONE; 3]);
         self.trim_holes_memo.fill([val::NONE; 4]);
         self.eager_slots.fill([val::NONE; 4]);
