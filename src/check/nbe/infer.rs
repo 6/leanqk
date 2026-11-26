@@ -160,11 +160,17 @@ impl Nbe<'_> {
     // ---- types of values ----
 
     /// The type of a value.
+    #[inline]
     pub fn infer_value(&mut self, v: V) -> R<V> {
         let c = self.a.r(v).ty;
         if c != super::val::NONE {
             return Ok(V(c));
         }
+        self.infer_value_uncached(v)
+    }
+
+    #[inline(never)]
+    fn infer_value_uncached(&mut self, v: V) -> R<V> {
         let r = match self.a.get(v) {
             Val::Sort(l) => {
                 let l = self.st.succ(l);
