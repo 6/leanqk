@@ -77,6 +77,62 @@ fn ill_typed_declaration_is_rejected_by_name() {
 }
 
 #[test]
+fn overlapping_check_reports_the_same_late_failure() {
+    let input = format!("{META}\n{BAD_DEF}");
+    let prefix = input.find("{\"def\":").unwrap();
+    let path = temp_file("overlap-late-failure", &input);
+    let run = |overlap: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_nitrolean"));
+        command
+            .args(["check", "--threads", "1", "-j8"])
+            .arg(&path)
+            .env("NITROLEAN_CHECK_OVERLAP_BYTES", prefix.to_string());
+        if overlap {
+            command.arg("--overlap");
+        }
+        command.output().expect("run nitrolean")
+    };
+    let ordinary = run(false);
+    let overlap = run(true);
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(ordinary.status.code(), Some(1));
+    assert_eq!(overlap.status, ordinary.status);
+    assert_eq!(overlap.stdout, ordinary.stdout);
+    assert_eq!(overlap.stderr, ordinary.stderr);
+}
+
+#[test]
+fn prefix_check_requires_the_overlap_flag() {
+    if std::thread::available_parallelism().is_ok_and(|n| n.get() < 2) {
+        return;
+    }
+    let prefix = format!("{META}\n{GOOD}");
+    let input = format!("{prefix}\n");
+    let path = temp_file("overlap-opt-in", &input);
+    let run = |overlap: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_nitrolean"));
+        command
+            .args(["check", "--stats", "--threads", "1", "-j8"])
+            .arg(&path)
+            .env("NITROLEAN_CHECK_OVERLAP_BYTES", prefix.len().to_string())
+            .env("NITROLEAN_LAZY_PROOFS", "1")
+            .env_remove("NITROLEAN_READ_PROFILE")
+            .env_remove("NITROLEAN_DECL_TIMES");
+        if overlap {
+            command.arg("--overlap");
+        }
+        let output = command.output().expect("run nitrolean");
+        assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+        text(&output.stdout)
+    };
+    let ordinary = run(false);
+    let overlap = run(true);
+    std::fs::remove_file(path).unwrap();
+    assert!(!ordinary.contains("overlap       "), "{ordinary}");
+    assert!(overlap.contains("prefix of 1 blocks reused"), "{overlap}");
+}
+
+#[test]
 fn parse_only_accepts_a_well_formed_export() {
     let out = check_with("parseonly", &format!("{META}\n{GOOD}"), &["--parse-only"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));

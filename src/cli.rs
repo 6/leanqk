@@ -46,6 +46,9 @@ enum Command {
         /// This does not type-check anything.
         #[arg(long)]
         parse_only: bool,
+        /// Check a prefix while reading a large export with automatic reader threads.
+        #[arg(long, conflicts_with_all = ["olean", "parse_only"])]
+        overlap: bool,
         /// Read Lean's compiled .olean files instead of an export: FILE is a
         /// module name (e.g. `Mathlib`), an .olean file, or a Lake project
         /// directory (every module it built). Imports are found in
@@ -166,6 +169,7 @@ pub fn main() -> ExitCode {
             file,
             stats,
             parse_only,
+            overlap,
             olean,
             search_path,
             threads,
@@ -181,7 +185,7 @@ pub fn main() -> ExitCode {
                     lazy_proofs: lazy_proofs(true),
                 })
             } else {
-                Source::Export(threads)
+                Source::Export { threads, overlap }
             };
             let jobs = if jobs == 0 {
                 check::default_jobs()
@@ -211,19 +215,15 @@ pub fn main() -> ExitCode {
 }
 
 enum Source {
-    /// With the number of parsing threads.
-    Export(usize),
+    Export { threads: usize, overlap: bool },
     Olean(olean::Options),
 }
 
 fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: usize) -> u8 {
     let start = Instant::now();
-    let opts = match src {
-        Source::Export(_) => None,
-        Source::Olean(o) => Some(o),
-    };
-    let (env, rs, os) = if let Some(opts) = opts {
-        match olean::load(&file.to_string_lossy(), opts) {
+    let mut prefix = None;
+    let (env, rs, os) = match src {
+        Source::Olean(opts) => match olean::load(&file.to_string_lossy(), opts) {
             Ok((env, st)) => (env, None, Some(st)),
             Err(e) => {
                 eprintln!("nitrolean: {e}");
@@ -232,23 +232,32 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: us
                     _ => DECLINED,
                 };
             }
-        }
-    } else {
-        let opts = reader::Options {
-            lazy_proofs: lazy_proofs(true),
-            threads: match src {
-                Source::Export(t) => *t,
-                Source::Olean(_) => 0,
-            },
-        };
-        let res = if file.as_os_str() == "-" {
-            reader::read_stdin_with(&opts)
-        } else {
-            reader::read_file_with(file, &opts)
-        };
-        match res {
-            Ok((env, rs)) => (env, Some(rs), None),
-            Err(e) => return report_error(file, &e),
+        },
+        Source::Export { threads, overlap } => {
+            let opts = reader::Options {
+                lazy_proofs: lazy_proofs(true),
+                threads: *threads,
+            };
+            let res = if file.as_os_str() == "-" {
+                reader::read_stdin_with(&opts)
+            } else if *overlap
+                && opts.lazy_proofs
+                && let Some((bytes, readers, workers)) = overlap_plan(jobs, opts.threads)
+            {
+                reader::read_with_prefix(file, &opts, bytes, readers, |env| {
+                    check::check_prefix(env, workers)
+                })
+                .map(|(env, stats, overlap)| {
+                    prefix = overlap;
+                    (env, stats)
+                })
+            } else {
+                reader::read_file_with(file, &opts)
+            };
+            match res {
+                Ok((env, rs)) => (env, Some(rs), None),
+                Err(e) => return report_error(file, &e),
+            }
         }
     };
     let elapsed = start.elapsed();
@@ -322,7 +331,11 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: us
     }
     let _ = io::stdout().lock().write_all(out.as_bytes());
     let start = Instant::now();
-    let res = check::check_env_jobs(&env, jobs);
+    let checked = prefix.as_mut().and_then(|p| p.checked.take());
+    let prefix_blocks = checked.as_ref().map_or(0, check::CheckedPrefix::blocks);
+    let reused = checked.and_then(|p| check::finish_after_prefix(&env, jobs, p));
+    let overlap = reused.is_some();
+    let res = reused.map_or_else(|| check::check_env_jobs(&env, jobs), Ok);
     let secs = start.elapsed().as_secs_f64();
     let mut out = String::new();
     let code = match res {
@@ -353,6 +366,15 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: us
         }
     };
     if show_stats {
+        if let Some(p) = prefix {
+            let state = if overlap { "reused" } else { "replayed" };
+            out.push_str(&format!(
+                "overlap       prefix of {prefix_blocks} blocks {state}; preview read {:.3} s, preview check {:.3} s, full read {:.3} s\n",
+                p.preview_read.as_secs_f64(),
+                p.preview_check.as_secs_f64(),
+                p.full_read.as_secs_f64(),
+            ));
+        }
         out.push_str(&format!("check time    {secs:.3} s ({jobs} threads)\n"));
         if let Some(b) = peak_rss_bytes() {
             out.push_str(&format!("peak RSS      {}\n", human_bytes(b)));
@@ -360,6 +382,33 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: us
     }
     let _ = io::stdout().lock().write_all(out.as_bytes());
     code
+}
+
+fn overlap_plan(jobs: usize, readers: usize) -> Option<(Option<usize>, usize, usize)> {
+    if jobs <= 1 {
+        return None;
+    }
+    if std::env::var_os("NITROLEAN_READ_PROFILE").is_some()
+        || std::env::var_os("NITROLEAN_DECL_TIMES").is_some()
+    {
+        return None;
+    }
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    if let Some(bytes) = std::env::var_os("NITROLEAN_CHECK_OVERLAP_BYTES") {
+        let bytes = bytes.to_str()?.parse().ok()?;
+        let readers = if readers == 0 { 6 } else { readers };
+        let workers = cores.checked_sub(readers)?.min(jobs);
+        return (workers > 0 && bytes > 0).then_some((Some(bytes), readers, workers));
+    }
+    if readers != 0
+        || cores < 12
+        || jobs < 6
+        || check::address_space_limit().is_some()
+        || crate::stats::memory_limit_bytes().is_some_and(|bytes| bytes < 3 << 30)
+    {
+        return None;
+    }
+    Some((None, 6, 6))
 }
 
 fn report_error(file: &Path, e: &ReadError) -> u8 {
