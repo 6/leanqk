@@ -376,10 +376,10 @@ impl Arena {
         self.lss.truncate(1);
         self.lstable.clear();
         self.heads.fill((NONE, NONE, V(NONE)));
-        self.thunks.fill([NONE; 4]);
+        self.thunks.as_flattened_mut().fill(NONE);
         self.nutable.clear();
-        self.conses.fill([NONE; 3]);
-        self.apps.fill([NONE; 4]);
+        self.conses.as_flattened_mut().fill(NONE);
+        self.apps.as_flattened_mut().fill(NONE);
         for f in self.fars.iter() {
             f.set([NONE; 3]);
         }
