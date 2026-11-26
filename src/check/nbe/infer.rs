@@ -10,8 +10,8 @@ use crate::name::NameId;
 
 use super::super::tc::{KErr, NAT_MAX_BYTES, R};
 use super::super::univ;
-use super::val::{Elim, Env, Ls, Sp, V, Val};
-use super::{BOTTOM, Nbe};
+use super::val::{Elim, Env, Ls, NONE, Sp, V, Val};
+use super::{BOTTOM, EAGER_SLOTS, Nbe};
 
 fn err<T>(msg: impl Into<String>) -> R<T> {
     Err(KErr::new(msg.into()))
@@ -20,10 +20,6 @@ fn err<T>(msg: impl Into<String>) -> R<T> {
 /// Whether an argument's type is compared with the domain as a term
 /// (`syn_eq_term`) before the domain's value is made.
 const SYN_DOM: bool = true;
-
-/// Whether `infer_term` remembers types by the environment entries a term
-/// reads (`memo`), not through a thunk.
-const INFER_MEMO: bool = true;
 
 /// Past this many environment entries in range, `infer_term`'s memo goes
 /// through a thunk.
@@ -164,11 +160,17 @@ impl Nbe<'_> {
     // ---- types of values ----
 
     /// The type of a value.
+    #[inline]
     pub fn infer_value(&mut self, v: V) -> R<V> {
         let c = self.a.r(v).ty;
         if c != super::val::NONE {
             return Ok(V(c));
         }
+        self.infer_value_uncached(v)
+    }
+
+    #[inline(never)]
+    fn infer_value_uncached(&mut self, v: V) -> R<V> {
         let r = match self.a.get(v) {
             Val::Sort(l) => {
                 let l = self.st.succ(l);
@@ -357,6 +359,12 @@ impl Nbe<'_> {
                 return Ok(self.a.mk(Val::Sort(l)));
             }
             ExprNode::Const(n, lv) => {
+                if !self.st.list_has_param(lv) {
+                    return self.infer_closed(e, node, infer_only);
+                }
+                if ls == Ls::ID && !infer_only {
+                    return self.infer_param_constant(e, n, lv);
+                }
                 let lv = self.inst_list(lv, ls);
                 return self.infer_constant(n, lv, infer_only);
             }
@@ -382,10 +390,47 @@ impl Nbe<'_> {
             }
             _ => {}
         }
+        let d = self.st.data(e);
+        if !d.has_loose_bvars() && !d.has_fvar() && !d.has_level_param() {
+            return self.infer_closed(e, node, infer_only);
+        }
+        let key_env = if d.has_loose_bvars() { env } else { Env::NIL };
+        let has_level_param = d.has_level_param();
+        let key_ls = if has_level_param { ls } else { Ls::ID };
+        let hash = crate::hash::hash2(e.0 as u64 | (key_ls.0 as u64) << 32, key_env.0 as u64);
+        let slot = (hash >> 50) as usize & (EAGER_SLOTS - 1);
+        let [expr, cached_env, cached_ls, entry] = self.infer_slots[slot];
+        let key = if expr == e.0 && cached_env == key_env.0 && cached_ls == key_ls.0 {
+            IKey::Memo(entry as usize)
+        } else if !has_level_param && expr == e.0 && cached_env == key_env.0 && cached_ls == NONE {
+            return Ok(V(entry));
+        } else {
+            let key = self.infer_key(e, d, key_env, key_ls);
+            if let IKey::Memo(i) = key {
+                self.infer_slots[slot] = [e.0, key_env.0, key_ls.0, i as u32];
+            }
+            key
+        };
+        let ty = self.infer_memoized(e, node, d, (env, ls), infer_only, key)?;
+        if !infer_only && !has_level_param {
+            // This check survives declaration changes. The tagged slot
+            // can return the type directly on subsequent exact hits.
+            self.infer_slots[slot] = [e.0, key_env.0, NONE, ty.0];
+        }
+        Ok(ty)
+    }
+
+    fn infer_memoized(
+        &mut self,
+        e: ExprId,
+        node: ExprNode,
+        d: ExprData,
+        (env, ls): (Env, Ls),
+        infer_only: bool,
+        key: IKey,
+    ) -> R<V> {
         // A memo keyed by the term in its environment, without the entries
         // it does not use.
-        let d = self.st.data(e);
-        let key = self.infer_key(e, d, env, ls);
         let c = self.ikey_ty(key);
         if c != super::val::NONE && (infer_only || self.ikey_checked(key)) {
             return Ok(V(c));
@@ -414,7 +459,11 @@ impl Nbe<'_> {
             if let Some(k) = k
                 && self.checked_closed.contains(&k)
             {
-                let r = self.infer_node(e, node, env, ls, true)?;
+                let r = if c == NONE {
+                    self.infer_node(e, node, env, ls, true)?
+                } else {
+                    V(c)
+                };
                 self.ikey_set_checked(key, d.has_level_param());
                 return Ok(r);
             }
@@ -422,19 +471,8 @@ impl Nbe<'_> {
         } else {
             None
         };
-        let r = match node {
-            ExprNode::App(f, a) => self.infer_app(f, a, env, ls, infer_only)?,
-            ExprNode::Lam(..) => self.check_lambda(e, env, ls)?,
-            ExprNode::Pi(..) => self.infer_pi(e, env, ls, infer_only)?,
-            ExprNode::Let(..) => self.infer_let(e, env, ls, infer_only)?,
-            ExprNode::Proj(s, i, x) => {
-                let xt = self.infer_term(x, env, ls, infer_only)?;
-                let xv = self.thunk(x, env, ls);
-                self.proj_type(xv, xt, s, i)?
-            }
-            _ => unreachable!(),
-        };
-        if c == super::val::NONE {
+        let r = self.infer_complex(e, node, env, ls, infer_only)?;
+        if c == NONE {
             self.ikey_set_ty(key, r);
         }
         if !infer_only && !self.ikey_checked(key) {
@@ -443,40 +481,80 @@ impl Nbe<'_> {
         if let Some(k) = ck {
             self.checked_closed.insert(k);
         }
-        Ok(if c == super::val::NONE { r } else { V(c) })
+        Ok(if c == NONE { r } else { V(c) })
+    }
+
+    /// Terms with no free variables or universe parameters have one type
+    /// per expression id. A slot tagged with `NONE` in the environment
+    /// word stores the type itself and whether the term was checked.
+    fn infer_closed(&mut self, e: ExprId, node: ExprNode, infer_only: bool) -> R<V> {
+        let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - EAGER_SLOTS.ilog2())) as usize;
+        let [expr, tag, checked, ty] = self.infer_slots[i];
+        let cached = expr == e.0 && tag == NONE;
+        if cached && (infer_only || checked != 0) {
+            return Ok(V(ty));
+        }
+        // Constants have a cheap check on a miss and need no persistent fact.
+        let shared =
+            !infer_only && !matches!(node, ExprNode::Const(..)) && !self.st.is_local_expr(e);
+        let checked_before = shared && self.checked_closed.contains(&(e.0 as u64));
+        let ty = if cached && checked_before {
+            V(ty)
+        } else {
+            self.infer_complex(e, node, Env::NIL, Ls::ID, infer_only || checked_before)?
+        };
+        if shared && !checked_before {
+            self.checked_closed.insert(e.0 as u64);
+        }
+        self.infer_slots[i] = [e.0, NONE, u32::from(!infer_only), ty.0];
+        Ok(ty)
+    }
+
+    fn infer_complex(
+        &mut self,
+        e: ExprId,
+        node: ExprNode,
+        env: Env,
+        ls: Ls,
+        infer_only: bool,
+    ) -> R<V> {
+        match node {
+            ExprNode::Const(n, lv) => self.infer_constant(n, lv, infer_only),
+            ExprNode::App(f, a) => self.infer_app(f, a, env, ls, infer_only),
+            ExprNode::Lam(..) if infer_only => Ok(self.a.mk(Val::PiInfer(e, env, ls))),
+            ExprNode::Lam(..) => self.check_lambda(e, env, ls),
+            ExprNode::Pi(..) => self.infer_pi(e, env, ls, infer_only),
+            ExprNode::Let(..) => self.infer_let(e, env, ls, infer_only),
+            ExprNode::Proj(s, i, x) => {
+                let xt = self.infer_term(x, env, ls, infer_only)?;
+                let xv = self.thunk(x, env, ls);
+                self.proj_type(xv, xt, s, i)
+            }
+            _ => unreachable!(),
+        }
     }
 
     /// The key of `infer_term`'s memo for `e` in `env` under `ls`: by the
     /// entries `e` reads (`memo`), or else a thunk.
     fn infer_key(&mut self, e: ExprId, d: ExprData, env: Env, ls: Ls) -> IKey {
-        if INFER_MEMO {
-            let sh = crate::hash::hash2(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
-            let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
-            let s = self.infer_slots[si];
-            if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
-                return IKey::Memo(s[3] as usize);
-            }
-            let holes = if self.key_is_trim(e) {
-                d.unused_low() as u64
-            } else {
-                // Where terms are inferred again and again, sharper.
-                !self.used_bvars(e)
-            };
-            if let Some(k) = self.memo_key(e, env, ls, holes, INFER_MEMO_RANGE) {
-                let none = super::val::NONE;
-                let (i, _) =
-                    Self::memo_find_or_add(&mut self.vargs, &mut self.infer_memo, k, [none, 0]);
-                self.infer_slots[si] = [e.0, env.0, ls.0, i as u32];
-                return IKey::Memo(i);
-            }
+        let trim = self.key_is_trim(e);
+        let holes = if trim {
+            d.unused_low() as u64
+        } else {
+            // Where terms are inferred again and again, sharper.
+            !self.used_bvars(e)
+        };
+        if let Some(k) = self.memo_key(e, env, ls, holes, INFER_MEMO_RANGE) {
+            let (i, _) =
+                Self::memo_find_or_add(&mut self.vargs, &mut self.infer_memo, k, [NONE, 0]);
+            return IKey::Memo(i);
         }
-        IKey::Thunk(if self.key_is_trim(e) {
+        IKey::Thunk(if trim {
             // The key is the term's thunk, likely made already.
             self.thunk_value(e, env, ls)
         } else {
             let kenv = self.key_env(env, e);
-            let kls = if d.has_level_param() { ls } else { Ls::ID };
-            self.a.mk(Val::Thunk(e, kenv, kls))
+            self.a.mk(Val::Thunk(e, kenv, ls))
         })
     }
 
@@ -518,6 +596,23 @@ impl Nbe<'_> {
                 }
             }
         }
+    }
+
+    /// A checked constant with an identity substitution keeps its type
+    /// under the same universe parameters as the environment grows.
+    fn infer_param_constant(&mut self, e: ExprId, n: NameId, levels: LevelList) -> R<V> {
+        let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - EAGER_SLOTS.ilog2())) as usize;
+        let key = self.lparams_key();
+        // The expression id distinguishes this layout from other entries.
+        let [expr, limit, params, ty] = self.infer_slots[i];
+        if expr == e.0 && limit <= self.limit && u64::from(params) == key {
+            return Ok(V(ty));
+        }
+        let ty = self.infer_constant(n, levels, false)?;
+        if let Ok(params) = u32::try_from(key) {
+            self.infer_slots[i] = [e.0, self.limit, params, ty.0];
+        }
+        Ok(ty)
     }
 
     fn infer_constant(&mut self, n: NameId, ls: LevelList, infer_only: bool) -> R<V> {
