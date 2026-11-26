@@ -84,6 +84,7 @@ impl LevelList {
 pub struct Levels {
     arena: Interner<LevelNode>,
     params: Vec<LevelParams>,
+    successors: Vec<LevelId>,
     // Interned lists: concatenated elements, offsets (list `i` is from
     // `list_offs[i]` to `list_offs[i + 1]`), and a flag per list.
     list_data: Vec<LevelId>,
@@ -126,6 +127,7 @@ impl Levels {
         Levels {
             arena,
             params: vec![LevelParams::None],
+            successors: vec![LevelId::ZERO],
             list_data: Vec::new(),
             list_offs: vec![0, 0],
             list_has_param: vec![false],
@@ -161,6 +163,10 @@ impl Levels {
         if fresh {
             let params = LevelParams::of_node(node, |l| self.params(l));
             self.params.push(params);
+            if let LevelNode::Succ(parent) = node {
+                self.successors[parent.index()] = LevelId(id);
+            }
+            self.successors.push(LevelId::ZERO);
         }
         Ok((LevelId(id), fresh))
     }
@@ -184,6 +190,12 @@ impl Levels {
     #[inline]
     pub(crate) fn find(&self, node: &LevelNode) -> Option<LevelId> {
         self.arena.find(node).map(LevelId)
+    }
+
+    /// The successor of an interned level, if it is also interned here.
+    pub(crate) fn find_succ(&self, l: LevelId) -> Option<LevelId> {
+        let successor = self.successors[l.index()];
+        (successor != LevelId::ZERO).then_some(successor)
     }
 
     /// The id of the list `ls`, if interned here.
@@ -231,6 +243,7 @@ impl Levels {
     pub fn heap_bytes(&self) -> usize {
         self.arena.heap_bytes()
             + self.params.capacity() * size_of::<LevelParams>()
+            + self.successors.capacity() * size_of::<LevelId>()
             + self.list_data.capacity() * 4
             + self.list_offs.capacity() * 4
             + self.list_has_param.capacity()
@@ -245,12 +258,15 @@ mod tests {
     #[test]
     fn levels_and_lists() {
         let mut ls = Levels::new();
+        assert_eq!(ls.find_succ(LevelId::ZERO), None);
         let (one, _) = ls.intern(LevelNode::Succ(LevelId::ZERO)).unwrap();
         let (one2, fresh) = ls.intern(LevelNode::Succ(LevelId::ZERO)).unwrap();
         assert_eq!(one, one2);
         assert!(!fresh);
         let (u, _) = ls.intern(LevelNode::Param(NameId(3))).unwrap();
         let (m, _) = ls.intern(LevelNode::Max(one, u)).unwrap();
+        assert_eq!(ls.find_succ(LevelId::ZERO), Some(one));
+        assert_eq!(ls.find_succ(one), None);
         assert!(ls.has_param(m) && !ls.has_param(one));
         let a = ls.intern_list(&[one, u]).unwrap();
         let b = ls.intern_list(&[one, u]).unwrap();
