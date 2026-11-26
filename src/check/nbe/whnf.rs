@@ -5,12 +5,13 @@
 use num_bigint::BigUint;
 
 use crate::env::{Decl, DeclKind};
+use crate::expr::ExprNode;
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
 use super::super::ext::{NatOp, SMALL_NAT, SmallNat};
 use super::super::tc::{KErr, NAT_MAX_BYTES, R};
-use super::val::{Elim, NONE, Sp, V, Val};
+use super::val::{Elim, Env, NONE, Sp, V, Val};
 use super::{BOTTOM, Nbe};
 
 /// Steps of reduction before a closed computation goes to the closed-term
@@ -126,6 +127,14 @@ impl<'e> Nbe<'e> {
             let Elim::Proj(s, i) = self.a.sp_elim(sp, p) else {
                 unreachable!()
             };
+            if !cheap_proj
+                && !is_rec
+                && let Some(d) = d.as_ref()
+                && let Some(f) = self.project_definition(d, l, sp, p, (s, i))
+            {
+                let r = self.apply_sp_suffix(f, sp, p + 1);
+                return self.whnf_core(r, cheap_rec, cheap_proj);
+            }
             let pre = self.a.sp_prefix(sp, p);
             let x = self.a.mk(Val::Const(c, l, pre));
             if !is_rec && d.is_some() {
@@ -147,6 +156,76 @@ impl<'e> Nbe<'e> {
         } else {
             Ok(v)
         }
+    }
+
+    /// A fully applied definition with a constructor body can supply its
+    /// field without evaluating the other constructor arguments.
+    fn project_definition(
+        &mut self,
+        d: &Decl,
+        ls: LevelList,
+        sp: Sp,
+        p: u32,
+        (s, i): (NameId, u32),
+    ) -> Option<V> {
+        let mut body = Self::decl_value(d)?;
+        if crate::env::is_lazy(body)
+            || self.st.list(ls).len() != d.level_params.len()
+            || (ls == LevelList::EMPTY
+                && (Some(d.name) == self.ext.nat_succ || self.ext.nat_op(d.name).is_some()))
+        {
+            return None;
+        }
+        for _ in 0..p {
+            let ExprNode::Lam(_, _, _, rest) = self.st.node(body) else {
+                return None;
+            };
+            body = rest;
+        }
+        let (name, ctor_ls) = self.st.head_const(body)?;
+        let ctor = self.find_ref(name)?;
+        let DeclKind::Constructor {
+            induct,
+            num_params,
+            num_fields,
+            ..
+        } = ctor.kind
+        else {
+            return None;
+        };
+        if induct != s
+            || i >= num_fields
+            || (ctor_ls == LevelList::EMPTY
+                && (Some(name) == self.ext.nat_succ || self.ext.nat_op(name).is_some()))
+        {
+            return None;
+        }
+        let mut field = None;
+        let mut len = 0;
+        while let ExprNode::App(f, a) = self.st.node(body) {
+            if len == num_fields - 1 - i {
+                field = Some(a);
+            }
+            body = f;
+            len += 1;
+        }
+        if len != num_params + num_fields {
+            return None;
+        }
+        let field = field?;
+        if let ExprNode::BVar(j) = self.st.node(field)
+            && j < p
+        {
+            return Some(self.a.sp_arg(sp, p - 1 - j));
+        }
+        let mut env = Env::NIL;
+        if self.st.has_loose_bvars(field) {
+            for j in 0..p {
+                env = self.a.cons(env, self.a.sp_arg(sp, j));
+            }
+        }
+        let ls = self.decl_ls(d, ls);
+        Some(self.thunk(field, env, ls))
     }
 
     fn apply_sp_suffix(&mut self, mut f: V, sp: Sp, start: u32) -> V {
