@@ -41,6 +41,14 @@ pub fn is_local(id: u32) -> bool {
 pub const OVERFLOW_MSG: &str =
     "nitrolean: resource limit: a declaration built more than 2^31 terms";
 
+/// The work [`Store::charge_nat_unfold`] allows a declaration: one unit per
+/// unfolding of a literal above 16 bits, and one more per 2^16 bits. The
+/// arena's `perf/gf3-matrix-product`, which unfolds about 4,700 literals of
+/// 610,000 bits once each, needs about 46,000. A runaway recursion that
+/// keeps every predecessor holds up to about 8 KiB per unit (some 1.1 GB
+/// at this budget) before it stops.
+const NAT_UNFOLD_BUDGET: u64 = 1 << 17;
+
 /// Raised when unary reduction of a literal exhausts its allocation budget.
 pub(super) struct NatUnfoldLimit;
 
@@ -180,12 +188,13 @@ impl<'e> Store<'e> {
     /// One constructor view of a literal is cheap, but recursing on its
     /// predecessors can build huge stacks and retain every intermediate Nat.
     /// Without all the checked Nat shortcuts, charge for large literals,
-    /// with a larger charge for larger integer copies.
+    /// with a larger charge for larger integer copies, up to
+    /// [`NAT_UNFOLD_BUDGET`] per declaration.
     /// The store follows both evaluators, so a fallback shares the budget.
     pub(super) fn charge_nat_unfold(&mut self, bits: u64) {
         if bits > 16 && self.limit_nat_unfold {
             self.nat_unfold_work += bits.div_ceil(1 << 16);
-            if self.nat_unfold_work > 1 << 15 {
+            if self.nat_unfold_work > NAT_UNFOLD_BUDGET {
                 std::panic::resume_unwind(Box::new(NatUnfoldLimit));
             }
         }

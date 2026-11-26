@@ -202,6 +202,73 @@ fn large_nat_unary_reduction_declines() {
     }
 }
 
+/// Unfolding many distinct large literals once each is not a runaway
+/// recursion: `perf/gf3-matrix-product` of the Lean Kernel Arena unfolds
+/// about 4,700 literals of 610,000 bits. Here 40,000 iterations of
+/// `iter x := Nat.rec (x + 1) (fun _ _ => x + 1) x` from 2^20 each unfold a
+/// literal of 21 bits.
+#[test]
+fn many_large_nat_unfoldings_are_checked() {
+    use nitrolean::check::check_env_jobs;
+    use nitrolean::reader::read_str;
+
+    // Reuse the Nat and Eq declarations and their export ids: Eq (name 1),
+    // Eq.refl (9), Nat.rec (19), level 1 (3), Nat (expression 43), Nat.succ (49).
+    let prelude = include_str!("kernel/exports/nat-succ-big.ndjson")
+        .split_once("{\"in\":23,")
+        .unwrap()
+        .0;
+    let check = |start: u64, steps: u64, claimed: u64| {
+        let mut export =
+            format!("{prelude}{{\"in\":23,\"str\":{{\"pre\":0,\"str\":\"iterClaim\"}}}}\n");
+        let mut next = 200;
+        let mut e = |node: String| {
+            let id = next;
+            next += 1;
+            export.push_str(&format!("{{\"ie\":{id},{node}}}\n"));
+            id
+        };
+        let lam = |e: &mut dyn FnMut(String) -> u32, body: u32| {
+            e(format!(
+                r#""lam":{{"binderInfo":"default","body":{body},"name":0,"type":43}}"#
+            ))
+        };
+        let app = |e: &mut dyn FnMut(String) -> u32, f: u32, args: &[u32]| {
+            args.iter()
+                .fold(f, |f, a| e(format!(r#""app":{{"fn":{f},"arg":{a}}}"#)))
+        };
+        let rec = e(r#""const":{"name":19,"us":[3]}"#.into());
+        let motive = lam(&mut e, 43);
+        let b0 = e(r#""bvar":0"#.into());
+        let b2 = e(r#""bvar":2"#.into());
+        let succ_b0 = app(&mut e, 49, &[b0]);
+        let succ_b2 = app(&mut e, 49, &[b2]);
+        let step = lam(&mut e, succ_b2);
+        let step = lam(&mut e, step);
+        let body = app(&mut e, rec, &[motive, succ_b0, step, b0]);
+        let iter = lam(&mut e, body);
+        let iter_b0 = app(&mut e, iter, &[b0]);
+        let outer_step = lam(&mut e, iter_b0);
+        let outer_step = lam(&mut e, outer_step);
+        let start = e(format!(r#""natVal":"{start}""#));
+        let steps = e(format!(r#""natVal":"{steps}""#));
+        let outer = app(&mut e, rec, &[motive, start, outer_step, steps]);
+        let claimed = e(format!(r#""natVal":"{claimed}""#));
+        let eq = e(r#""const":{"name":1,"us":[3]}"#.into());
+        let ty = app(&mut e, eq, &[43, outer, claimed]);
+        let refl = e(r#""const":{"name":9,"us":[3]}"#.into());
+        let value = app(&mut e, refl, &[43, claimed]);
+        export.push_str(&format!(
+            "{{\"thm\":{{\"all\":[23],\"levelParams\":[],\"name\":23,\"type\":{ty},\"value\":{value}}}}}\n"
+        ));
+        check_env_jobs(&read_str(&export).unwrap(), 1)
+    };
+    let (start, steps) = (1 << 20, 40_000);
+    assert!(check(start, steps, start + steps).is_ok());
+    let wrong = check(start, steps, start + steps + 1).unwrap_err();
+    assert_eq!(wrong.kind, nitrolean::check::FailKind::Rejected);
+}
+
 /// The last domain is A in the context A, B, x : A.
 #[test]
 fn declaration_lambda_domains_are_checked_in_scope() {
