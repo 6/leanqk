@@ -83,6 +83,11 @@ struct InferEntry {
 }
 
 impl InferMemo {
+    /// Bytes held: the table's 8-byte slots and the entries.
+    pub fn heap_bytes(&self) -> usize {
+        self.table.capacity() * size_of::<u64>() + self.entries.capacity() * size_of::<InferEntry>()
+    }
+
     #[inline]
     pub(super) fn find_or_add(&mut self, e: ExprId, ls: Ls, tuple: u32) -> usize {
         let key = [e.0, ls.0, tuple];
