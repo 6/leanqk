@@ -64,12 +64,21 @@ impl Nbe<'_> {
     #[inline(never)]
     fn eval_app(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         self.ticks += 1;
+        // The last eight arguments on the stack, any before them in
+        // `terms`: most spines are short, and a push costs more.
+        let mut last = [ExprId(0); 8];
+        let mut m = 0;
         let base = self.terms.len();
         let mut f = e;
         let head = loop {
             match self.st.node(f) {
                 ExprNode::App(g, a) => {
-                    self.terms.push(a);
+                    if m < last.len() {
+                        last[m] = a;
+                        m += 1;
+                    } else {
+                        self.terms.push(a);
+                    }
                     f = g;
                 }
                 n => break n,
@@ -98,6 +107,10 @@ impl Nbe<'_> {
             self.vargs.push(av);
         }
         self.terms.truncate(base);
+        for &a in last[..m].iter().rev() {
+            let av = self.thunk(a, env, ls);
+            self.vargs.push(av);
+        }
         let r = self.apply_n(h, vbase);
         self.vargs.truncate(vbase);
         r
