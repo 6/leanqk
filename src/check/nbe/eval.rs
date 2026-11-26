@@ -35,46 +35,63 @@ impl Nbe<'_> {
     pub fn eval(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let d = self.st.data(e);
         let ls = if d.has_level_param() { ls } else { Ls::ID };
+        // A small frame here: each kind of term is evaluated out of line.
         match self.st.node(e) {
             ExprNode::BVar(i) => match self.a.lookup(env, i) {
                 Some(v) => self.force(v),
                 None => self.bottom(Sp::NIL),
             },
+            ExprNode::App(..) => self.eval_app(e, env, ls),
+            ExprNode::Lam(..) | ExprNode::Pi(..) => self.eval_binder(e, env, ls),
+            ExprNode::Const(n, lv) => self.eval_const(n, lv, ls),
+            _ => self.eval_other(e, env, ls),
+        }
+    }
+
+    #[inline(never)]
+    fn eval_const(&mut self, n: NameId, lv: LevelList, ls: Ls) -> V {
+        let lv = self.inst_list(lv, ls);
+        self.a.cnst(n, lv)
+    }
+
+    #[inline(never)]
+    fn eval_app(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        self.ticks += 1;
+        let base = self.terms.len();
+        let mut f = e;
+        while let ExprNode::App(g, a) = self.st.node(f) {
+            self.terms.push(a);
+            f = g;
+        }
+        let h = self.eval(f, env, ls);
+        let vbase = self.vargs.len();
+        for k in (base..self.terms.len()).rev() {
+            let a = self.terms[k];
+            let av = self.thunk(a, env, ls);
+            self.vargs.push(av);
+        }
+        self.terms.truncate(base);
+        let r = self.apply_n(h, vbase);
+        self.vargs.truncate(vbase);
+        r
+    }
+
+    #[inline(never)]
+    fn eval_binder(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        let d = self.st.data(e);
+        let env = self.trim_prune(env, d);
+        match self.st.node(e) {
+            ExprNode::Lam(..) => self.a.mk(Val::Lam(e, env, ls)),
+            _ => self.a.mk(Val::Pi(e, env, ls)),
+        }
+    }
+
+    #[inline(never)]
+    fn eval_other(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        match self.st.node(e) {
             ExprNode::Sort(l) => {
                 let l = self.inst_level(l, ls);
                 self.a.sort(l)
-            }
-            ExprNode::Const(n, lv) => {
-                let lv = self.inst_list(lv, ls);
-                self.a.cnst(n, lv)
-            }
-            ExprNode::App(..) => {
-                self.ticks += 1;
-                let base = self.terms.len();
-                let mut f = e;
-                while let ExprNode::App(g, a) = self.st.node(f) {
-                    self.terms.push(a);
-                    f = g;
-                }
-                let h = self.eval(f, env, ls);
-                let vbase = self.vargs.len();
-                for k in (base..self.terms.len()).rev() {
-                    let a = self.terms[k];
-                    let av = self.thunk(a, env, ls);
-                    self.vargs.push(av);
-                }
-                self.terms.truncate(base);
-                let r = self.apply_n(h, vbase);
-                self.vargs.truncate(vbase);
-                r
-            }
-            ExprNode::Lam(..) => {
-                let env = self.trim_prune(env, d);
-                self.a.mk(Val::Lam(e, env, ls))
-            }
-            ExprNode::Pi(..) => {
-                let env = self.trim_prune(env, d);
-                self.a.mk(Val::Pi(e, env, ls))
             }
             ExprNode::Let(h, b) => {
                 let lb = self.st.let_binder(h);
@@ -93,6 +110,7 @@ impl Nbe<'_> {
                 self.proj(xv, s, i)
             }
             ExprNode::FVar(k) => self.a.mk(Val::FVar(k, Sp::NIL)),
+            _ => unreachable!(),
         }
     }
 
@@ -142,6 +160,7 @@ impl Nbe<'_> {
     /// The value of `e` in `env` under `ls`, evaluated now, remembered by
     /// the entries of `env` that `e` reads (no thunk is made, and no
     /// environment is cut).
+    #[inline(never)]
     fn eager(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let sh = hash2(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
