@@ -60,7 +60,11 @@ impl Nbe<'_> {
 
     /// The body of a binder value with its variable bound to `x`.
     pub fn instantiate(&mut self, v: V, x: V) -> R<V> {
-        match self.a.get(v) {
+        self.instantiate_binder(self.a.get(v), x)
+    }
+
+    fn instantiate_binder(&mut self, binder: Val, x: V) -> R<V> {
+        match binder {
             Val::Lam(t, env, ls) | Val::Pi(t, env, ls) => {
                 let (ExprNode::Lam(_, _, _, b) | ExprNode::Pi(_, _, _, b)) = self.st.node(t) else {
                     unreachable!()
@@ -106,14 +110,26 @@ impl Nbe<'_> {
         }
     }
 
-    pub fn ensure_pi(&mut self, v: V) -> R<V> {
-        let v = self.force(v);
-        if matches!(self.a.get(v), Val::Pi(..) | Val::PiInfer(..)) {
-            return Ok(v);
+    #[inline]
+    fn ensure_pi(&mut self, v: V) -> R<Val> {
+        let binder = self.a.get(v);
+        if matches!(binder, Val::Pi(..) | Val::PiInfer(..)) {
+            return Ok(binder);
         }
-        let w = self.whnf(v)?;
-        if matches!(self.a.get(w), Val::Pi(..) | Val::PiInfer(..)) {
-            Ok(w)
+        self.reduce_to_pi(v)
+    }
+
+    #[inline(never)]
+    fn reduce_to_pi(&mut self, v: V) -> R<Val> {
+        let v = self.force(v);
+        let binder = self.a.get(v);
+        if matches!(binder, Val::Pi(..) | Val::PiInfer(..)) {
+            return Ok(binder);
+        }
+        let whnf = self.whnf(v)?;
+        let binder = self.a.get(whnf);
+        if matches!(binder, Val::Pi(..) | Val::PiInfer(..)) {
+            Ok(binder)
         } else {
             err(format!("function expected, got {}", self.pp(v)))
         }
@@ -222,8 +238,8 @@ impl Nbe<'_> {
         for i in 0..self.a.sp_len(sp) {
             match self.a.sp_elim(sp, i) {
                 Elim::Arg(a) => {
-                    t = self.ensure_pi(t)?;
-                    t = self.instantiate(t, a)?;
+                    let binder = self.ensure_pi(t)?;
+                    t = self.instantiate_binder(binder, a)?;
                 }
                 Elim::Proj(s, j) => {
                     // A projection can use the value of its prefix in the
@@ -755,9 +771,9 @@ impl Nbe<'_> {
         let mut k = self.terms.len();
         let mut ft = self.infer_node(f, head, env, ls, infer_only)?;
         while k > base {
-            ft = self.ensure_pi(ft)?;
-            let Val::Pi(t, mut pi_env, pi_ls) = self.a.get(ft) else {
-                let Val::PiInfer(t, pi_env, pi_ls) = self.a.get(ft) else {
+            let pi = self.ensure_pi(ft)?;
+            let Val::Pi(t, mut pi_env, pi_ls) = pi else {
+                let Val::PiInfer(t, pi_env, pi_ls) = pi else {
                     unreachable!()
                 };
                 let ExprNode::Lam(_, _, d, b) = self.st.node(t) else {
