@@ -220,10 +220,9 @@ fn state(opts: &Options, size: u64, append: bool) -> State {
     let mut st = State::new();
     st.append = append;
     if opts.lazy_proofs {
+        // Expression ids are the builder's records, not `expr_ids`: no
+        // room for that map.
         st.lazy = Some(Box::new(lazy::Builder::with_capacity(size)));
-        // Export ids map to references (about one expression per 56
-        // bytes of a real export).
-        st.expr_ids.reserve((size / 56).min(1 << 31) as usize);
     }
     if !append {
         // About one name per 1 KiB of a real export.

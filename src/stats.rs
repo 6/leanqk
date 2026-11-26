@@ -16,11 +16,12 @@ pub fn peak_rss_bytes() -> Option<u64> {
 }
 
 /// Current resident set size of this process in bytes, where the platform
-/// reports it (Linux: `/proc/self/statm`, in pages of 4 KiB).
+/// reports it (Linux: `/proc/self/statm`, in pages of the system's size,
+/// which is not 4 KiB everywhere).
 pub fn rss_bytes() -> Option<u64> {
     let s = std::fs::read_to_string("/proc/self/statm").ok()?;
     let pages: u64 = s.split_whitespace().nth(1)?.parse().ok()?;
-    Some(pages * 4096)
+    Some(pages * crate::slab::page_size() as u64)
 }
 
 /// The memory this process may use: the machine's, or its control group's
