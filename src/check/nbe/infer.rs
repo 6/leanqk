@@ -1018,18 +1018,25 @@ impl Nbe<'_> {
     ) -> R<bool> {
         let base = self.infer_opened.len();
         let result = (|| {
+            let mut pending = None;
             while let ExprNode::Lam(bi, n, dom, body) = node {
-                let ex = self.force(expected);
-                let mut binder = self.a.get(ex);
-                if !matches!(binder, Val::Pi(..) | Val::PiInfer(..)) {
-                    let w = self.whnf(ex)?;
-                    binder = self.a.get(w);
-                }
-                let (Val::Pi(t, pi_env, pi_ls) | Val::PiInfer(t, pi_env, pi_ls)) = binder else {
-                    break;
+                let (pi_node, pi_env, pi_ls) = if let Some(pi) = pending.take() {
+                    pi
+                } else {
+                    let ex = self.force(expected);
+                    let mut binder = self.a.get(ex);
+                    if !matches!(binder, Val::Pi(..) | Val::PiInfer(..)) {
+                        let w = self.whnf(ex)?;
+                        binder = self.a.get(w);
+                    }
+                    let (Val::Pi(t, pi_env, pi_ls) | Val::PiInfer(t, pi_env, pi_ls)) = binder
+                    else {
+                        break;
+                    };
+                    (self.st.node(t), pi_env, pi_ls)
                 };
-                let (ExprNode::Pi(_, _, pi_dom, _) | ExprNode::Lam(_, _, pi_dom, _)) =
-                    self.st.node(t)
+                let (ExprNode::Pi(_, _, pi_dom, pi_body) | ExprNode::Lam(_, _, pi_dom, pi_body)) =
+                    pi_node
                 else {
                     unreachable!()
                 };
@@ -1055,10 +1062,21 @@ impl Nbe<'_> {
                 self.infer_opened.push(x);
                 let next = self.a.cons(env, x);
                 self.ctx_push(env, dom, ls, next);
-                expected = self.instantiate_binder(binder, x)?;
                 e = body;
                 node = self.st.node(body);
                 env = next;
+                let pi_env = self.bind_value(pi_body, pi_env, x);
+                if matches!(pi_node, ExprNode::Lam(..)) {
+                    expected = self.infer_term(pi_body, pi_env, pi_ls, true)?;
+                } else if matches!(node, ExprNode::Lam(..))
+                    && let next_pi @ ExprNode::Pi(..) = self.st.node(pi_body)
+                {
+                    // The next comparison only needs the closure. Trimming
+                    // and interning the Π would preserve these same bindings.
+                    pending = Some((next_pi, pi_env, pi_ls));
+                } else {
+                    expected = self.eval(pi_body, pi_env, pi_ls);
+                }
             }
             let t = self.infer_node(e, node, env, ls, false)?;
             self.is_def_eq(t, expected)
