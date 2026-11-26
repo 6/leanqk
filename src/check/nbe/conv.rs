@@ -34,13 +34,16 @@ const SYN_FAIL: u8 = 16;
 
 /// Exact pair facts. Collisions replace the previous entry.
 pub(super) struct PairCache {
-    slots: Box<[(u64, u8)]>,
+    slots: Box<[(u64, u8); PairCache::SLOTS]>,
 }
 
 impl Default for PairCache {
     fn default() -> Self {
         Self {
-            slots: vec![(0, 0); Self::SLOTS].into_boxed_slice(),
+            slots: vec![(0, 0); Self::SLOTS]
+                .into_boxed_slice()
+                .try_into()
+                .unwrap(),
         }
     }
 }
@@ -50,7 +53,7 @@ impl PairCache {
 
     #[inline]
     fn index(key: u64) -> usize {
-        crate::hash::hash2(key, 0) as usize & (Self::SLOTS - 1)
+        crate::hash::hash_front(key, 0) as usize & (Self::SLOTS - 1)
     }
 
     #[inline]
