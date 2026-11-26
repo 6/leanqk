@@ -163,7 +163,7 @@ impl Nbe<'_> {
     /// The value of `e` in `env` under `ls`, evaluated now, remembered by
     /// the entries of `env` that `e` reads (no thunk is made, and no
     /// environment is cut).
-    #[inline(never)]
+    #[inline]
     fn eager(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let sh = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
@@ -171,6 +171,12 @@ impl Nbe<'_> {
         if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
             return V(s[3]);
         }
+        self.eager_miss(e, env, ls, si)
+    }
+
+    /// `eager` past its front (slot `si`): out of line, as it evaluates.
+    #[inline(never)]
+    fn eager_miss(&mut self, e: ExprId, env: Env, ls: Ls, si: usize) -> V {
         let d = self.st.data(e);
         let n = d.loose_bvar_range().min(self.a.env_len(env));
         if n > EAGER_MEMO_RANGE {
@@ -300,7 +306,7 @@ impl Nbe<'_> {
                 let env2 = self.a.cons(env, a);
                 self.eval(body, env2, ls)
             }
-            h @ (Val::Const(..) | Val::FVar(..)) => self.a.neutral(h, &[a]),
+            h @ (Val::Const(..) | Val::FVar(..)) => self.a.neutral_of(f, h, &[a]),
             _ => {
                 let sp = self.a.snoc(Sp::NIL, Elim::Arg(a));
                 self.bottom(sp)
@@ -337,7 +343,7 @@ impl Nbe<'_> {
                     f = self.eval(body, env, ls);
                 }
                 h @ (Val::Const(..) | Val::FVar(..)) => {
-                    return self.a.neutral(h, &self.vargs[i..end]);
+                    return self.a.neutral_of(f, h, &self.vargs[i..end]);
                 }
                 _ => {
                     let sp = self.a.snoc_args(Sp::NIL, &self.vargs[i..end]);

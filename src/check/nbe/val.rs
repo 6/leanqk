@@ -281,6 +281,10 @@ pub struct Arena {
     /// Environments by their last entry and the rest (direct-mapped, in
     /// front of `envtable`): (rest, entry, environment).
     conses: Box<[[u32; 3]; CONSES]>,
+    /// Neutrals applied to one or two arguments (`neutral_of`).
+    apps: Box<[[u32; 4]; APPS]>,
+    /// Far variables found (`lookup`): (environment, index, value).
+    fars: Box<[std::cell::Cell<[u32; 3]>; FARS]>,
 }
 
 /// Slots of `Arena::heads`.
@@ -288,6 +292,12 @@ const HEADS: usize = 1 << 12;
 
 /// Slots of `Arena::conses`.
 const CONSES: usize = 1 << 14;
+
+/// Slots of `Arena::apps`.
+const APPS: usize = 1 << 14;
+
+/// Slots of `Arena::fars`.
+const FARS: usize = 1 << 12;
 
 /// Slots of `Arena::thunks`.
 const THUNKS: usize = 1 << 14;
@@ -328,6 +338,12 @@ impl Arena {
             thunks: table(NONE),
             nutable: HashTable::new(),
             conses: table(NONE),
+            apps: table(NONE),
+            fars: (0..FARS)
+                .map(|_| std::cell::Cell::new([NONE; 3]))
+                .collect::<Box<[_]>>()
+                .try_into()
+                .unwrap_or_else(|_| unreachable!()),
         }
     }
 
@@ -360,6 +376,10 @@ impl Arena {
         self.thunks.fill([NONE; 4]);
         self.nutable.clear();
         self.conses.fill([NONE; 3]);
+        self.apps.fill([NONE; 4]);
+        for f in self.fars.iter() {
+            f.set([NONE; 3]);
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -607,6 +627,25 @@ impl Arena {
         buf.push(b);
         let r = self.intern_sp(&buf);
         self.sp_buf = buf;
+        r
+    }
+
+    /// `neutral` of `f`'s value `head`, by a direct-mapped front for one
+    /// or two arguments: (neutral, arguments, result).
+    #[inline]
+    pub fn neutral_of(&mut self, f: V, head: Val, xs: &[V]) -> V {
+        if xs.len() > 2 {
+            return self.neutral(head, xs);
+        }
+        let (x0, x1) = (xs[0].0, xs.get(1).map_or(NONE, |x| x.0));
+        let i = (crate::hash::hash_front(f.0 as u64 | (x1 as u64) << 32, x0 as u64) >> 50) as usize
+            & (APPS - 1);
+        let s = self.apps[i];
+        if s[0] == f.0 && s[1] == x0 && s[2] == x1 {
+            return V(s[3]);
+        }
+        let r = self.neutral(head, xs);
+        self.apps[i] = [f.0, x0, x1, r.0];
         r
     }
 
@@ -898,6 +937,11 @@ impl Arena {
             return Some(r.node.v);
         }
         let target = len - i;
+        let fi = (crate::hash::hash_front(env.0 as u64, i as u64) >> 52) as usize & (FARS - 1);
+        let f = self.fars[fi].get();
+        if f[0] == env.0 && f[1] == i {
+            return Some(V(f[2]));
+        }
         while r.len & LEN_BITS != target {
             let j = *at(&self.envs, r.jump.0 as usize);
             r = if j.len & LEN_BITS >= target {
@@ -906,6 +950,7 @@ impl Arena {
                 *at(&self.envs, r.node.prev.0 as usize)
             };
         }
+        self.fars[fi].set([env.0, i, r.node.v.0]);
         Some(r.node.v)
     }
 

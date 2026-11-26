@@ -20,6 +20,9 @@ const FAST_KEYS: bool = true;
 /// The id of no values read (`FAST_KEYS`).
 const EMPTY_TUPLE: u32 = val::NONE - 1;
 
+/// Whether `read_tuple` writes the values read straight into the memo.
+const TUPLES_IN_PLACE: bool = true;
+
 /// Slots of `Nbe::tuple_slots`.
 pub(super) const TUPLE_SLOTS: usize = 1 << 14;
 
@@ -160,6 +163,11 @@ impl Nbe<'_> {
         if s[0] == env.0 && s[1] == n && s[2] == holes as u32 && s[3] == (holes >> 32) as u32 {
             return s[4];
         }
+        if TUPLES_IN_PLACE {
+            let t = self.read_tuple_in_place(env, n, holes);
+            self.tuple_slots[si] = [env.0, n, holes as u32, (holes >> 32) as u32, t];
+            return t;
+        }
         let base = self.vargs.len();
         let mut cur = env;
         let mut h = crate::hash::hash_front(n as u64, holes);
@@ -187,6 +195,45 @@ impl Nbe<'_> {
         let t = i as u32;
         self.tuple_slots[si] = [env.0, n, holes as u32, (holes >> 32) as u32, t];
         t
+    }
+
+    /// `read_tuple` past its front: the record is written at the end of
+    /// `tuples` as it is read, and dropped if it is there already.
+    fn read_tuple_in_place(&mut self, env: Env, n: u32, holes: u64) -> u32 {
+        let EnvMemo { table, keys } = &mut self.tuples;
+        let base = keys.len();
+        keys.extend_from_slice(&[0; 7]);
+        let mut cur = env;
+        let mut h = crate::hash::hash_front(n as u64, holes);
+        for j in 0..n {
+            if j >= 64 || holes >> j & 1 == 0 {
+                let v = self.a.env_head(cur);
+                h = (h.rotate_left(5) ^ v.0 as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+                keys.push(v.0);
+            }
+            cur = self.a.env_tail(cur);
+        }
+        let cnt = keys.len() - base - 7;
+        let h = (h >> 32) as u32;
+        let head = [h, 0, 0, n, holes as u32, (holes >> 32) as u32, cnt as u32];
+        keys[base..base + 7].copy_from_slice(&head);
+        let len = 7 + cnt;
+        let found = table.find(spread(h), |&i| {
+            let i = i as usize;
+            (0..len).all(|j| *val::at(keys, i + j) == *val::at(keys, base + j))
+        });
+        // Ids as `memo_find_or_add` gives them: past the record's values.
+        if let Some(&i) = found {
+            keys.truncate(base);
+            return i + len as u32;
+        }
+        assert!(
+            base + len < val::NONE as usize,
+            "nitrolean: resource limit: memo too large"
+        );
+        let keys = &*keys;
+        table.insert_unique(spread(h), base as u32, |&i| spread(keys[i as usize]));
+        (base + len) as u32
     }
 
     /// The words of `k` in `memo` (by index, for `EnvMemo::get` and `set`),
