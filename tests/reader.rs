@@ -686,6 +686,37 @@ fn invalid_utf8_is_an_error() {
     );
 }
 
+/// Names with non-ASCII letters before, at and past the end of an
+/// 8-byte word, given twice (the second time found, not added), and
+/// invalid bytes after a word of ASCII.
+#[test]
+fn non_ascii_names_are_read_and_checked() {
+    let words = [
+        "\u{3b1}",
+        "abcdefg\u{3b2}",
+        "abcdefgh\u{3b3}x",
+        "\u{2203}abcdefghijk",
+    ];
+    let mut lines = Vec::new();
+    for (i, w) in words.iter().chain(&words).enumerate() {
+        lines.push(format!(
+            r#"{{"in":{},"str":{{"pre":0,"str":"{w}"}}}}"#,
+            i + 1
+        ));
+    }
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let env = read_str(&export(&lines)).unwrap();
+    // Each name once (a name's second line makes the same name).
+    assert_eq!(env.names.len(), 1 + words.len());
+    for w in words {
+        let name = env.names.find_dotted(w).expect("the name");
+        assert_eq!(env.names.display(name).to_string(), w);
+    }
+    let mut s = export(&[r#"{"in":1,"str":{"pre":0,"str":"a"}}"#]).into_bytes();
+    s.extend_from_slice(b"{\"in\":2,\"str\":{\"pre\":0,\"str\":\"abcdefghij\xce\"}}\n");
+    assert_err(fail_bytes(&s), 3, ErrorClass::Malformed, "invalid UTF-8");
+}
+
 #[test]
 fn deep_nesting_is_an_error_not_a_crash() {
     let deep = format!(
