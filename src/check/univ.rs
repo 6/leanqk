@@ -367,6 +367,14 @@ pub(super) fn instantiate_list(
     if !st.list_has_param(ll) {
         return ll;
     }
+    map_level_list(st, ll, |st, l| instantiate_level(st, l, replacement))
+}
+
+pub(super) fn map_level_list(
+    st: &mut Store<'_>,
+    ll: LevelList,
+    mut map: impl FnMut(&mut Store<'_>, LevelId) -> LevelId,
+) -> LevelList {
     let original = st.list(ll);
     let mut short = [LevelId::ZERO; 4];
     let mut long;
@@ -379,7 +387,7 @@ pub(super) fn instantiate_list(
     };
     let mut changed = false;
     for l in levels.iter_mut() {
-        let new = instantiate_level(st, *l, replacement);
+        let new = map(st, *l);
         changed |= new != *l;
         *l = new;
     }

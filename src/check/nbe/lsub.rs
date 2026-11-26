@@ -1,16 +1,16 @@
 //! Universe substitutions remembered: a direct-mapped table in front of a
 //! map. Most lookups are for the few levels and lists of the declaration
-//! at hand, which the table answers with one probe; the map keeps the rest.
-
-use std::hash::Hash;
+//! at hand, which the table answers with one probe. The map keeps entries
+//! evicted from the table.
 
 use crate::env::NameList;
-use crate::level::LevelId;
+use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
 use super::super::store::{IdMap, Store};
+use super::super::univ;
 use super::Cap;
-use super::val::LsNode;
+use super::val::{Ls, LsNode};
 
 /// Find the replacement for a parameter in an interned substitution.
 pub(super) fn replacement(st: &Store<'_>, node: LsNode, name: NameId) -> Option<LevelId> {
@@ -24,29 +24,35 @@ pub const LSUB_DIRECT: bool = true;
 const SLOTS: usize = 1 << 12;
 
 /// A key of two 32-bit ids.
-pub trait Key: Copy + Eq + Hash {
+pub trait Key {
+    type Value;
+
     fn bits(self) -> u64;
 }
 
-impl Key for (crate::level::LevelId, super::val::Ls) {
+impl Key for (LevelId, Ls) {
+    type Value = LevelId;
+
     fn bits(self) -> u64 {
         (self.0.0 as u64) << 32 | self.1.0 as u64
     }
 }
 
-impl Key for (crate::level::LevelList, super::val::Ls) {
+impl Key for (LevelList, Ls) {
+    type Value = LevelList;
+
     fn bits(self) -> u64 {
         (self.0.0 as u64) << 32 | self.1.0 as u64
     }
 }
 
-pub struct Lsub<K, V> {
+pub struct Lsub<V> {
     // Key zero denotes an empty slot. The callers handle Ls::ID directly.
     direct: Box<[(u64, V); SLOTS]>,
-    map: IdMap<K, V>,
+    map: IdMap<u64, V>,
 }
 
-impl<K: Copy, V: Copy + Default> Default for Lsub<K, V> {
+impl<V: Copy + Default> Default for Lsub<V> {
     fn default() -> Self {
         Lsub {
             direct: vec![(0, V::default()); SLOTS]
@@ -60,12 +66,15 @@ impl<K: Copy, V: Copy + Default> Default for Lsub<K, V> {
 
 #[inline]
 fn slot(bits: u64) -> usize {
-    (bits.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - 12)) as usize
+    let id = (bits >> 32) as u32;
+    let ls = bits as u32;
+    let mixed = (id ^ (id >> 21)).wrapping_mul(0x9e37);
+    mixed.wrapping_add(ls) as usize & (SLOTS - 1)
 }
 
-impl<K: Key, V: Copy> Lsub<K, V> {
-    #[inline]
-    pub fn get(&mut self, k: K) -> Option<V> {
+impl<V: Copy> Lsub<V> {
+    #[inline(always)]
+    pub fn get_direct(&self, k: impl Key<Value = V>) -> Option<V> {
         let bits = k.bits();
         debug_assert_ne!(bits, 0);
         if LSUB_DIRECT {
@@ -74,34 +83,54 @@ impl<K: Key, V: Copy> Lsub<K, V> {
                 return Some(value);
             }
         }
-        self.get_slow(k)
+        None
     }
 
-    #[cold]
-    #[inline(never)]
-    fn get_slow(&mut self, k: K) -> Option<V> {
-        let v = *self.map.get(&k)?;
-        self.put(k, v);
+    /// Look up an evicted entry and restore it to the direct table.
+    #[inline]
+    pub(super) fn get_evicted(&mut self, k: impl Key<Value = V>) -> Option<V> {
+        let bits = k.bits();
+        let v = *self.map.get(&bits)?;
+        if LSUB_DIRECT {
+            self.put(bits, v);
+        }
         Some(v)
     }
 
-    pub fn insert(&mut self, k: K, v: V) {
-        self.map.insert(k, v);
-        self.put(k, v);
-    }
-
-    #[inline]
-    fn put(&mut self, k: K, v: V) {
-        if !LSUB_DIRECT {
-            return;
-        }
+    pub fn insert(&mut self, k: impl Key<Value = V>, v: V) {
         let bits = k.bits();
         debug_assert_ne!(bits, 0);
-        self.direct[slot(bits)] = (bits, v);
+        if LSUB_DIRECT {
+            self.put(bits, v);
+        } else {
+            self.map.insert(bits, v);
+        }
+    }
+
+    fn put(&mut self, bits: u64, v: V) {
+        let (old, value) = std::mem::replace(&mut self.direct[slot(bits)], (bits, v));
+        if old != 0 {
+            self.map.insert(old, value);
+        }
     }
 }
 
-impl<K: Copy, V: Copy> Cap for Lsub<K, V> {
+impl Lsub<LevelId> {
+    #[inline]
+    pub(super) fn instantiate_uncached(
+        &mut self,
+        st: &mut Store<'_>,
+        l: LevelId,
+        ls: Ls,
+        node: LsNode,
+    ) -> LevelId {
+        let result = univ::instantiate_level(st, l, |st, n| replacement(st, node, n));
+        self.insert((l, ls), result);
+        result
+    }
+}
+
+impl<V: Copy> Cap for Lsub<V> {
     fn cap(&self) -> usize {
         self.map.cap()
     }
