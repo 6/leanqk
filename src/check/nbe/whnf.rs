@@ -115,6 +115,10 @@ impl Nbe<'_> {
             };
             let pre = self.a.sp_prefix(sp, p);
             let x = self.a.mk(Val::Const(c, l, pre));
+            if !is_rec && d.is_some() {
+                // The prefix has only arguments and its head cannot reduce in core.
+                self.a.rm(x).set_core_normal();
+            }
             let x = if cheap_proj {
                 self.whnf_core(x, cheap_rec, cheap_proj)?
             } else {
