@@ -1332,14 +1332,17 @@ impl Nbe<'_> {
         budget: &mut u32,
     ) -> bool {
         let d = depth.common();
-        if t_l == t_r && depth.aligned() {
+        let aligned = depth.aligned();
+        if t_l == t_r {
             let data = self.st.data(t_l);
             if l_l == l_r || !data.has_level_param() {
                 let range = data.loose_bvar_range();
-                if e_l == e_r || range <= d {
+                // Only shared binders matter when the term is closed
+                // over the rest of either context.
+                if range <= d || (aligned && e_l == e_r) {
                     return true;
                 }
-                if range <= 63 && *budget > 0 {
+                if aligned && range <= 63 && *budget > 0 {
                     let used = if range <= ExprData::USED_LOW {
                         ((1u64 << range) - 1) & !u64::from(data.unused_low())
                     } else {
@@ -1356,7 +1359,7 @@ impl Nbe<'_> {
             return false;
         }
         // Terms are DAGs: remember what was compared at the same depth.
-        if depth.aligned()
+        if aligned
             && let ExprNode::App(f_l, a_l) = self.st.node(t_l)
             && let ExprNode::App(f_r, a_r) = self.st.node(t_r)
         {
