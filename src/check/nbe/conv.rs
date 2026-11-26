@@ -8,7 +8,7 @@ use crate::level::{LevelId, LevelList};
 use super::super::tc::R;
 use super::super::univ;
 use super::Nbe;
-use super::val::{Elim, Env, Sp, V, Val};
+use super::val::{Elim, Env, LIMIT, Sp, V, Val};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Step {
@@ -32,18 +32,18 @@ const EQ_FAIL: u8 = 4;
 const SYN_OK: u8 = 8;
 const SYN_FAIL: u8 = 16;
 
-/// Exact pair facts. Collisions replace the previous entry.
+/// Exact pair facts. Collisions replace the previous entry. Both value ids
+/// fit in 24 bits, leaving the low byte free after shifting the key left.
 pub(super) struct PairCache {
-    slots: Box<[(u64, u8); PairCache::SLOTS]>,
+    slots: Box<[u64; PairCache::SLOTS]>,
 }
+
+const _: () = assert!(LIMIT <= 1 << 24);
 
 impl Default for PairCache {
     fn default() -> Self {
         Self {
-            slots: vec![(0, 0); Self::SLOTS]
-                .into_boxed_slice()
-                .try_into()
-                .unwrap(),
+            slots: vec![0; Self::SLOTS].into_boxed_slice().try_into().unwrap(),
         }
     }
 }
@@ -58,21 +58,22 @@ impl PairCache {
 
     #[inline]
     fn get(&self, key: u64) -> u8 {
-        let (stored, bits) = self.slots[Self::index(key)];
-        if stored == key { bits } else { 0 }
+        let slot = self.slots[Self::index(key)];
+        if slot >> 8 == key { slot as u8 } else { 0 }
     }
 
     fn insert(&mut self, key: u64, bit: u8) {
         let slot = &mut self.slots[Self::index(key)];
-        if slot.0 == key {
-            slot.1 |= bit;
+        let bit = u64::from(bit);
+        if *slot >> 8 == key {
+            *slot |= bit;
         } else {
-            *slot = (key, bit);
+            *slot = (key << 8) | bit;
         }
     }
 
     pub(super) fn clear(&mut self) {
-        self.slots.fill((0, 0));
+        self.slots.fill(0);
     }
 }
 

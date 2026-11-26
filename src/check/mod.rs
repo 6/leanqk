@@ -568,7 +568,6 @@ fn check_block(
     decls: &[Decl],
     corrections: &mut Vec<(usize, DeclKind)>,
 ) -> R<()> {
-    tc.reset(b.start);
     if decls.first().is_some_and(skipped) {
         if let Some(d) = decls.iter().find(|d| !skipped(d)) {
             return err(format!(
@@ -588,14 +587,31 @@ fn check_block(
     }
     match b.kind {
         BlockKind::Single if use_nbe(&decls[0]) => check_nbe(tc, nb, b, &decls[0]),
-        BlockKind::Single => check_single(tc, &decls[0]),
+        BlockKind::Single => {
+            with_substituting_checker(tc, b.start, |tc| check_single(tc, &decls[0]))
+        }
         BlockKind::Inductive { types, ctors, .. } => {
             let start = b.start;
             let mut pre = |e, ps: &[NameId], k: u32| nbe_check_type(nb, start, k, ps, e);
             let pre: Option<&mut inductive::PreCheck<'_>> = INDUCTIVE_NBE.then_some(&mut pre);
-            check_inductive_block(tc, decls, types as usize, ctors as usize, corrections, pre)
+            with_substituting_checker(tc, start, |tc| {
+                check_inductive_block(tc, decls, types as usize, ctors as usize, corrections, pre)
+            })
         }
     }
+}
+
+/// The substituting checker starts clean and drops its local state after use.
+/// The worker rebuilds it if checking unwinds.
+fn with_substituting_checker(
+    tc: &mut Tc<'_>,
+    limit: u32,
+    check: impl FnOnce(&mut Tc<'_>) -> R<()>,
+) -> R<()> {
+    tc.limit = limit;
+    let result = check(tc);
+    tc.reset(0);
+    result
 }
 
 /// Check `d` with the evaluating checker, keeping what it knows from earlier
@@ -613,7 +629,7 @@ fn check_nbe(tc: &mut Tc<'_>, nb: &mut Nbe<'_>, b: &Block, d: &Decl) -> R<()> {
             Ok(Err(e)) => return Err(e),
             Err(p) if p.is::<nbe::OutOfRoom>() || p.is::<NatUnfoldLimit>() => {
                 nb.reset(b.start);
-                return check_single(tc, d);
+                return with_substituting_checker(tc, b.start, |tc| check_single(tc, d));
             }
             Err(p) => std::panic::resume_unwind(p),
         }
@@ -676,7 +692,7 @@ fn use_nbe(d: &Decl) -> bool {
 
 fn check_single_nbe(tc: &mut Tc<'_>, nb: &mut Nbe<'_>, d: &Decl) -> R<()> {
     check_dup_lparams(tc, d)?;
-    nb.lparams = tc.st.lparams(d).to_vec();
+    nb.lparams.extend_from_slice(tc.st.lparams(d));
     let sort = nb.check_type_sort(d.ty)?;
     if let DeclKind::Theorem { .. } = d.kind
         && !univ::normalizes_to_zero(&nb.st, sort)
@@ -776,7 +792,7 @@ const INDUCTIVE_NBE: bool = true;
 /// decides then), and what was learned goes.
 fn nbe_check_type(nb: &mut Nbe<'_>, start: u32, k: u32, ps: &[NameId], e: ExprId) -> bool {
     nb.begin(start + k);
-    nb.lparams = ps.to_vec();
+    nb.lparams.extend_from_slice(ps);
     match catch_unwind(AssertUnwindSafe(|| nb.check_type(e))) {
         Ok(Ok(())) => true,
         _ => {

@@ -234,7 +234,7 @@ impl Rec {
 /// The most values, spines or environments one declaration may build.
 /// Past it the evaluating checker gives up on the declaration (by
 /// unwinding with [`OutOfRoom`]) and the substituting one checks it.
-const LIMIT: u32 = 1 << 23;
+pub(super) const LIMIT: u32 = 1 << 23;
 const _: () = assert!(LIMIT <= u32::MAX >> FLAG_BITS);
 
 /// The most words the spines of one declaration may take.
