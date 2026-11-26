@@ -227,10 +227,36 @@ impl State {
     }
 }
 
+/// Whether a decision `Decidable.intro p b h` is answered without reading
+/// back its proof `h`, as `isTrue` and `isFalse` are (`decided`).
+const DECIDED_INTRO: bool = true;
+
+/// Whether a proof's term is built when its thunk is made. Most proofs are
+/// never read back (decisions are answered without theirs), and building
+/// their terms by substitution cost more on Lean's own library than the
+/// evaluator saved; a proof read back after its environment is gone makes
+/// the run start again keeping proofs.
+const EAGER_PROOF_TERMS: bool = false;
+
 /// A constant is memoized while at least one lookup in `MEMO_RATIO` hits,
 /// judged after `MEMO_TRIAL` lookups.
-const MEMO_TRIAL: u32 = 256;
+const MEMO_TRIAL: u32 = 32;
 const MEMO_RATIO: u32 = 32;
+
+/// Whether the memo's counts are kept from one declaration to the next (by
+/// constant name, per worker), so that a constant whose keys rarely hit is
+/// not tried again in every declaration. Only within an evaluation's first
+/// `MEMO_KEPT_STEPS` steps: a longer computation tries its constants anew
+/// (counts kept in its declaration's state), so a memo it needs, such as a
+/// recursion that would otherwise be exponential, is not lost to what
+/// short ones found.
+const MEMO_KEPT: bool = true;
+const MEMO_KEPT_STEPS: u64 = 1 << 14;
+
+thread_local! {
+    /// Per constant name: memo lookups and hits, while `MEMO_KEPT`.
+    static KEPT_MEMO: std::cell::RefCell<IdMap<NameId, (u32, u32)>> = Default::default();
+}
 
 /// What evaluation goes on with: a value, or a term to evaluate in place
 /// of the current one (a tail call).
@@ -382,7 +408,8 @@ impl<'a, 'e> Machine<'a, 'e> {
         Ok(r)
     }
 
-    /// The answer `Decidable.isTrue p h` (or `isFalse`) for `e`, without
+    /// The answer `Decidable.isTrue p h` (or `isFalse`, or `Decidable.intro
+    /// p b h`) for `e`, without
     /// reading back the proof `h` (it may be erased, or a huge term): `p`
     /// is the proposition of `e`'s type, and `h` is replaced by
     /// `of_decide_eq_true p e (Eq.refl true)` (or `of_decide_eq_false …
@@ -397,14 +424,37 @@ impl<'a, 'e> Machine<'a, 'e> {
             return None;
         };
         let names = &self.tc.st.env.names;
-        let is_true = if Some(cn) == names.find_dotted("Decidable.isTrue") {
+        // `Decidable.intro p b h` (a structure since Lean v4.36): `h`
+        // proves `Bool.Reflects b p`, which is `p` or `¬p` as `b` is
+        // `true` or `false`.
+        let intro = DECIDED_INTRO && Some(cn) == names.find_dotted("Decidable.intro");
+        let is_true = if intro {
+            if args.len() != 3 || ls != LevelList::EMPTY {
+                return None;
+            }
+            let b = self.force(&args[1]).ok()?;
+            let Val::Ctor { c: bc, .. } = &*b else {
+                return None;
+            };
+            let ExprNode::Const(bn, _) = self.tc.st.node(*bc) else {
+                return None;
+            };
+            let names = &self.tc.st.env.names;
+            if Some(bn) == names.find_dotted("Bool.true") {
+                true
+            } else if Some(bn) == names.find_dotted("Bool.false") {
+                false
+            } else {
+                return None;
+            }
+        } else if Some(cn) == names.find_dotted("Decidable.isTrue") {
             true
         } else if Some(cn) == names.find_dotted("Decidable.isFalse") {
             false
         } else {
             return None;
         };
-        if args.len() != 2 || ls != LevelList::EMPTY {
+        if !intro && (args.len() != 2 || ls != LevelList::EMPTY) {
             return None;
         }
         let lemma = self.decide_lemma(is_true)?;
@@ -433,6 +483,9 @@ impl<'a, 'e> Machine<'a, 'e> {
         let b = self.tc.st.cnst(b, LevelList::EMPTY);
         let refl = self.tc.st.apps(refl, &[bool_, b]);
         let h = self.tc.st.apps(lemma, &[p, e, refl]);
+        if intro {
+            return Some(self.tc.st.apps(*c, &[p, b, h]));
+        }
         Some(self.tc.st.apps(*c, &[p, h]))
     }
 
@@ -541,10 +594,14 @@ impl<'a, 'e> Machine<'a, 'e> {
         Thunk::delayed(e, env.clone())
     }
 
-    /// The proof's term, if the terms of its variables are known; else it
-    /// is erased.
+    /// The proof's term, if the terms of its variables are known and
+    /// `EAGER_PROOF_TERMS`; else it is erased (its term is built if it is
+    /// read back while its environment lives).
     #[inline(never)]
     fn proof_thunk(&mut self, e: ExprId, env: &Env) -> Th {
+        if !EAGER_PROOF_TERMS {
+            return Thunk::erased(e, env);
+        }
         match self.term_in(e, env, 0) {
             Some(r) => Thunk::closed(r),
             None => Thunk::erased(e, env),
@@ -979,23 +1036,40 @@ impl<'a, 'e> Machine<'a, 'e> {
         // as `whnf`'s cache shares it after substitution.
         // Building the key costs a term; constants whose keys
         // rarely hit are not memoized any more.
-        let st = self.s.memo.entry(c).or_default();
-        if st.0 >= MEMO_TRIAL && st.1 * MEMO_RATIO < st.0 {
+        let kept = match self.tc.st.node(c) {
+            ExprNode::Const(n, _) if MEMO_KEPT && self.s.steps < MEMO_KEPT_STEPS => Some(n),
+            _ => None,
+        };
+        let give_up = |st: &mut (u32, u32)| {
+            if st.0 >= MEMO_TRIAL && st.1 * MEMO_RATIO < st.0 {
+                return true;
+            }
+            st.0 += 1;
+            false
+        };
+        let skip = if let Some(n) = kept {
+            KEPT_MEMO.with_borrow_mut(|m| give_up(m.entry(n).or_default()))
+        } else {
+            give_up(self.s.memo.entry(c).or_default())
+        };
+        if skip {
             return self.apply_n(f, args);
         }
-        st.0 += 1;
-        self.memo_app(c, f, args)
+        self.memo_app(c, f, args, kept)
     }
 
     #[inline(never)]
-    fn memo_app(&mut self, c: ExprId, f: V, args: Vec<Th>) -> ER<Next> {
+    fn memo_app(&mut self, c: ExprId, f: V, args: Vec<Th>, kept: Option<NameId>) -> ER<Next> {
         let Some(key) = self.closed_app(c, &args) else {
             return self.apply_n(f, args);
         };
         let kt = self.closed(key);
-        let st = self.s.memo.entry(c).or_default();
         if let TState::Done(v) = &*kt.0.borrow() {
-            st.1 += 1;
+            if let Some(n) = kept {
+                KEPT_MEMO.with_borrow_mut(|m| m.entry(n).or_default().1 += 1);
+            } else {
+                self.s.memo.entry(c).or_default().1 += 1;
+            }
             return Ok(Next::V(v.clone()));
         }
         let v = self.apply(f, args)?;

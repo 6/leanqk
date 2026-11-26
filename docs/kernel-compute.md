@@ -196,7 +196,13 @@ huge term (the proof of a `Nodup` over a few hundred elements has millions
 of nodes). The answer is definitionally equal to the real one by proof
 irrelevance: `h` and the new proof have the same type `p`, and definitional
 equality compares proofs by their types only. The lemmas are used only if
-they are theorems whose types are exactly the core library's.
+they are theorems whose types are exactly the core library's. Since Lean
+v4.36 `Decidable` is a structure, and a decision is `Decidable.intro p b h`
+with `h : Bool.Reflects b p`, which is `p` when `b` is `true` and `¬p` when
+it is `false`. It is read back in the same way, as `Decidable.intro p true
+(of_decide_eq_true …)` (`DECIDED_INTRO`). Reading back `h` instead took a
+`decide` over `Nat.decidableBallLT` in Lean's own library from 37 to 155 ms,
+longer than reduction without the evaluator (92 ms).
 
 ## Arrays
 

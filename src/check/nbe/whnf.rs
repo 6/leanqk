@@ -15,7 +15,11 @@ use super::{BOTTOM, Nbe};
 
 /// Steps of reduction before a closed computation goes to the closed-term
 /// evaluator (`whnf_closed`; 0: at once).
-const EVAL_AFTER: u64 = 1024;
+const EVAL_AFTER: u64 = 4096;
+
+/// Whether the closed-term evaluator is asked within an attempt (see
+/// `whnf_closed`).
+const EVAL_IN_ATTEMPTS: bool = false;
 
 impl Nbe<'_> {
     /// The value bound to the let-variable `k`, if it is one.
@@ -769,6 +773,15 @@ impl Nbe<'_> {
         Ok(self.nat(r))
     }
 
+    /// `f` with the closed-term evaluator not asked (an unwind out of it
+    /// leaves the flag set: `begin` and `reset` clear it).
+    pub(super) fn probe<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.eval_probe = true;
+        let r = f(self);
+        self.eval_probe = false;
+        r
+    }
+
     /// The weak head normal form of `t`, a closed definition applied, if
     /// it is worth asking the closed-term evaluator: past `EVAL_AFTER`
     /// steps of reduction here (most computations are a few steps, where
@@ -777,12 +790,20 @@ impl Nbe<'_> {
         if self.eval_probe || !self.closed_eval || self.a.has_fvar(t) {
             return Ok(None);
         }
-        if EVAL_AFTER == 0 || self.stop != u64::MAX {
+        if self.stop != u64::MAX {
+            // Within an attempt (a probe of a few steps, which gives up
+            // past its budget), a computation worth the evaluator does not
+            // finish anyway: it is redone, and evaluated, outside.
+            return Ok(if EVAL_IN_ATTEMPTS {
+                self.closed_whnf(t)
+            } else {
+                None
+            });
+        }
+        if EVAL_AFTER == 0 {
             return Ok(self.closed_whnf(t));
         }
-        self.eval_probe = true;
-        let r = self.attempt(EVAL_AFTER, |nb| nb.whnf_from(t, false));
-        self.eval_probe = false;
+        let r = self.probe(|nb| nb.attempt(EVAL_AFTER, |nb| nb.whnf_from(t, false)));
         match r? {
             Some(n) => Ok(Some(n)),
             None => Ok(self.closed_whnf(t)),
