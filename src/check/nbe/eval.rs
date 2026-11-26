@@ -57,12 +57,7 @@ impl Nbe<'_> {
 
     #[inline(never)]
     fn eval_const(&mut self, n: NameId, lv: LevelList, ls: Ls) -> V {
-        // Callers have already consulted the expression's universe-parameter flag.
-        let lv = if ls == Ls::ID {
-            lv
-        } else {
-            self.inst_param_list(lv, ls)
-        };
+        let lv = self.inst_list(lv, ls);
         self.a.cnst(n, lv)
     }
 
@@ -136,11 +131,7 @@ impl Nbe<'_> {
     fn eval_other(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         match self.st.node(e) {
             ExprNode::Sort(l) => {
-                let l = if ls == Ls::ID {
-                    l
-                } else {
-                    self.inst_param_level(l, ls)
-                };
+                let l = self.inst_level(l, ls);
                 self.a.sort(l)
             }
             ExprNode::Let(h, b) => {
