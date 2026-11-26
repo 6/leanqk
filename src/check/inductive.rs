@@ -366,6 +366,10 @@ pub type PreCheck<'p> = dyn FnMut(ExprId, &[NameId], u32) -> bool + 'p;
 /// well-typed, and must be the export's own (`compare_decl`).
 const CHECK_RECURSORS: bool = false;
 
+/// Whether `ElimNested::run` first looks for what it would replace, and
+/// leaves a block with nothing to replace as it is.
+const NESTED_SCAN: bool = true;
+
 /// Lean's `add_inductive_fn`.
 struct AddInd<'a, 'e> {
     tc: &'a mut Tc<'e>,
@@ -1108,6 +1112,15 @@ impl ElimNested {
     }
 
     fn run(tc: &mut Tc<'_>, d: &IndDecl) -> R<ElimNested> {
+        if NESTED_SCAN && !Self::may_nest(tc, d) {
+            // Nothing to replace: the types as they are (rebuilt, they
+            // would be the same terms).
+            return Ok(ElimNested {
+                params: Vec::new(),
+                aux: Vec::new(),
+                decl: d.clone(),
+            });
+        }
         let mut params = Vec::new();
         Self::get_params(tc, d.types[0].ty, d.nparams, &mut params)?;
         let lvls = tc.param_levels(&d.lparams);
@@ -1138,6 +1151,69 @@ impl ElimNested {
             q += 1;
         }
         Ok(st)
+    }
+
+    /// Whether `run` may find a nested occurrence (`replace_if_nested`) or
+    /// fail: a type or a constructor with fewer than the parameters, or an
+    /// application of an inductive type (of the environment) to
+    /// parameters that mention a type of the block.
+    fn may_nest(tc: &Tc<'_>, d: &IndDecl) -> bool {
+        let np = d.nparams as usize;
+        let pis = |mut e: ExprId| {
+            let mut k = 0;
+            while k < np
+                && let ExprNode::Pi(_, _, _, b) = tc.st.node(e)
+            {
+                e = b;
+                k += 1;
+            }
+            k
+        };
+        if pis(d.types[0].ty) < np {
+            return true;
+        }
+        let names: Vec<NameId> = d.types.iter().map(|t| t.name).collect();
+        let mut seen = IdSet::<ExprId>::default();
+        let mut stack = Vec::new();
+        let mut args = Vec::new();
+        for t in &d.types {
+            for &(_, ct) in &t.ctors {
+                if pis(ct) < np {
+                    return true;
+                }
+                stack.push(ct);
+            }
+        }
+        while let Some(e) = stack.pop() {
+            if !seen.insert(e) {
+                continue;
+            }
+            match tc.st.node(e) {
+                ExprNode::App(f, a) => {
+                    stack.extend([f, a]);
+                    args.clear();
+                    let h = tc.st.spine(e, &mut args);
+                    if let ExprNode::Const(n, _) = tc.st.node(h)
+                        && let Some(DeclKind::Inductive { num_params, .. }) =
+                            tc.find(n).map(|c| c.kind)
+                        && num_params as usize <= args.len()
+                        && args[..num_params as usize]
+                            .iter()
+                            .any(|&a| tc.find_const(a, &|n| names.contains(&n)))
+                    {
+                        return true;
+                    }
+                }
+                ExprNode::Lam(_, _, t, b) | ExprNode::Pi(_, _, t, b) => stack.extend([t, b]),
+                ExprNode::Let(h, b) => {
+                    let lb = tc.st.let_binder(h);
+                    stack.extend([lb.ty, lb.value, b]);
+                }
+                ExprNode::Proj(_, _, x) => stack.push(x),
+                _ => {}
+            }
+        }
+        false
     }
 
     /// `instantiate_rev(abstract(e, As), params)`.
