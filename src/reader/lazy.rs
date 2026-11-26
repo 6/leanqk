@@ -1493,26 +1493,50 @@ impl Stored {
         let (recs, side) = (&self.recs, &self.side);
         let keep = sink.keeps_shared();
         s.own.clear();
+        let kid =
+            |c, sink: &mut dyn TermSink, s: &mut Scratch| self.own_kid(c, start, keep, sink, s);
+        // Records of the value's own declaration are taken as used by it
+        // alone (one that a later value uses too is built there again, by
+        // `build`, hash-consed).
         for &r in &recs[start as usize..=root as usize] {
-            let n = decode_stored(side, r);
-            let (kids, k) = n.kids();
-            let mut ids = [ExprId(0); 3];
-            for (&c, id) in kids[..k].iter().zip(&mut ids) {
-                *id = if c & ARENA != 0 {
-                    let a = ExprId(c & !ARENA);
-                    if keep { a } else { sink.shared_expr(a) }
-                } else if c >= start {
-                    ExprId(s.own[(c - start) as usize])
-                } else {
-                    self.build(c, sink, &mut s.memo, &mut s.stack)?
-                };
-            }
-            // Records of the value's own declaration are taken as used by
-            // it alone (one that a later value uses too is built there
-            // again, by `build`, hash-consed).
-            s.own.push(make(sink, n, ids, true, keep).0);
+            let id = match decode_stored(side, r) {
+                Node::App(f, a) => {
+                    let (f, a) = (kid(f, sink, s)?, kid(a, sink, s)?);
+                    sink.expr_owned(ExprNode::App(f, a))
+                }
+                n => {
+                    let (kids, k) = n.kids();
+                    let mut ids = [ExprId(0); 3];
+                    for (&c, id) in kids[..k].iter().zip(&mut ids) {
+                        *id = kid(c, sink, s)?;
+                    }
+                    make(sink, n, ids, true, keep)
+                }
+            };
+            s.own.push(id.0);
         }
         Ok(ExprId(*s.own.last().expect("the root")))
+    }
+
+    /// The sink's id for child `c` of a record in [`Stored::build_own`]
+    /// (its value's records being from `start` on).
+    #[inline(always)]
+    fn own_kid(
+        &self,
+        c: u32,
+        start: u32,
+        keep: bool,
+        sink: &mut dyn TermSink,
+        s: &mut Scratch,
+    ) -> Result<ExprId, String> {
+        if c & ARENA != 0 {
+            let a = ExprId(c & !ARENA);
+            Ok(if keep { a } else { sink.shared_expr(a) })
+        } else if c >= start {
+            Ok(ExprId(s.own[(c - start) as usize]))
+        } else {
+            self.build(c, sink, &mut s.memo, &mut s.stack)
+        }
     }
 
     fn build(
