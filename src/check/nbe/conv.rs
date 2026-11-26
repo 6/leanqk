@@ -76,7 +76,7 @@ impl PairCache {
     }
 }
 
-/// Minimum work to memoize a failed value comparison or a mixed comparison.
+/// Minimum work to memoize a failed value comparison.
 const SYN_MEMO_MIN: u32 = 4;
 
 fn compare_hints(h_l: Hints, h_r: Hints) -> i32 {
@@ -1400,7 +1400,7 @@ impl Nbe<'_> {
                     return false;
                 }
                 return match self.a.lookup(e_l, i - k_l) {
-                    Some(x) => self.syn_eq_vt(x, t_r, e_r, l_r, k_r, budget, false),
+                    Some(x) => self.syn_eq_vt_loaded(x, t_r, n_r, e_r, l_r, k_r, budget, false),
                     None => false,
                 };
             }
@@ -1409,7 +1409,7 @@ impl Nbe<'_> {
                     return false;
                 }
                 return match self.a.lookup(e_r, j - k_r) {
-                    Some(y) => self.syn_eq_vt(y, t_l, e_l, l_l, k_l, budget, true),
+                    Some(y) => self.syn_eq_vt_loaded(y, t_l, n_l, e_l, l_l, k_l, budget, true),
                     None => false,
                 };
             }
@@ -1486,16 +1486,18 @@ impl Nbe<'_> {
         l: super::val::Ls,
     ) -> bool {
         let mut budget = SYN_BUDGET;
-        self.syn_eq_vt(x, t, e, l, 0, &mut budget, false)
+        self.syn_eq_vt_loaded(x, t, self.st.node(t), e, l, 0, &mut budget, false)
     }
 
     /// The value `x` (outside every binder) against the term `t` in `e`
     /// under `k` binders: `t` may not use those binders.
+    #[inline(always)]
     #[allow(clippy::too_many_arguments)]
-    fn syn_eq_vt(
+    fn syn_eq_vt_loaded(
         &mut self,
         x: V,
         t: crate::expr::ExprId,
+        node: ExprNode,
         e: super::val::Env,
         l: super::val::Ls,
         k: u32,
@@ -1506,20 +1508,43 @@ impl Nbe<'_> {
             return false;
         }
         *budget -= 1;
-        let node = self.st.node(t);
         if let ExprNode::BVar(j) = node {
             if j < k {
                 return false;
+            }
+            if j == k && e != Env::NIL {
+                return self.syn_eq_v(x, self.a.env_head(e), budget);
             }
             return match self.a.lookup(e, j - k) {
                 Some(y) => self.syn_eq_v(x, y, budget),
                 None => false,
             };
         }
-        if !matches!(node, ExprNode::App(..) | ExprNode::Proj(..)) {
+        if !matches!(
+            node,
+            ExprNode::App(..)
+                | ExprNode::Proj(..)
+                | ExprNode::Lam(..)
+                | ExprNode::Pi(..)
+                | ExprNode::Let(..)
+        ) {
             return self.syn_eq_vt_node(x, t, node, e, l, k, budget, flip);
         }
+        self.syn_eq_vt_memo(x, t, node, e, l, k, budget, flip)
+    }
 
+    #[allow(clippy::too_many_arguments)]
+    fn syn_eq_vt_memo(
+        &mut self,
+        x: V,
+        t: crate::expr::ExprId,
+        node: ExprNode,
+        e: super::val::Env,
+        l: super::val::Ls,
+        k: u32,
+        budget: &mut u32,
+        flip: bool,
+    ) -> bool {
         // Term pairs have a binder depth bounded by SYN_BUDGET in word 6.
         // Reserve u32::MAX there for value–term pairs.
         let key = [x.0, t.0, e.0, l.0, k, u32::from(flip), u32::MAX];
@@ -1534,7 +1559,8 @@ impl Nbe<'_> {
         }
         let before = *budget;
         let equal = self.syn_eq_vt_node(x, t, node, e, l, k, budget, flip);
-        if before - *budget >= SYN_MEMO_MIN && (equal || *budget > 0) {
+        // An exhausted budget can make a negative result inconclusive.
+        if equal || (before - *budget >= 2 && *budget > 0) {
             let mut entry = [0; 8];
             entry[..7].copy_from_slice(&key);
             entry[7] = u32::from(equal);
@@ -1592,7 +1618,11 @@ impl Nbe<'_> {
                             let Elim::Arg(y) = el else {
                                 return false;
                             };
-                            if !self.syn_eq_vt(y, a, e, l, k, budget, flip) {
+                            if *budget == 0 {
+                                return false;
+                            }
+                            let arg = self.st.node(a);
+                            if !self.syn_eq_vt_loaded(y, a, arg, e, l, k, budget, flip) {
                                 return false;
                             }
                             node = self.st.node(f);
