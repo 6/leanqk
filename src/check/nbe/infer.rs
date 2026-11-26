@@ -335,6 +335,7 @@ impl Nbe<'_> {
         self.infer_node(e, self.st.node(e), env, ls, infer_only)
     }
 
+    #[inline(always)]
     fn infer_node(
         &mut self,
         e: ExprId,
@@ -393,11 +394,42 @@ impl Nbe<'_> {
         let hash = crate::hash::hash2(e.0 as u64 | (key_ls.0 as u64) << 32, key_env.0 as u64);
         let slot = (hash >> 50) as usize & (EAGER_SLOTS - 1);
         let [expr, cached_env, cached_ls, entry] = self.infer_slots[slot];
-        let key = if expr == e.0 && cached_env == key_env.0 && cached_ls == key_ls.0 {
-            IKey::Memo(entry as usize)
-        } else if !has_level_param && expr == e.0 && cached_env == key_env.0 && cached_ls == NONE {
-            return Ok(V(entry));
+        let mut memo = None;
+        if expr == e.0 && cached_env == key_env.0 {
+            if cached_ls == key_ls.0 {
+                let i = entry as usize;
+                let words = self.infer_memo.get(i);
+                let ty = words[0];
+                if ty != NONE && (infer_only || words[1] != 0) {
+                    if !infer_only && !has_level_param {
+                        self.infer_slots[slot] = [e.0, key_env.0, NONE, ty];
+                    }
+                    return Ok(V(ty));
+                }
+                memo = Some(i);
+            } else if !has_level_param && cached_ls == NONE {
+                return Ok(V(entry));
+            }
+        }
+        self.infer_open_miss(e, node, d, (env, ls), (slot, memo), infer_only)
+    }
+
+    #[inline(never)]
+    fn infer_open_miss(
+        &mut self,
+        e: ExprId,
+        node: ExprNode,
+        d: ExprData,
+        (env, ls): (Env, Ls),
+        (slot, memo): (usize, Option<usize>),
+        infer_only: bool,
+    ) -> R<V> {
+        let key_env = if d.has_loose_bvars() { env } else { Env::NIL };
+        let has_level_param = d.has_level_param();
+        let key = if let Some(i) = memo {
+            IKey::Memo(i)
         } else {
+            let key_ls = if has_level_param { ls } else { Ls::ID };
             let key = self.infer_key(e, d, key_env, key_ls);
             if let IKey::Memo(i) = key {
                 self.infer_slots[slot] = [e.0, key_env.0, key_ls.0, i as u32];
@@ -480,6 +512,7 @@ impl Nbe<'_> {
     /// Terms with no free variables or universe parameters have one type
     /// per expression id. A slot tagged with `NONE` in the environment
     /// word stores the type itself and whether the term was checked.
+    #[inline(always)]
     fn infer_closed(&mut self, e: ExprId, node: ExprNode, infer_only: bool) -> R<V> {
         let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - EAGER_SLOTS.ilog2())) as usize;
         let [expr, tag, checked, ty] = self.infer_slots[i];
@@ -487,10 +520,22 @@ impl Nbe<'_> {
         if cached && (infer_only || checked != 0) {
             return Ok(V(ty));
         }
+        self.infer_closed_miss(e, node, infer_only, i, cached.then_some(V(ty)))
+    }
+
+    #[inline(never)]
+    fn infer_closed_miss(
+        &mut self,
+        e: ExprId,
+        node: ExprNode,
+        infer_only: bool,
+        i: usize,
+        cached: Option<V>,
+    ) -> R<V> {
         let shared = !infer_only && !self.st.is_local_expr(e);
         let checked_before = shared && self.checked_closed.contains(&(e.0 as u64));
-        let ty = if cached && checked_before {
-            V(ty)
+        let ty = if let Some(ty) = cached.filter(|_| checked_before) {
+            ty
         } else {
             self.infer_complex(e, node, Env::NIL, Ls::ID, infer_only || checked_before)?
         };
@@ -590,6 +635,7 @@ impl Nbe<'_> {
 
     /// A constant's cache entry records whether its levels are closed.
     /// Read that entry before inspecting the levels.
+    #[inline(always)]
     fn infer_const_expr(
         &mut self,
         e: ExprId,
@@ -613,6 +659,19 @@ impl Nbe<'_> {
                 return Ok(V(ty));
             }
         }
+        self.infer_const_expr_miss(e, n, levels, ls, infer_only, i)
+    }
+
+    #[inline(never)]
+    fn infer_const_expr_miss(
+        &mut self,
+        e: ExprId,
+        n: NameId,
+        levels: LevelList,
+        ls: Ls,
+        infer_only: bool,
+        i: usize,
+    ) -> R<V> {
         if !self.st.list_has_param(levels) {
             let ty = self.infer_constant(n, levels, infer_only)?;
             self.infer_slots[i] = [e.0, NONE, u32::from(!infer_only), ty.0];
@@ -620,7 +679,10 @@ impl Nbe<'_> {
         }
         let levels = self.inst_list(levels, ls);
         let ty = self.infer_constant(n, levels, infer_only)?;
-        if check_identity && let Ok(params) = u32::try_from(self.lparams_key()) {
+        if ls == Ls::ID
+            && !infer_only
+            && let Ok(params) = u32::try_from(self.lparams_key())
+        {
             self.infer_slots[i] = [e.0, self.limit, params, ty.0];
         }
         Ok(ty)
@@ -754,6 +816,7 @@ impl Nbe<'_> {
 
     /// Check the argument `a` against its domain, trying syntax first for
     /// ordinary Π binders when that comparison is enabled.
+    #[inline(always)]
     fn check_arg(
         &mut self,
         a: ExprId,
@@ -775,12 +838,36 @@ impl Nbe<'_> {
             if self.syn_eq_term(at, d, pi_env, pi_ls) {
                 return Ok(());
             }
-            let dom = self.thunk(d, pi_env, pi_ls);
-            if !self.is_def_eq(at, dom)? {
-                return Err(self.arg_mismatch(a, node, env, ls, dom)?);
-            }
-            return Ok(());
+            return self.check_arg_def_eq(a, node, (env, ls), (d, pi_env, pi_ls), at);
         }
+        self.check_arg_against(a, node, (env, ls), (d, pi_env, pi_ls), eager)
+    }
+
+    #[inline(never)]
+    fn check_arg_def_eq(
+        &mut self,
+        a: ExprId,
+        node: ExprNode,
+        (env, ls): (Env, Ls),
+        (d, pi_env, pi_ls): (ExprId, Env, Ls),
+        at: V,
+    ) -> R<()> {
+        let dom = self.thunk(d, pi_env, pi_ls);
+        if !self.is_def_eq(at, dom)? {
+            return Err(self.arg_mismatch(a, node, env, ls, dom)?);
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn check_arg_against(
+        &mut self,
+        a: ExprId,
+        node: ExprNode,
+        (env, ls): (Env, Ls),
+        (d, pi_env, pi_ls): (ExprId, Env, Ls),
+        eager: bool,
+    ) -> R<()> {
         let dom = self.thunk(d, pi_env, pi_ls);
         let ok = if eager {
             let saved = std::mem::replace(&mut self.eager, true);
