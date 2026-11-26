@@ -101,6 +101,15 @@ fn at_mut<T>(v: &mut [T], i: usize) -> &mut T {
     unsafe { v.get_unchecked_mut(i) }
 }
 
+/// A direct-mapped table of `N` slots of `W` words, all `fill`: of fixed
+/// size, so that a masked index needs no bounds check.
+pub fn table<const W: usize, const N: usize>(fill: u32) -> Box<[[u32; W]; N]> {
+    vec![[fill; W]; N]
+        .into_boxed_slice()
+        .try_into()
+        .expect("N slots")
+}
+
 impl Val {
     #[inline]
     fn hash(&self) -> u32 {
@@ -253,13 +262,13 @@ pub struct Arena {
     /// The thunks of terms by their environment before it is trimmed
     /// (direct-mapped, in front of trimming and `vtable`): (term,
     /// environment, substitution, thunk).
-    thunks: Vec<[u32; 4]>,
+    thunks: Box<[[u32; 4]; THUNKS]>,
     /// Neutrals by head and spine contents, so that applying a neutral to
     /// arguments finds the result with one probe.
     nutable: HashTable<(u32, u32)>,
     /// Environments by their last entry and the rest (direct-mapped, in
     /// front of `envtable`): (rest, entry, environment).
-    conses: Vec<[u32; 3]>,
+    conses: Box<[[u32; 3]; CONSES]>,
 }
 
 /// Slots of `Arena::heads`.
@@ -301,9 +310,9 @@ impl Arena {
             }],
             lstable: HashTable::new(),
             heads: vec![(NONE, NONE, V(NONE)); HEADS],
-            thunks: vec![[NONE; 4]; THUNKS],
+            thunks: table(NONE),
             nutable: HashTable::new(),
-            conses: vec![[NONE; 3]; CONSES],
+            conses: table(NONE),
         }
     }
 
@@ -350,9 +359,9 @@ impl Arena {
             + self.sps.capacity() * 4
             + self.sptable.capacity() * 9
             + self.envs.capacity() * 17
-            + self.thunks.capacity() * 16
+            + self.thunks.len() * 16
             + self.nutable.capacity() * 9
-            + self.conses.capacity() * 12
+            + self.conses.len() * 12
             + self.envtable.capacity() * 9
     }
 
