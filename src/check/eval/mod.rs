@@ -243,6 +243,21 @@ const EAGER_PROOF_TERMS: bool = false;
 const MEMO_TRIAL: u32 = 32;
 const MEMO_RATIO: u32 = 32;
 
+/// Whether the memo's counts are kept from one declaration to the next (by
+/// constant name, per worker), so that a constant whose keys rarely hit is
+/// not tried again in every declaration. Only within an evaluation's first
+/// `MEMO_KEPT_STEPS` steps: a longer computation tries its constants anew
+/// (counts kept in its declaration's state), so a memo it needs, such as a
+/// recursion that would otherwise be exponential, is not lost to what
+/// short ones found.
+const MEMO_KEPT: bool = true;
+const MEMO_KEPT_STEPS: u64 = 1 << 14;
+
+thread_local! {
+    /// Per constant name: memo lookups and hits, while `MEMO_KEPT`.
+    static KEPT_MEMO: std::cell::RefCell<IdMap<NameId, (u32, u32)>> = Default::default();
+}
+
 /// What evaluation goes on with: a value, or a term to evaluate in place
 /// of the current one (a tail call).
 enum Next {
@@ -1021,23 +1036,40 @@ impl<'a, 'e> Machine<'a, 'e> {
         // as `whnf`'s cache shares it after substitution.
         // Building the key costs a term; constants whose keys
         // rarely hit are not memoized any more.
-        let st = self.s.memo.entry(c).or_default();
-        if st.0 >= MEMO_TRIAL && st.1 * MEMO_RATIO < st.0 {
+        let kept = match self.tc.st.node(c) {
+            ExprNode::Const(n, _) if MEMO_KEPT && self.s.steps < MEMO_KEPT_STEPS => Some(n),
+            _ => None,
+        };
+        let give_up = |st: &mut (u32, u32)| {
+            if st.0 >= MEMO_TRIAL && st.1 * MEMO_RATIO < st.0 {
+                return true;
+            }
+            st.0 += 1;
+            false
+        };
+        let skip = if let Some(n) = kept {
+            KEPT_MEMO.with_borrow_mut(|m| give_up(m.entry(n).or_default()))
+        } else {
+            give_up(self.s.memo.entry(c).or_default())
+        };
+        if skip {
             return self.apply_n(f, args);
         }
-        st.0 += 1;
-        self.memo_app(c, f, args)
+        self.memo_app(c, f, args, kept)
     }
 
     #[inline(never)]
-    fn memo_app(&mut self, c: ExprId, f: V, args: Vec<Th>) -> ER<Next> {
+    fn memo_app(&mut self, c: ExprId, f: V, args: Vec<Th>, kept: Option<NameId>) -> ER<Next> {
         let Some(key) = self.closed_app(c, &args) else {
             return self.apply_n(f, args);
         };
         let kt = self.closed(key);
-        let st = self.s.memo.entry(c).or_default();
         if let TState::Done(v) = &*kt.0.borrow() {
-            st.1 += 1;
+            if let Some(n) = kept {
+                KEPT_MEMO.with_borrow_mut(|m| m.entry(n).or_default().1 += 1);
+            } else {
+                self.s.memo.entry(c).or_default().1 += 1;
+            }
             return Ok(Next::V(v.clone()));
         }
         let v = self.apply(f, args)?;
