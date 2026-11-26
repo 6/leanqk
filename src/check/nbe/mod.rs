@@ -405,6 +405,13 @@ impl<'e> Nbe<'e> {
     /// flags that depend on them. Past a size (or
     /// this checker's share of memory), all of it goes.
     pub fn begin(&mut self, limit: u32) {
+        // Kept facts were established with every block before `self.limit`
+        // visible (some, such as the inferred types of constants, carry no
+        // prefix): a smaller prefix needs a new checker.
+        assert!(
+            limit >= self.limit,
+            "evaluating checker reused for an earlier prefix"
+        );
         self.end_scopes();
         self.st.reset_nat_unfold_work();
         if self.a.len() > KEEP_VALUES
@@ -1109,6 +1116,19 @@ mod tests {
 
     use super::*;
     use crate::env::Env;
+
+    /// What a checker keeps was learned with a prefix of the environment
+    /// visible; it is not used for a shorter one.
+    #[test]
+    #[should_panic(expected = "reused for an earlier prefix")]
+    fn begin_refuses_an_earlier_prefix() {
+        let env = Env::new();
+        let ext = Ext::with_decls(&env, &[]);
+        let mut nb = Nbe::new(Store::new(&env), &ext);
+        nb.begin(2);
+        nb.begin(2);
+        nb.begin(1);
+    }
 
     /// Out of room within an attempt or a probe, the next try of the
     /// declaration (`reset`) and the next declaration (`begin`) run with
