@@ -526,8 +526,8 @@ impl Builder {
     /// [`Builder::promote`] for a record since the last declaration line.
     /// Records come children first, so this needs no stack: a pass down
     /// from `i` marks the recent records it needs (until none is left to
-    /// find), and a pass up interns them. (An alias it needs is marked
-    /// too, and so is what it stands for; the pass up unmarks it.)
+    /// find), and a pass up interns them. (What an alias it needs stands
+    /// for is marked; the alias is unmarked as it is passed.)
     fn promote_recent(&mut self, env: &mut Env, append: bool, i: usize) -> R<ExprId> {
         let from = self.from;
         let recs = &mut self.recs;
@@ -555,7 +555,11 @@ impl Builder {
                         left += mark(recs, (r >> ID_BITS & ID_MASK) as u32);
                         left += mark(recs, (r & ID_MASK) as u32);
                     }
-                    T_ALIAS => left += mark(recs, (r & ID_MASK) as u32),
+                    T_ALIAS => {
+                        left += mark(recs, (r & ID_MASK) as u32);
+                        // Not interned itself: the pass up skips it.
+                        recs[j] = r & !NEEDED;
+                    }
                     T_LAM | T_PI => {
                         let [_, ty, body] = binder_side(&self.side, r);
                         left += mark(recs, ty);
@@ -586,10 +590,6 @@ impl Builder {
                     let f = self.arena_id(env, append, (r >> ID_BITS & ID_MASK) as u32)?;
                     let a = self.arena_id(env, append, (r & ID_MASK) as u32)?;
                     add_node(env, append, ExprNode::App(ExprId(f), ExprId(a)))?
-                }
-                T_ALIAS => {
-                    self.recs[x] = r;
-                    continue;
                 }
                 t @ (T_LAM | T_PI) => {
                     let [name, ty, body] = binder_side(&self.side, r);

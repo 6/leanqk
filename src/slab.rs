@@ -314,10 +314,15 @@ impl<T: Copy> Slab<T> {
     /// Push `v`, unless the slab is full (then false).
     #[inline]
     pub fn try_push(&mut self, v: T) -> bool {
-        if self.len >= CAP {
-            return false;
+        if self.len >= self.room {
+            if self.len >= CAP {
+                return false;
+            }
+            self.grow(self.len + 1);
         }
-        self.push(v);
+        // SAFETY: as in `push`.
+        unsafe { self.base.as_ptr().add(self.len).write(v) };
+        self.len += 1;
         true
     }
 
@@ -381,6 +386,33 @@ impl<T: Copy> Slab<T> {
     pub fn heap_bytes(&self) -> usize {
         self.len * size_of::<T>()
     }
+}
+
+/// Give the whole pages inside `b` back to the system: their bytes read
+/// as zeros from then on.
+pub fn release_pages(b: &mut [u8]) {
+    #[cfg(unix)]
+    {
+        // SAFETY: `sysconf` only reads a value.
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let Ok(page) = usize::try_from(page) else {
+            return;
+        };
+        if !page.is_power_of_two() {
+            return;
+        }
+        let start = b.as_mut_ptr() as usize;
+        let from = start.next_multiple_of(page);
+        let to = (start + b.len()) & !(page - 1);
+        if to > from {
+            // SAFETY: the pages are inside `b`, which is borrowed mutably
+            // (so nothing else reads them); private anonymous pages read as
+            // zeros after this, which every byte value allows.
+            unsafe { libc::madvise(from as *mut libc::c_void, to - from, libc::MADV_DONTNEED) };
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = b;
 }
 
 /// Reads a slab's elements by index: one load, unchecked (see the module

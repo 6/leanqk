@@ -510,20 +510,19 @@ impl<T: Node> Big<T> {
         let cap = n / BUCKETS + n / BUCKETS / 8 + 64;
         let mut fill = [0usize; BUCKETS];
         // The buckets' entries: hash (low and high halves) and id, in
-        // little-endian bytes. Each group is a map of its own, so that it
-        // goes back to the system when dropped (the allocator may keep a
-        // freed block a while).
-        let mut groups: [Group; GROUPS] = std::array::from_fn(|_| Group::new(PER * cap));
+        // little-endian bytes, in a map of their own, each group's pages
+        // given back to the system once its buckets are in the table.
+        let mut map = Entries::new(BUCKETS * cap);
         // Entries of a bucket that is full (and, below, those that would
         // go past the end of the table), inserted last.
         let mut spill = Vec::new();
-        let ents = groups.each_mut().map(|g| g.ents());
+        let ents = map.ents();
         for (id, node) in (0u32..).zip(nodes.as_slice()) {
             let h = node.hash();
             let b = (h as u32 >> (32 - BITS)) as usize;
             let k = fill[b];
             if k < cap {
-                ents[b / PER][(b % PER) * cap + k] = entry(h, id);
+                ents[b * cap + k] = entry(h, id);
                 fill[b] = k + 1;
             } else {
                 spill.push((h, id));
@@ -542,10 +541,9 @@ impl<T: Node> Big<T> {
         let mut added = 0usize;
         for (b, &k) in fill.iter().enumerate() {
             if b % PER == 0 && b > 0 {
-                groups[b / PER - 1] = Group::new(0);
+                map.release((b - PER) * cap..b * cap);
             }
-            let group = groups[b / PER].ents();
-            let bucket = &group[(b % PER) * cap..(b % PER) * cap + k];
+            let bucket = &map.ents()[b * cap..b * cap + k];
             // The slots this bucket can reach: from its last line on, `k`
             // at most.
             let end = ((((b as u64 + 1) << (32 - BITS)) * lines) >> 32) as usize + 1;
@@ -605,7 +603,7 @@ impl<T: Node> Big<T> {
             }
             added += k - (spill.len() - spilled);
         }
-        drop(groups);
+        drop(map);
         slots.resize_with(total, || AtomicU64::new(0));
         let mut table = IdTable {
             slots: slots.into_boxed_slice(),
@@ -653,20 +651,20 @@ fn equal_before<T: Node>(nodes: &Slab<T>, sorted: &[[u32; 3]], i: usize) -> Opti
     None
 }
 
-/// A group of buckets of [`Big::index`]: entries of 12 bytes.
-struct Group(Option<memmap2::MmapMut>);
+/// The buckets of [`Big::index`]: entries of 12 bytes.
+struct Entries(Option<memmap2::MmapMut>);
 
-impl Group {
-    fn new(entries: usize) -> Group {
+impl Entries {
+    fn new(entries: usize) -> Entries {
         if entries == 0 {
-            return Group(None);
+            return Entries(None);
         }
         let m = memmap2::MmapMut::map_anon(12 * entries)
             .unwrap_or_else(|e| panic!("cannot map {} bytes: {e}", 12 * entries));
         // Fewer page faults (where the system has huge pages).
         #[cfg(target_os = "linux")]
         let _ = m.advise(memmap2::Advice::HugePage);
-        Group(Some(m))
+        Entries(Some(m))
     }
 
     fn ents(&mut self) -> &mut [[u8; 12]] {
@@ -675,9 +673,16 @@ impl Group {
             None => &mut [],
         }
     }
+
+    /// Give back the pages of entries `r`, which are not read again.
+    fn release(&mut self, r: std::ops::Range<usize>) {
+        if let Some(m) = &mut self.0 {
+            crate::slab::release_pages(&mut m[12 * r.start..12 * r.end]);
+        }
+    }
 }
 
-/// An entry of a [`Group`]: the hash's low and high halves, and the id.
+/// An entry of [`Entries`]: the hash's low and high halves, and the id.
 #[inline(always)]
 fn entry(h: u64, id: u32) -> [u8; 12] {
     let mut e = [0; 12];
