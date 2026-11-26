@@ -777,40 +777,41 @@ impl Nbe<'_> {
         k
     }
 
+    /// Both sides come from core reduction or are prefixes of neutral values.
     fn lazy_delta_reduction_step(&mut self, t: &mut V, s: &mut V) -> R<Step> {
         self.tick()?;
         self.decl_steps = self.decl_steps.saturating_add(1);
-        let dt = self.is_delta(*t);
-        let ds = self.is_delta(*s);
+        let dt = self.delta_definition_forced(*t);
+        let ds = self.delta_definition_forced(*s);
         match (dt, ds) {
             (None, None) => return Ok(Step::Unknown),
             (Some(dt), None) => {
                 if let Some(s_r) = self.try_unfold_proj_app(*s)? {
                     *s = s_r;
                 } else {
-                    *t = self.unfold_cheap(*t, &dt)?;
+                    *t = self.unfold_cheap(*t, dt)?;
                 }
             }
             (None, Some(ds)) => {
                 if let Some(t_r) = self.try_unfold_proj_app(*t)? {
                     *t = t_r;
                 } else {
-                    *s = self.unfold_cheap(*s, &ds)?;
+                    *s = self.unfold_cheap(*s, ds)?;
                 }
             }
             (Some(dt), Some(ds)) => {
-                let c = compare_hints(decl_hints(&dt), decl_hints(&ds));
+                let c = compare_hints(decl_hints(dt), decl_hints(ds));
                 if c < 0 {
-                    *t = self.unfold_cheap(*t, &dt)?;
+                    *t = self.unfold_cheap(*t, dt)?;
                 } else if c > 0 {
-                    *s = self.unfold_cheap(*s, &ds)?;
+                    *s = self.unfold_cheap(*s, ds)?;
                 } else {
                     if let (Val::Const(_, lt, tsp), Val::Const(_, ls, ssp)) =
                         (self.a.get(*t), self.a.get(*s))
                         && tsp != Sp::NIL
                         && ssp != Sp::NIL
                         && dt.name == ds.name
-                        && matches!(decl_hints(&dt), Hints::Regular(_))
+                        && matches!(decl_hints(dt), Hints::Regular(_))
                         && self.pf(*t, *s) & EQ_FAIL == 0
                     {
                         if self.is_def_eq_levels(lt, ls) && self.is_def_eq_args(*t, *s)? {
@@ -822,10 +823,10 @@ impl Nbe<'_> {
                         && tsp != Sp::NIL
                         && ssp != Sp::NIL
                         && dt.name == ds.name
-                        && !matches!(decl_hints(&dt), Hints::Regular(_))
+                        && !matches!(decl_hints(dt), Hints::Regular(_))
                         && self.pf(*t, *s) & EQ_FAIL == 0
                         && self.is_def_eq_levels(lt, ls)
-                        && self.probe_worth(&dt, tsp, ssp)
+                        && self.probe_worth(dt, tsp, ssp)
                     {
                         // An abbreviation (an instance, a projection
                         // function): Lean unfolds both sides, but often
@@ -836,8 +837,8 @@ impl Nbe<'_> {
                         }
                         self.pset(*t, *s, EQ_FAIL);
                     }
-                    *t = self.unfold_cheap(*t, &dt)?;
-                    *s = self.unfold_cheap(*s, &ds)?;
+                    *t = self.unfold_cheap(*t, dt)?;
+                    *s = self.unfold_cheap(*s, ds)?;
                 }
             }
         }

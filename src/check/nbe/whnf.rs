@@ -21,7 +21,7 @@ const EVAL_AFTER: u64 = 4096;
 /// `whnf_closed`).
 const EVAL_IN_ATTEMPTS: bool = false;
 
-impl Nbe<'_> {
+impl<'e> Nbe<'e> {
     /// The value bound to the let-variable `k`, if it is one.
     #[inline]
     fn let_value(&self, k: u32) -> Option<V> {
@@ -532,11 +532,17 @@ impl Nbe<'_> {
     /// The definition at the head of `v`, if `v` can be unfolded.
     pub fn is_delta(&mut self, v: V) -> Option<Decl> {
         let v = self.force(v);
+        self.delta_definition_forced(v).copied()
+    }
+
+    /// The definition at the head of a value already forced by core reduction.
+    pub(super) fn delta_definition_forced(&self, v: V) -> Option<&'e Decl> {
+        debug_assert!(!self.a.r(v).is_thunk());
         self.delta_head(v).map(|(d, _, _)| d)
     }
 
     /// The definition, levels and spine of a forced delta redex.
-    fn delta_head(&self, v: V) -> Option<(Decl, LevelList, Sp)> {
+    fn delta_head(&self, v: V) -> Option<(&'e Decl, LevelList, Sp)> {
         let Val::Const(n, ls, sp) = self.a.get(v) else {
             return None;
         };
@@ -546,9 +552,9 @@ impl Nbe<'_> {
         self.delta_decl(n, ls).map(|d| (d, ls, sp))
     }
 
-    fn delta_decl(&self, n: NameId, ls: LevelList) -> Option<Decl> {
-        let d = self.find(n)?;
-        Self::decl_value(&d)?;
+    fn delta_decl(&self, n: NameId, ls: LevelList) -> Option<&'e Decl> {
+        let d = self.find_ref(n)?;
+        Self::decl_value(d)?;
         (self.st.list(ls).len() == d.level_params.len()).then_some(d)
     }
 
@@ -559,12 +565,12 @@ impl Nbe<'_> {
             return Some(V(m));
         }
         let (d, ls, sp) = self.delta_head(v)?;
-        self.unfold_delta(v, &d, ls, sp)
+        self.unfold_delta(v, d, ls, sp)
     }
 
-    /// Take the chosen lazy delta step using metadata validated by `is_delta`.
+    /// Take the chosen lazy delta step on a forced value with validated metadata.
     pub(super) fn unfold_cheap(&mut self, v: V, d: &Decl) -> R<V> {
-        let v = self.force(v);
+        debug_assert!(!self.a.r(v).is_thunk());
         let m = self.a.r(v).delta;
         let r = if m != NONE {
             V(m)
@@ -925,7 +931,7 @@ impl Nbe<'_> {
                 }
             }
             if super::cases::CASES_DIRECT
-                && let Some(n) = self.cases_direct(&d, ls, sp)?
+                && let Some(n) = self.cases_direct(d, ls, sp)?
             {
                 t = n;
                 continue;
@@ -933,7 +939,7 @@ impl Nbe<'_> {
             let m = self.a.r(t_l).delta;
             if m != NONE {
                 t = V(m);
-            } else if let Some(n) = self.unfold_delta(t_l, &d, ls, sp) {
+            } else if let Some(n) = self.unfold_delta(t_l, d, ls, sp) {
                 t = n;
             } else {
                 break t_l;

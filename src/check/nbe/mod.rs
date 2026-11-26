@@ -622,6 +622,11 @@ impl<'e> Nbe<'e> {
 
     /// The declaration named `n`, if it is visible.
     pub fn find(&self, n: NameId) -> Option<Decl> {
+        self.find_ref(n).copied()
+    }
+
+    #[inline]
+    fn find_ref(&self, n: NameId) -> Option<&'e Decl> {
         let env = self.st.env;
         let slot = &self.found[(n.0.wrapping_mul(0x9e37_79b9) >> (32 - FOUND_BITS)) as usize];
         let (k, i) = slot.get();
@@ -632,7 +637,7 @@ impl<'e> Nbe<'e> {
             slot.set((n.0, i));
             i
         };
-        (i < self.limit).then(|| *val::at(self.st.decls, i as usize))
+        (i < self.limit).then(|| val::at(self.st.decls, i as usize))
     }
 
     pub fn get(&self, n: NameId) -> R<Decl> {
