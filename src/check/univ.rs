@@ -57,13 +57,6 @@ pub fn normalizes_to_zero(st: &Store<'_>, l: LevelId) -> bool {
 
 /// Lean's simplifying `mk_max`.
 pub fn mk_max(st: &mut Store<'_>, l1: LevelId, l2: LevelId) -> LevelId {
-    if is_explicit(st, l1) && is_explicit(st, l2) {
-        return if to_offset(st, l1).1 >= to_offset(st, l2).1 {
-            l1
-        } else {
-            l2
-        };
-    }
     if l1 == l2 {
         return l1;
     }
@@ -93,10 +86,12 @@ pub fn mk_max(st: &mut Store<'_>, l1: LevelId, l2: LevelId) -> LevelId {
 
 /// Lean's simplifying `mk_imax`.
 pub fn mk_imax(st: &mut Store<'_>, l1: LevelId, l2: LevelId) -> LevelId {
-    let one = st.succ(LevelId::ZERO);
     if is_not_zero(st, l2) {
         mk_max(st, l1, l2)
-    } else if l2 == LevelId::ZERO || l1 == LevelId::ZERO || l1 == one {
+    } else if l2 == LevelId::ZERO
+        || l1 == LevelId::ZERO
+        || matches!(st.level(l1), LevelNode::Succ(LevelId::ZERO))
+    {
         l2
     } else if l1 == l2 {
         l1
@@ -179,26 +174,25 @@ pub const OWN_LEVELS: bool = true;
 
 /// Lean's `normalize`.
 pub fn normalize(st: &mut Store<'_>, l: LevelId) -> LevelId {
-    let (r, _) = to_offset(st, l);
-    if matches!(st.level(r), LevelNode::Zero | LevelNode::Param(_)) {
+    let (r, k) = to_offset(st, l);
+    let base = st.level(r);
+    if matches!(base, LevelNode::Zero | LevelNode::Param(_)) {
         return l;
     }
     if !NORM_MEMO {
-        return normalize_core(st, l);
+        return normalize_core(st, r, k, base);
     }
     if let Some(&n) = st.norm_memo.get(&l) {
         return n;
     }
-    let n = normalize_core(st, l);
+    let n = normalize_core(st, r, k, base);
     st.norm_memo.insert(l, n);
     n
 }
 
-fn normalize_core(st: &mut Store<'_>, l: LevelId) -> LevelId {
-    let (r, k) = to_offset(st, l);
-    match st.level(r) {
-        LevelNode::Succ(_) => unreachable!(),
-        LevelNode::Zero | LevelNode::Param(_) => l,
+fn normalize_core(st: &mut Store<'_>, r: LevelId, k: u32, base: LevelNode) -> LevelId {
+    match base {
+        LevelNode::Succ(_) | LevelNode::Zero | LevelNode::Param(_) => unreachable!(),
         LevelNode::IMax(a, b) => {
             let l1 = normalize(st, a);
             let l2 = normalize(st, b);
@@ -206,15 +200,18 @@ fn normalize_core(st: &mut Store<'_>, l: LevelId) -> LevelId {
             mk_succ_n(st, i, k)
         }
         LevelNode::Max(..) => {
-            let mut todo = Vec::new();
-            push_max_args(st, r, &mut todo);
             let mut args = Vec::new();
-            for a in todo {
-                let na = normalize(st, a);
-                push_max_args(st, na, &mut args);
+            push_max_args(st, r, &mut args);
+            // Keep one leaf in each original slot and append any others.
+            for i in 0..args.len() {
+                let mut l = normalize(st, args[i]);
+                while let LevelNode::Max(a, b) = st.level(l) {
+                    push_max_args(st, b, &mut args);
+                    l = a;
+                }
+                args[i] = l;
             }
             args.sort_by(|&a, &b| norm_cmp(st, a, b));
-            let mut rargs = Vec::new();
             let mut i = 0;
             if is_explicit(st, args[i]) {
                 while i + 1 < args.len() && is_explicit(st, args[i + 1]) {
@@ -232,27 +229,28 @@ fn normalize_core(st: &mut Store<'_>, l: LevelId) -> LevelId {
                     i += 1;
                 }
             }
-            rargs.push(args[i]);
-            let mut prev = to_offset(st, args[i]);
-            i += 1;
-            while i < args.len() {
-                let cur = to_offset(st, args[i]);
+            args[0] = args[i];
+            let mut prev = to_offset(st, args[0]);
+            let mut used = 1;
+            for i in i + 1..args.len() {
+                let arg = args[i];
+                let cur = to_offset(st, arg);
                 if prev.0 == cur.0 {
                     if prev.1 < cur.1 {
                         prev = cur;
-                        rargs.pop();
-                        rargs.push(args[i]);
+                        args[used - 1] = arg;
                     }
                 } else {
                     prev = cur;
-                    rargs.push(args[i]);
+                    args[used] = arg;
+                    used += 1;
                 }
-                i += 1;
             }
-            for a in rargs.iter_mut() {
+            let args = &mut args[..used];
+            for a in args.iter_mut() {
                 *a = mk_succ_n(st, *a, k);
             }
-            mk_max_list(st, &rargs)
+            mk_max_list(st, args)
         }
     }
 }
@@ -293,6 +291,9 @@ fn geq_core(st: &mut Store<'_>, l1: LevelId, l2: LevelId) -> bool {
 
 /// Lean's `is_geq`: `l1 ≥ l2`.
 pub fn geq(st: &mut Store<'_>, l1: LevelId, l2: LevelId) -> bool {
+    if l1 == l2 || l2 == LevelId::ZERO {
+        return true;
+    }
     let a = normalize(st, l1);
     let b = normalize(st, l2);
     geq_core(st, a, b)
@@ -360,11 +361,23 @@ pub(super) fn instantiate_list(
     if !st.list_has_param(ll) {
         return ll;
     }
-    let mut levels = st.list(ll).to_vec();
-    for l in &mut levels {
-        *l = instantiate_level(st, *l, replacement);
+    let original = st.list(ll);
+    let mut short = [LevelId::ZERO; 4];
+    let mut long;
+    let levels = if let Some(buf) = short.get_mut(..original.len()) {
+        buf.copy_from_slice(original);
+        buf
+    } else {
+        long = original.to_vec();
+        &mut long
+    };
+    let mut changed = false;
+    for l in levels.iter_mut() {
+        let new = instantiate_level(st, *l, replacement);
+        changed |= new != *l;
+        *l = new;
     }
-    st.mk_list(&levels)
+    if changed { st.mk_list(levels) } else { ll }
 }
 
 /// An exact decision procedure for `l1 ≤ l2` over all assignments, used
