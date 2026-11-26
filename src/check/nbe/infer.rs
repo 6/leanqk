@@ -189,47 +189,56 @@ impl Nbe<'_> {
             Val::Const(n, l, sp) => {
                 let d = self.get(n)?;
                 let t = self.const_type(&d, l);
-                let h = self.cnst(n, l);
-                self.apply_type(h, t, sp)?
+                self.apply_type(v, t, sp)?
             }
             Val::FVar(k, sp) => {
                 if k == BOTTOM {
                     return err("ill-typed term met during reduction");
                 }
                 let t = self.fvars[k as usize].ty;
-                let h = self.a.mk(Val::FVar(k, Sp::NIL));
-                self.apply_type(h, t, sp)?
+                self.apply_type(v, t, sp)?
             }
         };
         self.a.rm(v).ty = r.0;
         Ok(r)
     }
 
-    /// The type of `head` applied to the eliminations of `sp`, given the
-    /// type `t` of `head`.
-    fn apply_type(&mut self, head: V, mut t: V, sp: Sp) -> R<V> {
+    /// The type of the neutral `v` with spine `sp`, given the type of its head.
+    fn apply_type(&mut self, v: V, mut t: V, sp: Sp) -> R<V> {
         if sp == Sp::NIL {
             return Ok(t);
         }
-        let mut es = self.take_elims();
-        self.a.elims(sp, &mut es);
-        let mut cur = head;
-        let mut i = 0;
-        while i < es.len() {
-            match es[i] {
+        let mut last_proj = None;
+        for i in 0..self.a.sp_len(sp) {
+            match self.a.sp_elim(sp, i) {
                 Elim::Arg(a) => {
                     t = self.ensure_pi(t)?;
                     t = self.instantiate(t, a)?;
-                    cur = self.apply(cur, a);
                 }
                 Elim::Proj(s, j) => {
+                    // A projection can use the value of its prefix in the
+                    // field type. Replay from the last projection, which may
+                    // have reduced to a constructor field.
+                    let cur = if let Some((mut cur, start)) = last_proj {
+                        for k in start..i {
+                            let e = self.a.sp_elim(sp, k);
+                            cur = self.apply_elim(cur, e);
+                        }
+                        cur
+                    } else {
+                        let prefix = self.a.sp_prefix(sp, i);
+                        let head = match self.a.get(v) {
+                            Val::Const(n, ls, _) => Val::Const(n, ls, prefix),
+                            Val::FVar(k, _) => Val::FVar(k, prefix),
+                            _ => unreachable!(),
+                        };
+                        self.a.mk(head)
+                    };
                     t = self.proj_type(cur, t, s, j)?;
-                    cur = self.proj(cur, s, j);
+                    last_proj = Some((cur, i));
                 }
             }
-            i += 1;
         }
-        self.put_elims(es);
         Ok(t)
     }
 
