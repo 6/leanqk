@@ -122,7 +122,7 @@ impl Nbe<'_> {
             } else {
                 self.read_tuple(env, n, holes)
             };
-            let h = hash2(e.0 as u64 | (ls2.0 as u64) << 32, t as u64);
+            let h = crate::hash::hash_front(e.0 as u64 | (ls2.0 as u64) << 32, t as u64);
             return Some(Key {
                 h: (h >> 32) as u32,
                 head: [e.0, ls2.0, val::NONE, t, 0, 0],
@@ -162,7 +162,7 @@ impl Nbe<'_> {
         }
         let base = self.vargs.len();
         let mut cur = env;
-        let mut h = hash2(n as u64, holes);
+        let mut h = crate::hash::hash_front(n as u64, holes);
         for j in 0..n {
             if j >= 64 || holes >> j & 1 == 0 {
                 let v = self.a.env_head(cur);
