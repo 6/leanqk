@@ -1927,15 +1927,26 @@ impl State {
         }
     }
 
+    /// Intern the text at `a..b` of `src`.
+    fn intern_text(&mut self, src: Src<'_>, a: u32, b: u32) -> R<crate::strings::StrId> {
+        match self
+            .env
+            .names
+            .strings
+            .intern_bytes(&src.text[a as usize..b as usize])
+        {
+            Some(id) => Ok(id?),
+            None => bad("internal error: item text is not UTF-8"),
+        }
+    }
+
     /// Resolve and intern a name, level or expression item.
     fn apply(&mut self, src: Src<'_>, item: Item) -> R<()> {
         match item {
             Item::Name { id, pre, comp } => {
                 let pre = self.name(pre)?;
                 let node = match comp {
-                    Comp::Str(a, b) => {
-                        NameNode::Str(pre, self.env.names.strings.intern(src.text(a, b)?)?)
-                    }
+                    Comp::Str(a, b) => NameNode::Str(pre, self.intern_text(src, a, b)?),
                     Comp::Num(n) => NameNode::Num(pre, n),
                 };
                 let n = if self.append {
@@ -2141,7 +2152,7 @@ impl State {
                 };
                 self.env.exprs.nat_node(n)?
             }
-            RawExpr::Str(a, b) => ExprNode::Str(self.env.names.strings.intern(src.text(a, b)?)?),
+            RawExpr::Str(a, b) => ExprNode::Str(self.intern_text(src, a, b)?),
             RawExpr::MData(inner) => {
                 // Metadata is kernel-irrelevant: bind the id to the inner
                 // expression.

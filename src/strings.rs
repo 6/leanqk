@@ -154,7 +154,34 @@ impl StrPool {
     }
 
     pub fn intern(&mut self, s: &str) -> Result<StrId, Overflow> {
-        let h = hash_bytes(s.as_bytes());
+        self.intern_hashed(hash_bytes(s.as_bytes()), s)
+    }
+
+    /// [`StrPool::intern`] for bytes, or `None` if they are not UTF-8.
+    /// (Bytes equal to a string here are UTF-8, so only new ones are
+    /// checked.)
+    pub fn intern_bytes(&mut self, s: &[u8]) -> Option<Result<StrId, Overflow>> {
+        let h = hash_bytes(s);
+        if self
+            .late
+            .as_ref()
+            .is_none_or(|l| l.next.load(Ordering::Relaxed) == 0)
+        {
+            let Self {
+                bytes, ends, table, ..
+            } = self;
+            if let Some(&id) = table.find(h, |&id| {
+                let i = id as usize;
+                let start = if i == 0 { 0 } else { ends[i - 1] as usize };
+                &bytes.as_bytes()[start..ends[i] as usize] == s
+            }) {
+                return Some(Ok(StrId(id)));
+            }
+        }
+        Some(self.intern_hashed(h, std::str::from_utf8(s).ok()?))
+    }
+
+    fn intern_hashed(&mut self, h: u64, s: &str) -> Result<StrId, Overflow> {
         assert!(
             self.late
                 .as_ref()

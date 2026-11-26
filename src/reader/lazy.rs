@@ -909,50 +909,11 @@ impl Builder {
         }
         let threads = threads.clamp(1, n.div_ceil(MIN_RANGE).max(1));
         let (out, out_side, fwd) = if threads == 1 {
-            let mut fwd: Zeroed<u32> = Zeroed::new(n);
-            let mut out = Zeroed::new(n);
-            let mut out_side = Zeroed::new(side.len() + if wide { 2 * n } else { 0 });
-            let mut part = SidePart {
-                words: &mut out_side,
-                used: 0,
-                base: 0,
-            };
-            let mut k = 0usize;
-            // Side records come in the order of their records: those
-            // below `side_done` are passed.
-            let (mut side_done, mut side_from) = (0, 0);
-            for lo in (0..n).step_by(RELEASE) {
-                let hi = (lo + RELEASE).min(n);
-                for i in lo..hi {
-                    let r = recs[i];
-                    let e = if r & DONE != 0 {
-                        ARENA | r as u32
-                    } else if tag(r) == T_ALIAS {
-                        fwd[(r & ID_MASK) as usize]
-                    } else {
-                        let t = tag(r);
-                        out[k] = if t == T_APP && !wide {
-                            let f = fwd[(r >> ID_BITS & ID_MASK) as usize];
-                            stored_app(f, fwd[(r & ID_MASK) as usize])
-                        } else {
-                            if t != T_APP {
-                                side_done = r as u32 as usize;
-                            }
-                            stored(&side, 0, r, wide, &mut part, |c| fwd[c as usize])
-                        };
-                        k += 1;
-                        k as u32 - 1
-                    };
-                    fwd[i] = e;
-                }
-                crate::slab::release(&mut recs[lo.saturating_sub(RELEASE_MARGIN)..hi]);
-                crate::slab::release(&mut side[side_from..side_done]);
-                side_from = side_done.saturating_sub(2 * RELEASE_MARGIN);
+            if wide {
+                into_stored_here::<true>(&mut recs, &mut side)
+            } else {
+                into_stored_here::<false>(&mut recs, &mut side)
             }
-            let used = part.used;
-            out.truncate(k);
-            out_side.truncate(used);
-            (out, out_side, fwd)
         } else {
             into_stored_par(&mut recs, &mut side, threads, wide)
         };
@@ -982,6 +943,59 @@ impl Builder {
             starts,
         }
     }
+}
+
+/// [`Builder::into_stored`] on this thread (`WIDE` as there).
+fn into_stored_here<const WIDE: bool>(
+    recs: &mut [u64],
+    side: &mut [u32],
+) -> (Zeroed<u64>, Zeroed<u32>, Zeroed<u32>) {
+    let n = recs.len();
+    let mut fwd: Zeroed<u32> = Zeroed::new(n);
+    let mut out = Zeroed::new(n);
+    let mut out_side = Zeroed::new(side.len() + if WIDE { 2 * n } else { 0 });
+    let mut part = SidePart {
+        words: &mut out_side,
+        used: 0,
+        base: 0,
+    };
+    let (fw, o) = (&mut fwd[..], &mut out[..]);
+    let mut k = 0usize;
+    // Side records come in the order of their records: those below
+    // `side_done` are passed.
+    let (mut side_done, mut side_from) = (0, 0);
+    for lo in (0..n).step_by(RELEASE) {
+        let hi = (lo + RELEASE).min(n);
+        for i in lo..hi {
+            let r = recs[i];
+            let e = if r & DONE != 0 {
+                ARENA | r as u32
+            } else if tag(r) == T_ALIAS {
+                fw[(r & ID_MASK) as usize]
+            } else {
+                let t = tag(r);
+                o[k] = if t == T_APP && !WIDE {
+                    let f = fw[(r >> ID_BITS & ID_MASK) as usize];
+                    stored_app(f, fw[(r & ID_MASK) as usize])
+                } else {
+                    if t != T_APP {
+                        side_done = r as u32 as usize;
+                    }
+                    stored(side, 0, r, WIDE, &mut part, |c| fw[c as usize])
+                };
+                k += 1;
+                k as u32 - 1
+            };
+            fw[i] = e;
+        }
+        crate::slab::release(&mut recs[lo.saturating_sub(RELEASE_MARGIN)..hi]);
+        crate::slab::release(&mut side[side_from..side_done]);
+        side_from = side_done.saturating_sub(2 * RELEASE_MARGIN);
+    }
+    let used = part.used;
+    out.truncate(k);
+    out_side.truncate(used);
+    (out, out_side, fwd)
 }
 
 /// Whether record `r` stays in the stored table: compound, not interned.
@@ -1479,26 +1493,50 @@ impl Stored {
         let (recs, side) = (&self.recs, &self.side);
         let keep = sink.keeps_shared();
         s.own.clear();
+        let kid =
+            |c, sink: &mut dyn TermSink, s: &mut Scratch| self.own_kid(c, start, keep, sink, s);
+        // Records of the value's own declaration are taken as used by it
+        // alone (one that a later value uses too is built there again, by
+        // `build`, hash-consed).
         for &r in &recs[start as usize..=root as usize] {
-            let n = decode_stored(side, r);
-            let (kids, k) = n.kids();
-            let mut ids = [ExprId(0); 3];
-            for (&c, id) in kids[..k].iter().zip(&mut ids) {
-                *id = if c & ARENA != 0 {
-                    let a = ExprId(c & !ARENA);
-                    if keep { a } else { sink.shared_expr(a) }
-                } else if c >= start {
-                    ExprId(s.own[(c - start) as usize])
-                } else {
-                    self.build(c, sink, &mut s.memo, &mut s.stack)?
-                };
-            }
-            // Records of the value's own declaration are taken as used by
-            // it alone (one that a later value uses too is built there
-            // again, by `build`, hash-consed).
-            s.own.push(make(sink, n, ids, true, keep).0);
+            let id = match decode_stored(side, r) {
+                Node::App(f, a) => {
+                    let (f, a) = (kid(f, sink, s)?, kid(a, sink, s)?);
+                    sink.expr_owned(ExprNode::App(f, a))
+                }
+                n => {
+                    let (kids, k) = n.kids();
+                    let mut ids = [ExprId(0); 3];
+                    for (&c, id) in kids[..k].iter().zip(&mut ids) {
+                        *id = kid(c, sink, s)?;
+                    }
+                    make(sink, n, ids, true, keep)
+                }
+            };
+            s.own.push(id.0);
         }
         Ok(ExprId(*s.own.last().expect("the root")))
+    }
+
+    /// The sink's id for child `c` of a record in [`Stored::build_own`]
+    /// (its value's records being from `start` on).
+    #[inline(always)]
+    fn own_kid(
+        &self,
+        c: u32,
+        start: u32,
+        keep: bool,
+        sink: &mut dyn TermSink,
+        s: &mut Scratch,
+    ) -> Result<ExprId, String> {
+        if c & ARENA != 0 {
+            let a = ExprId(c & !ARENA);
+            Ok(if keep { a } else { sink.shared_expr(a) })
+        } else if c >= start {
+            Ok(ExprId(s.own[(c - start) as usize]))
+        } else {
+            self.build(c, sink, &mut s.memo, &mut s.stack)
+        }
     }
 
     fn build(

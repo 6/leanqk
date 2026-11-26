@@ -378,6 +378,8 @@ impl C<'_> {
         const ONES: u64 = 0x0101_0101_0101_0101;
         const HIGH: u64 = 0x8080_8080_8080_8080;
         let zero = |x: u64| x.wrapping_sub(ONES) & !x & HIGH;
+        // The high bits of the bytes passed: all clear if they are ASCII.
+        let mut high = 0;
         loop {
             if self.p >= MASK {
                 return None;
@@ -387,9 +389,13 @@ impl C<'_> {
                 | zero(x ^ (b'"' as u64 * ONES))
                 | zero(x ^ (b'\\' as u64 * ONES));
             if t == 0 {
+                high |= x;
                 self.p += 8;
                 continue;
             }
+            // (The bytes up to the first flagged one, which is not
+            // passed but is ASCII if it ends the string.)
+            high |= x & (t ^ (t - 1));
             self.p += (t.trailing_zeros() / 8) as usize;
             if self.at(0) != b'"' {
                 return None;
@@ -399,7 +405,7 @@ impl C<'_> {
         let end = self.p;
         self.p += 1;
         let text = self.s.get(start..end)?;
-        if !text.is_ascii() {
+        if high & HIGH != 0 {
             std::str::from_utf8(text).ok()?;
         }
         Some((u32::try_from(start).ok()?, u32::try_from(end).ok()?))

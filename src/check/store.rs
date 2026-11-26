@@ -489,7 +489,12 @@ impl<'e> Store<'e> {
     /// `node` with an id of its own, not looked up or indexed (see
     /// [`crate::env::TermSink::expr_owned`]).
     pub fn mk_owned(&mut self, node: ExprNode) -> ExprId {
-        let d = self.data_of(node);
+        // (Applications, the most common, without a call.)
+        let d = if let ExprNode::App(f, a) = node {
+            self.data(f).union(self.data(a))
+        } else {
+            self.data_of(node)
+        };
         self.push_local(node, d)
     }
 
