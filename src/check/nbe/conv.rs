@@ -1511,7 +1511,7 @@ impl Nbe<'_> {
                     return false;
                 }
                 return match self.a.lookup(e_l, i - k_l) {
-                    Some(x) => self.syn_eq_vt_loaded::<false>(
+                    Some(x) => self.syn_eq_vt_loaded::<false, false>(
                         x,
                         t_r,
                         n_r,
@@ -1529,7 +1529,7 @@ impl Nbe<'_> {
                     return false;
                 }
                 return match self.a.lookup(e_r, j - k_r) {
-                    Some(y) => self.syn_eq_vt_loaded::<true>(
+                    Some(y) => self.syn_eq_vt_loaded::<true, false>(
                         y,
                         t_l,
                         n_l,
@@ -1591,14 +1591,15 @@ impl Nbe<'_> {
         l: super::val::Ls,
     ) -> bool {
         let mut budget = SYN_BUDGET;
-        self.syn_eq_vt_loaded::<false>(x, t, self.st.node(t), e, l, 0, &mut budget)
+        self.syn_eq_vt_loaded::<false, true>(x, t, self.st.node(t), e, l, 0, &mut budget)
     }
 
     /// The value `x` (outside every binder) against the term `t` in `e`
-    /// under `k` binders: `t` may not use those binders.
+    /// under `k` binders: `t` may not use those binders. A comparison
+    /// started outside binders keeps that depth down the mixed spine.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
-    fn syn_eq_vt_loaded<const FLIP: bool>(
+    fn syn_eq_vt_loaded<const FLIP: bool, const OUTSIDE: bool>(
         &mut self,
         x: V,
         t: crate::expr::ExprId,
@@ -1608,6 +1609,7 @@ impl Nbe<'_> {
         k: u32,
         budget: &mut u32,
     ) -> bool {
+        let k = if OUTSIDE { 0 } else { k };
         if *budget == 0 {
             return false;
         }
@@ -1632,13 +1634,13 @@ impl Nbe<'_> {
                 | ExprNode::Pi(..)
                 | ExprNode::Let(..)
         ) {
-            return self.syn_eq_vt_node::<FLIP>(x, t, node, e, l, k, budget);
+            return self.syn_eq_vt_node::<FLIP, OUTSIDE>(x, t, node, e, l, k, budget);
         }
-        self.syn_eq_vt_memo::<FLIP>(x, t, node, e, l, k, budget)
+        self.syn_eq_vt_memo::<FLIP, OUTSIDE>(x, t, node, e, l, k, budget)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn syn_eq_vt_memo<const FLIP: bool>(
+    fn syn_eq_vt_memo<const FLIP: bool, const OUTSIDE: bool>(
         &mut self,
         x: V,
         t: crate::expr::ExprId,
@@ -1648,6 +1650,7 @@ impl Nbe<'_> {
         k: u32,
         budget: &mut u32,
     ) -> bool {
+        let k = if OUTSIDE { 0 } else { k };
         // Term pairs have a binder depth bounded by SYN_BUDGET in word 6.
         // Reserve u32::MAX there for value–term pairs.
         let key = [x.0, t.0, e.0, l.0, k, u32::from(FLIP), u32::MAX];
@@ -1661,7 +1664,7 @@ impl Nbe<'_> {
             return entry[7] != 0;
         }
         let before = *budget;
-        let equal = self.syn_eq_vt_node::<FLIP>(x, t, node, e, l, k, budget);
+        let equal = self.syn_eq_vt_node::<FLIP, OUTSIDE>(x, t, node, e, l, k, budget);
         // An exhausted budget can make a negative result inconclusive.
         if equal || (before - *budget >= 2 && *budget > 0) {
             let mut entry = [0; 8];
@@ -1673,7 +1676,7 @@ impl Nbe<'_> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn syn_eq_vt_node<const FLIP: bool>(
+    fn syn_eq_vt_node<const FLIP: bool, const OUTSIDE: bool>(
         &mut self,
         x: V,
         t: crate::expr::ExprId,
@@ -1683,6 +1686,7 @@ impl Nbe<'_> {
         k: u32,
         budget: &mut u32,
     ) -> bool {
+        let k = if OUTSIDE { 0 } else { k };
         let head = self.a.get(x);
         let head = if matches!(head, Val::Thunk(..)) {
             let forced = self.forced_or(x);
@@ -1724,7 +1728,7 @@ impl Nbe<'_> {
                                 return false;
                             }
                             let arg = self.st.node(a);
-                            if !self.syn_eq_vt_loaded::<FLIP>(y, a, arg, e, l, k, budget) {
+                            if !self.syn_eq_vt_loaded::<FLIP, OUTSIDE>(y, a, arg, e, l, k, budget) {
                                 return false;
                             }
                             node = self.st.node(f);
