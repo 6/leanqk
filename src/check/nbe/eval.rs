@@ -7,10 +7,25 @@ use crate::name::NameId;
 
 use super::val::{Elim, Env, Ls, Sp, V, Val};
 use super::{BOTTOM, Nbe};
+use crate::hash::hash2;
 
 /// How many first-order applications inside one another an argument is
 /// evaluated through before the rest is left as thunks (see `thunk`).
 const EAGER_DEPTH: u32 = 16;
+
+/// Whether `thunk` evaluates every application, projection and `let` now
+/// (within `EAGER_DEPTH`), not only first-order applications: their values
+/// are almost always asked for, and a value made now is found by its
+/// contents where a thunk is found only by its term and environment.
+const EAGER_ALL: bool = true;
+
+/// Whether what `thunk` evaluates at once is remembered by the entries of
+/// the environment the term reads (`eager`), not through a thunk.
+const EAGER_MEMO: bool = true;
+
+/// Past this many environment entries in range, `eager` goes through a
+/// thunk instead.
+const EAGER_MEMO_RANGE: u32 = 32;
 
 impl Nbe<'_> {
     /// The value of `e` with its loose bound variables given by `env` and
@@ -96,9 +111,10 @@ impl Nbe<'_> {
             | ExprNode::NatBig(_)
             | ExprNode::Str(_)
             | ExprNode::FVar(_) => self.eval(e, env, ls),
-            // A first-order application evaluates to a neutral without
-            // reducing anything: build it now, so that the same term reached
-            // in different environments is the same value.
+            // Evaluated now (see `EAGER_ALL`); a first-order application
+            // evaluates to a neutral without reducing anything, so that the
+            // same term reached in different environments is the same value.
+            _ if EAGER_MEMO && self.eager_depth < EAGER_DEPTH => self.eager(e, env, ls),
             _ => {
                 let t = self.thunk_value(e, env, ls);
                 let f = self.a.r(t).forced;
@@ -106,8 +122,9 @@ impl Nbe<'_> {
                     return V(f);
                 }
                 if self.eager_depth < EAGER_DEPTH
-                    && matches!(self.st.node(e), ExprNode::App(..))
-                    && self.neutral_head(e, env)
+                    && (EAGER_ALL
+                        || matches!(self.st.node(e), ExprNode::App(..))
+                            && self.neutral_head(e, env))
                 {
                     // Memoized through the thunk: terms are DAGs. Only so
                     // deep, so that a long first-order term rebuilt in many
@@ -120,6 +137,53 @@ impl Nbe<'_> {
                 t
             }
         }
+    }
+
+    /// The value of `e` in `env` under `ls`, evaluated now, remembered by
+    /// the entries of `env` that `e` reads (no thunk is made, and no
+    /// environment is cut).
+    fn eager(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+        let sh = hash2(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
+        let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
+        let s = self.eager_slots[si];
+        if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
+            return V(s[3]);
+        }
+        let d = self.st.data(e);
+        let n = d.loose_bvar_range().min(self.a.env_len(env));
+        if n > EAGER_MEMO_RANGE {
+            // Deep: through a thunk, whose environment is cut once.
+            let t = self.thunk_value(e, env, ls);
+            let f = self.a.r(t).forced;
+            if f != super::val::NONE {
+                return V(f);
+            }
+            self.eager_depth += 1;
+            let v = self.force(t);
+            self.eager_depth -= 1;
+            return v;
+        }
+        let key = self
+            .memo_key(e, env, ls, d.unused_low() as u64, EAGER_MEMO_RANGE)
+            .expect("in range");
+        let (i, found) = Self::memo_find_or_add(
+            &mut self.vargs,
+            &mut self.eager_memo,
+            key,
+            [super::val::NONE],
+        );
+        let known = self.eager_memo.get(i)[0];
+        let v = if found && known != super::val::NONE {
+            V(known)
+        } else {
+            self.eager_depth += 1;
+            let v = self.eval(e, env, ls);
+            self.eager_depth -= 1;
+            self.eager_memo.set(i, 0, v.0);
+            v
+        };
+        self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+        v
     }
 
     /// The thunk of `e` in `env` (trimmed to what `e` may use) under `ls`.

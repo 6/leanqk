@@ -19,6 +19,7 @@ mod conv;
 mod eval;
 mod infer;
 mod lsub;
+mod memo;
 mod readback;
 pub mod val;
 mod whnf;
@@ -72,6 +73,9 @@ const PRUNE: bool = true;
 /// substitution, right ones, depth, outcome)).
 const SYN_T: usize = 1 << 12;
 
+/// Slots of `Nbe::eager_slots`.
+pub(super) const EAGER_SLOTS: usize = 1 << 14;
+
 /// Slots of `Nbe::prunes`.
 const PRUNES: usize = 1 << 12;
 
@@ -98,6 +102,24 @@ pub struct Nbe<'e> {
     pub fvars: Vec<FVarInfo>,
     bigs: Vec<BigUint>,
     big_table: HashTable<u32>,
+    /// A direct-mapped front of `eager_memo`: (term, environment,
+    /// substitution, value).
+    pub(super) eager_slots: Vec<[u32; 4]>,
+    /// Values of terms evaluated by `thunk` at once (`eager`).
+    pub(super) eager_memo: memo::EnvMemo<1>,
+    /// Lists of values read from environments (`read_tuple`).
+    pub(super) tuples: memo::EnvMemo<0>,
+    /// A direct-mapped front of `tuples`: (environment, range, holes (two
+    /// words), id).
+    pub(super) tuple_slots: Vec<[u32; 5]>,
+    /// Types of terms (`infer_term`): the type, and whether checked.
+    pub(super) infer_memo: memo::EnvMemo<2>,
+    /// A direct-mapped front of `infer_memo`: (term, environment,
+    /// substitution, entry).
+    pub(super) infer_slots: Vec<[u32; 4]>,
+    /// Entries of `infer_memo` checked under the declaration's universe
+    /// parameters, as `level_checked`.
+    pub(super) level_checked_memo: Vec<usize>,
     level_cache: lsub::Lsub<(LevelId, Ls), LevelId>,
     list_cache: lsub::Lsub<(LevelList, Ls), LevelList>,
     /// Universe parameter lists by their names (see `lsub::ParamClasses`).
@@ -258,6 +280,13 @@ impl<'e> Nbe<'e> {
             fvars: Vec::new(),
             bigs: Vec::new(),
             big_table: HashTable::new(),
+            eager_slots: vec![[val::NONE; 4]; EAGER_SLOTS],
+            eager_memo: Default::default(),
+            tuples: Default::default(),
+            tuple_slots: vec![[val::NONE; 5]; memo::TUPLE_SLOTS],
+            infer_memo: Default::default(),
+            infer_slots: vec![[val::NONE; 4]; EAGER_SLOTS],
+            level_checked_memo: Vec::new(),
             level_cache: Default::default(),
             list_cache: Default::default(),
             param_classes: Default::default(),
@@ -342,6 +371,9 @@ impl<'e> Nbe<'e> {
         self.open_count.clear();
         for v in self.level_checked.drain(..) {
             self.a.clear_checked(v);
+        }
+        for i in self.level_checked_memo.drain(..) {
+            self.infer_memo.set(i, 1, 0);
         }
         self.fresh = self.a.is_empty();
     }
@@ -452,6 +484,13 @@ impl<'e> Nbe<'e> {
         self.a.clear();
         self.prunes.fill([val::NONE; 3]);
         self.trim_holes_memo.fill([val::NONE; 4]);
+        self.eager_slots.fill([val::NONE; 4]);
+        self.eager_memo.clear();
+        self.tuples.clear();
+        self.tuple_slots.fill([val::NONE; 5]);
+        self.infer_memo.clear();
+        self.infer_slots.fill([val::NONE; 4]);
+        self.level_checked_memo.clear();
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;
