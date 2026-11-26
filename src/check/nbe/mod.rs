@@ -84,7 +84,7 @@ pub(super) const INFER_SLOTS: usize = 1 << 14;
 pub(super) const BINDER_SLOTS: usize = 1 << 14;
 
 /// Slots of `Nbe::eager_direct`.
-pub(super) const EAGER_DIRECT_SLOTS: usize = 1 << 16;
+pub(super) const EAGER_DIRECT_SLOTS: usize = 1 << 14;
 
 /// Slots of `Nbe::prunes`.
 const PRUNES: usize = 1 << 12;
