@@ -2,13 +2,13 @@
 //! `type_checker.cpp` step by step.
 
 use crate::env::{DeclKind, Hints};
-use crate::expr::ExprNode;
+use crate::expr::{ExprData, ExprNode};
 use crate::level::{LevelId, LevelList};
 
 use super::super::tc::R;
 use super::super::univ;
 use super::Nbe;
-use super::val::{Elim, Sp, V, Val};
+use super::val::{Elim, Env, Sp, V, Val};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Step {
@@ -18,8 +18,9 @@ enum Step {
     Diff,
 }
 
-fn pair(a: V, b: V) -> (V, V) {
-    if a <= b { (a, b) } else { (b, a) }
+fn pair(a: V, b: V) -> u64 {
+    let (a, b) = if a <= b { (a, b) } else { (b, a) };
+    (u64::from(a.0) << 32) | u64::from(b.0)
 }
 
 /// Bits of `Nbe::pairs`: found definitionally equal, found not equal,
@@ -30,6 +31,47 @@ const NEQ: u8 = 2;
 const EQ_FAIL: u8 = 4;
 const SYN_OK: u8 = 8;
 const SYN_FAIL: u8 = 16;
+
+/// Exact pair facts. Collisions replace the previous entry.
+pub(super) struct PairCache {
+    slots: Box<[(u64, u8)]>,
+}
+
+impl Default for PairCache {
+    fn default() -> Self {
+        Self {
+            slots: vec![(0, 0); Self::SLOTS].into_boxed_slice(),
+        }
+    }
+}
+
+impl PairCache {
+    const SLOTS: usize = 1 << 15;
+
+    #[inline]
+    fn index(key: u64) -> usize {
+        crate::hash::hash2(key, 0) as usize & (Self::SLOTS - 1)
+    }
+
+    #[inline]
+    fn get(&self, key: u64) -> u8 {
+        let (stored, bits) = self.slots[Self::index(key)];
+        if stored == key { bits } else { 0 }
+    }
+
+    fn insert(&mut self, key: u64, bit: u8) {
+        let slot = &mut self.slots[Self::index(key)];
+        if slot.0 == key {
+            slot.1 |= bit;
+        } else {
+            *slot = (key, bit);
+        }
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.slots.fill((0, 0));
+    }
+}
 
 /// Steps a failed structural comparison must have taken to be remembered
 /// (`SYN_FAIL`): a cheaper one is cheaper to try again than to remember.
@@ -142,23 +184,28 @@ impl Nbe<'_> {
         if a == b {
             return true;
         }
-        let la: Vec<LevelId> = self.st.list(a).to_vec();
-        let lb: Vec<LevelId> = self.st.list(b).to_vec();
-        la.len() == lb.len()
-            && la
-                .iter()
-                .zip(&lb)
-                .all(|(&x, &y)| self.is_def_eq_level(x, y))
+        let len = self.st.list(a).len();
+        if len != self.st.list(b).len() {
+            return false;
+        }
+        for i in 0..len {
+            let x = self.st.list(a)[i];
+            let y = self.st.list(b)[i];
+            if !self.is_def_eq_level(x, y) {
+                return false;
+            }
+        }
+        true
     }
 
     /// What is known of `t` and `s` (bits `EQ` and the others).
     #[inline]
     fn pf(&self, t: V, s: V) -> u8 {
-        self.pairs.get(&pair(t, s)).copied().unwrap_or(0)
+        self.pairs.get(pair(t, s))
     }
 
     fn pset(&mut self, t: V, s: V, bit: u8) {
-        *self.pairs.entry(pair(t, s)).or_insert(0) |= bit;
+        self.pairs.insert(pair(t, s), bit);
     }
 
     fn is_lit(v: &Val) -> bool {
@@ -195,23 +242,16 @@ impl Nbe<'_> {
         })
     }
 
-    /// The arguments after the last projection of a neutral's spine, and
-    /// the spine before them.
-    fn split_args(&mut self, sp: Sp, out: &mut Vec<V>) -> Sp {
-        out.clear();
-        let n = self.a.sp_len(sp);
-        let mut k = n;
-        while k > 0 {
-            match self.a.sp_elim(sp, k - 1) {
-                Elim::Arg(v) => {
-                    out.push(v);
-                    k -= 1;
+    /// The offset of the trailing arguments, past the last projection.
+    fn trailing_args_start(&self, sp: Sp, len: u32) -> u32 {
+        if self.a.sp_has_proj(sp) {
+            for i in (0..len).rev() {
+                if matches!(self.a.sp_elim(sp, i), Elim::Proj(..)) {
+                    return i + 1;
                 }
-                Elim::Proj(..) => break,
             }
         }
-        out.reverse();
-        self.a.sp_prefix(sp, k)
+        0
     }
 
     /// Whether the term `d`, under binders whose domains are `ctx`
@@ -510,17 +550,30 @@ impl Nbe<'_> {
             ),
             _ => return Ok(false),
         };
-        let mut ta = Vec::new();
-        let mut sa = Vec::new();
-        let tpre = self.split_args(tsp, &mut ta);
-        let spre = self.split_args(ssp, &mut sa);
-        if ta.is_empty() || sa.is_empty() || ta.len() != sa.len() {
+        let tl = self.a.sp_len(tsp);
+        let sl = self.a.sp_len(ssp);
+        let ti = self.trailing_args_start(tsp, tl);
+        let si = self.trailing_args_start(ssp, sl);
+        let len = tl - ti;
+        if len == 0 || len != sl - si {
             return Ok(false);
         }
-        let tf = self.with_spine(th, tpre);
-        let sf = self.with_spine(sh, spre);
-        if !self.is_def_eq(tf, sf)? {
-            return Ok(false);
+        let tpre = if ti == 0 {
+            Sp::NIL
+        } else {
+            self.a.sp_prefix(tsp, ti)
+        };
+        let spre = if si == 0 {
+            Sp::NIL
+        } else {
+            self.a.sp_prefix(ssp, si)
+        };
+        if th != sh || tpre != spre {
+            let tf = self.with_spine(th, tpre);
+            let sf = self.with_spine(sh, spre);
+            if !self.is_def_eq(tf, sf)? {
+                return Ok(false);
+            }
         }
         // The heads are equal, so (as in `is_def_eq_args`) proof arguments
         // of the same constant at the same levels need no comparison.
@@ -532,11 +585,16 @@ impl Nbe<'_> {
             }
             _ => 0,
         };
-        for i in 0..ta.len() {
+        for i in 0..len {
             if i < 64 && props & 1 << i != 0 {
                 continue;
             }
-            if !self.is_def_eq(ta[i], sa[i])? {
+            let (Elim::Arg(a), Elim::Arg(b)) =
+                (self.a.sp_elim(tsp, ti + i), self.a.sp_elim(ssp, si + i))
+            else {
+                unreachable!("trailing arguments")
+            };
+            if !self.is_def_eq(a, b)? {
                 return Ok(false);
             }
         }
@@ -642,8 +700,8 @@ impl Nbe<'_> {
         Ok(None)
     }
 
-    fn unfold_cheap(&mut self, e: V) -> R<V> {
-        let u = self.unfold_definition(e).expect("delta");
+    fn unfold_cheap(&mut self, e: V, d: &crate::env::Decl) -> R<V> {
+        let u = self.unfold_known_definition(e, d).expect("delta");
         self.whnf_core(u, false, true)
     }
 
@@ -729,26 +787,26 @@ impl Nbe<'_> {
         let ds = self.is_delta(*s);
         match (dt, ds) {
             (None, None) => return Ok(Step::Unknown),
-            (Some(_), None) => {
+            (Some(dt), None) => {
                 if let Some(s_r) = self.try_unfold_proj_app(*s)? {
                     *s = s_r;
                 } else {
-                    *t = self.unfold_cheap(*t)?;
+                    *t = self.unfold_cheap(*t, &dt)?;
                 }
             }
-            (None, Some(_)) => {
+            (None, Some(ds)) => {
                 if let Some(t_r) = self.try_unfold_proj_app(*t)? {
                     *t = t_r;
                 } else {
-                    *s = self.unfold_cheap(*s)?;
+                    *s = self.unfold_cheap(*s, &ds)?;
                 }
             }
             (Some(dt), Some(ds)) => {
                 let c = compare_hints(decl_hints(&dt), decl_hints(&ds));
                 if c < 0 {
-                    *t = self.unfold_cheap(*t)?;
+                    *t = self.unfold_cheap(*t, &dt)?;
                 } else if c > 0 {
-                    *s = self.unfold_cheap(*s)?;
+                    *s = self.unfold_cheap(*s, &ds)?;
                 } else {
                     if let (Val::Const(_, lt, tsp), Val::Const(_, ls, ssp)) =
                         (self.a.get(*t), self.a.get(*s))
@@ -781,8 +839,8 @@ impl Nbe<'_> {
                         }
                         self.pset(*t, *s, EQ_FAIL);
                     }
-                    *t = self.unfold_cheap(*t)?;
-                    *s = self.unfold_cheap(*s)?;
+                    *t = self.unfold_cheap(*t, &dt)?;
+                    *s = self.unfold_cheap(*s, &ds)?;
                 }
             }
         }
@@ -835,7 +893,7 @@ impl Nbe<'_> {
         if let Some(pt) = self.is_nat_succ(t)
             && let Some(ps) = self.is_nat_succ(s)
         {
-            return Ok(Some(self.is_def_eq_core(pt, ps)?));
+            return Ok(Some(self.is_def_eq(pt, ps)?));
         }
         Ok(None)
     }
@@ -847,9 +905,9 @@ impl Nbe<'_> {
             }
             if (!self.a.has_fvar(*t) && !self.a.has_fvar(*s)) || self.eager {
                 if let Some(tv) = self.reduce_nat(*t)? {
-                    return Ok(Some(self.is_def_eq_core(tv, *s)?));
+                    return Ok(Some(self.is_def_eq(tv, *s)?));
                 } else if let Some(sv) = self.reduce_nat(*s)? {
-                    return Ok(Some(self.is_def_eq_core(*t, sv)?));
+                    return Ok(Some(self.is_def_eq(*t, sv)?));
                 }
             }
             match self.lazy_delta_reduction_step(t, s)? {
@@ -876,9 +934,9 @@ impl Nbe<'_> {
                     if let Some(t_r) = self.reduce_proj_core(*t, sname, idx)?
                         && let Some(s_r) = self.reduce_proj_core(*s, sname, idx)?
                     {
-                        return self.is_def_eq_core(t_r, s_r);
+                        return self.is_def_eq(t_r, s_r);
                     }
-                    return self.is_def_eq_core(*t, *s);
+                    return self.is_def_eq(*t, *s);
                 }
             }
         }
@@ -898,7 +956,7 @@ impl Nbe<'_> {
         {
             let c = self.string_lit_to_constructor(t)?;
             let c = self.whnf(c)?;
-            return Ok(Some(self.is_def_eq_core(c, s)?));
+            return Ok(Some(self.is_def_eq(c, s)?));
         }
         Ok(None)
     }
@@ -927,7 +985,7 @@ impl Nbe<'_> {
             _ => return Ok(false),
         }
         let ts = self.infer_value(s)?;
-        self.is_def_eq_core(t_type, ts)
+        self.is_def_eq(t_type, ts)
     }
 
     fn is_bool_true(&self, e: V) -> bool {
@@ -954,18 +1012,9 @@ impl Nbe<'_> {
         }
     }
 
-    pub fn is_def_eq_core(&mut self, t: V, s: V) -> R<bool> {
-        self.is_def_eq_known(t, s, None)
-    }
-
-    /// `is_def_eq_core`, with what is `known` of `t` and `s` if looked up.
-    fn is_def_eq_known(&mut self, t0: V, s0: V, known: Option<u8>) -> R<bool> {
-        let t = self.force(t0);
-        let s = self.force(s0);
-        let quick = match known {
-            Some(k) if (t, s) == (t0, s0) && t != s => self.quick_known(t, s, k)?,
-            _ => self.quick_is_def_eq(t, s)?,
-        };
+    /// Compare values that have already been forced.
+    fn is_def_eq_forced(&mut self, t: V, s: V, known: u8) -> R<bool> {
+        let quick = self.quick_known(t, s, known)?;
         if let Some(r) = quick {
             return Ok(r);
         }
@@ -975,13 +1024,20 @@ impl Nbe<'_> {
                 return Ok(true);
             }
         }
-        let mut tn = self.whnf_core(t, false, true)?;
-        let mut sn = self.whnf_core(s, false, true)?;
-        if (tn != t || sn != s)
-            && let Some(r) = self.quick_is_def_eq(tn, sn)?
-        {
+        let tn = self.whnf_core(t, false, true)?;
+        let sn = self.whnf_core(s, false, true)?;
+        let changed = (tn, sn) != (t, s);
+        if changed && let Some(r) = self.quick_is_def_eq(tn, sn)? {
             return Ok(r);
         }
+        let equal = self.is_def_eq_after_whnf(tn, sn)?;
+        if equal && changed {
+            self.pset(tn, sn, EQ);
+        }
+        Ok(equal)
+    }
+
+    fn is_def_eq_after_whnf(&mut self, mut tn: V, mut sn: V) -> R<bool> {
         if let Some(r) = self.is_def_eq_proof_irrel(tn, sn)? {
             return Ok(r);
         }
@@ -1010,7 +1066,7 @@ impl Nbe<'_> {
         let tnn = self.whnf_core(tn, false, false)?;
         let snn = self.whnf_core(sn, false, false)?;
         if tnn != tn || snn != sn {
-            return self.is_def_eq_core(tnn, snn);
+            return self.is_def_eq(tnn, snn);
         }
         if self.is_def_eq_app(tn, sn)? {
             return Ok(true);
@@ -1042,28 +1098,48 @@ impl Nbe<'_> {
         if known & NEQ != 0 {
             return Ok(false);
         }
+        if known & (EQ | SYN_OK) != 0 {
+            return Ok(true);
+        }
         // In a heavy declaration, also remember results by the terms the
         // values stand for: different values (a thunk and its value, say,
         // inside them) often stand for one term, and then compare alike.
-        let named =
-            if self.decl_steps > HEAVY_STEPS && self.a.len() > NAMES_AFTER && known & EQ == 0 {
-                match (self.name(t), self.name(s)) {
-                    (Some(a), Some(b)) => {
-                        if a == b {
-                            return Ok(true);
-                        }
-                        let k = if a.0 <= b.0 { (a, b) } else { (b, a) };
-                        if let Some(&r) = self.name_eq.get(&k) {
-                            return Ok(r);
-                        }
-                        Some(k)
+        let named = if self.decl_steps > HEAVY_STEPS && self.a.len() > NAMES_AFTER {
+            match (self.name(t), self.name(s)) {
+                (Some(a), Some(b)) => {
+                    if a == b {
+                        return Ok(true);
                     }
-                    _ => None,
+                    let k = if a.0 <= b.0 { (a, b) } else { (b, a) };
+                    if let Some(&r) = self.name_eq.get(&k) {
+                        return Ok(r);
+                    }
+                    Some(k)
                 }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let ft = self.force(t);
+        let fs = self.force(s);
+        let r = if ft == fs {
+            true
+        } else if (ft, fs) == (t, s) {
+            self.is_def_eq_forced(ft, fs, known)?
+        } else {
+            // A forced pair can be reached through several different thunks.
+            let bits = self.pf(ft, fs);
+            if bits & (EQ | SYN_OK | NEQ) != 0 {
+                bits & NEQ == 0
             } else {
-                None
-            };
-        let r = self.is_def_eq_known(t, s, Some(known))?;
+                let equal = self.is_def_eq_forced(ft, fs, bits)?;
+                if equal {
+                    self.pset(ft, fs, EQ);
+                }
+                equal
+            }
+        };
         if let Some(k) = named {
             self.name_eq.insert(k, r);
         }
@@ -1133,7 +1209,7 @@ impl Nbe<'_> {
         if known & (EQ | SYN_OK) != 0 {
             return true;
         }
-        if known & SYN_FAIL != 0 {
+        if known & (NEQ | SYN_FAIL) != 0 {
             return false;
         }
         let r = match (self.a.get(t), self.a.get(s)) {
@@ -1213,11 +1289,23 @@ impl Nbe<'_> {
         budget: &mut u32,
     ) -> bool {
         if t_l == t_r && k_l == k_r && k_l == d {
-            let d_l = self.st.data(t_l);
-            let closed = d_l.loose_bvar_range() <= d || e_l == e_r;
-            let lvl = !d_l.has_level_param() || l_l == l_r;
-            if closed && lvl {
-                return true;
+            let data = self.st.data(t_l);
+            if l_l == l_r || !data.has_level_param() {
+                let range = data.loose_bvar_range();
+                if e_l == e_r || range <= d {
+                    return true;
+                }
+                if range <= 63 && *budget > 0 {
+                    let used = if range <= ExprData::USED_LOW {
+                        ((1u64 << range) - 1) & !u64::from(data.unused_low())
+                    } else {
+                        self.used_bvars(t_l)
+                    };
+                    if used & super::MANY_BVARS == 0 {
+                        *budget -= 1;
+                        return self.syn_eq_env(e_l, e_r, used >> d, budget);
+                    }
+                }
             }
         }
         if *budget == 0 {
@@ -1253,6 +1341,22 @@ impl Nbe<'_> {
             return r;
         }
         self.syn_eq_t_node(t_l, e_l, l_l, k_l, t_r, e_r, l_r, k_r, d, budget)
+    }
+
+    /// For one term under the same binders and universe substitution, only
+    /// the environment entries that it reads can distinguish the closures.
+    fn syn_eq_env(&mut self, left: Env, right: Env, mut used: u64, budget: &mut u32) -> bool {
+        while used != 0 {
+            let i = used.trailing_zeros();
+            used &= used - 1;
+            let (Some(a), Some(b)) = (self.a.lookup(left, i), self.a.lookup(right, i)) else {
+                return false;
+            };
+            if !self.syn_eq_v(a, b, budget) {
+                return false;
+            }
+        }
+        true
     }
 
     #[allow(clippy::too_many_arguments)]
