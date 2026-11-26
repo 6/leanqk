@@ -22,6 +22,13 @@ pub fn hash2(w0: u64, w1: u64) -> u64 {
     fold_mul(fold_mul(w0 ^ K0, K2) ^ w1, K1)
 }
 
+/// Hash two words with one multiply, for direct-mapped tables (lossy
+/// caches): their high bits only pick a slot.
+#[inline]
+pub fn hash_front(w0: u64, w1: u64) -> u64 {
+    fold_mul(w0 ^ K0, w1 ^ K2)
+}
+
 /// Hash a byte string.
 pub fn hash_bytes(bytes: &[u8]) -> u64 {
     let mut h = K2 ^ bytes.len() as u64;

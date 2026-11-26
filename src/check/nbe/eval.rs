@@ -7,7 +7,6 @@ use crate::name::NameId;
 
 use super::val::{Elim, Env, Ls, Sp, V, Val};
 use super::{BOTTOM, Nbe};
-use crate::hash::hash2;
 
 /// How many first-order applications inside one another an argument is
 /// evaluated through before the rest is left as thunks (see `thunk`).
@@ -166,7 +165,7 @@ impl Nbe<'_> {
     /// environment is cut).
     #[inline(never)]
     fn eager(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
-        let sh = hash2(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
+        let sh = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
         let s = self.eager_slots[si];
         if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {

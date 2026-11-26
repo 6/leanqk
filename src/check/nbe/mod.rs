@@ -31,7 +31,6 @@ use num_bigint::BigUint;
 
 use crate::env::{Decl, DeclKind};
 use crate::expr::{BinderInfo, ExprId, ExprNode};
-use crate::hash::hash2;
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
 
@@ -804,8 +803,9 @@ impl<'e> Nbe<'e> {
     /// The first `n` entries of `env` with holes at those `holes` sets.
     #[inline(never)]
     fn trim_holes(&mut self, env: val::Env, n: u32, holes: u32) -> val::Env {
-        let i =
-            (hash2(env.0 as u64 | (n as u64) << 32, holes as u64) >> 52) as usize & (PRUNES - 1);
+        let i = (crate::hash::hash_front(env.0 as u64 | (n as u64) << 32, holes as u64) >> 52)
+            as usize
+            & (PRUNES - 1);
         let s = self.trim_holes_memo[i];
         if s[0] == env.0 && s[1] == holes && s[2] == n {
             return val::Env(s[3]);
@@ -834,7 +834,7 @@ impl<'e> Nbe<'e> {
     /// `prune` with holes at the entries `holes` sets.
     #[inline(never)]
     fn prune_holes(&mut self, env: val::Env, holes: u32) -> val::Env {
-        let i = (hash2(env.0 as u64, holes as u64) >> 52) as usize & (PRUNES - 1);
+        let i = (crate::hash::hash_front(env.0 as u64, holes as u64) >> 52) as usize & (PRUNES - 1);
         let s = self.prunes[i];
         if s[0] == env.0 && s[1] == holes {
             return val::Env(s[2]);
@@ -870,7 +870,7 @@ impl<'e> Nbe<'e> {
     /// `trim` of an environment longer than `n`.
     #[inline(never)]
     fn trim_long(&mut self, env: val::Env, n: u32) -> val::Env {
-        let i = (hash2(env.0 as u64, n as u64) >> 52) as usize & (PRUNES - 1);
+        let i = (crate::hash::hash_front(env.0 as u64, n as u64) >> 52) as usize & (PRUNES - 1);
         let s = self.trim_cache[i];
         if s[0] == env.0 && s[1] == n {
             return val::Env(s[2]);

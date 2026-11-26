@@ -429,7 +429,7 @@ impl Arena {
 
     #[inline]
     fn head(&mut self, a: u32, b: u32, val: Val) -> V {
-        let i = (hash2(a as u64, b as u64) >> 52) as usize & (HEADS - 1);
+        let i = (crate::hash::hash_front(a as u64, b as u64) >> 52) as usize & (HEADS - 1);
         let (x, y, v) = self.heads[i];
         if x == a && y == b {
             return v;
@@ -443,7 +443,7 @@ impl Arena {
     /// thunk it holds for them, if it does.
     #[inline]
     pub fn thunk_slot(&self, e: ExprId, env: Env, ls: Ls) -> (usize, Option<V>) {
-        let h = hash2(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
+        let h = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let i = (h >> 50) as usize & (THUNKS - 1);
         let s = self.thunks[i];
         let hit = s[0] == e.0 && s[1] == env.0 && s[2] == ls.0;
