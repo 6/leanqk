@@ -75,16 +75,16 @@ const SYN_T: usize = 1 << 12;
 const SYN_BVARS: usize = 1 << 10;
 
 /// Slots of `Nbe::eager_slots`.
-pub(super) const EAGER_SLOTS: usize = 1 << 12;
+pub(super) const EAGER_SLOTS: usize = 1 << 14;
 
 /// Slots of `Nbe::infer_slots`.
 pub(super) const INFER_SLOTS: usize = 1 << 14;
 
 /// Slots of `Nbe::binder_slots`.
-pub(super) const BINDER_SLOTS: usize = 1 << 11;
+pub(super) const BINDER_SLOTS: usize = 1 << 14;
 
 /// Slots of `Nbe::eager_direct`.
-pub(super) const EAGER_DIRECT_SLOTS: usize = 1 << 13;
+pub(super) const EAGER_DIRECT_SLOTS: usize = 1 << 15;
 
 /// Slots of `Nbe::prunes`.
 const PRUNES: usize = 1 << 12;
