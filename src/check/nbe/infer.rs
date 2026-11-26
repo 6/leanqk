@@ -538,10 +538,16 @@ impl Nbe<'_> {
             if let Some(k) = k
                 && self.checked_closed.contains(&k)
             {
-                let r = if c == NONE {
+                let r = if c != NONE {
+                    V(c)
+                } else if matches!(node, ExprNode::Lam(..)) {
+                    // Inference trims a lambda's environment.
                     self.infer_node(e, node, env, ls, true)?
                 } else {
-                    V(c)
+                    // The memo key is already available.
+                    let ty = self.infer_complex(e, node, env, ls, true)?;
+                    self.ikey_set_ty(key, ty);
+                    ty
                 };
                 self.ikey_set_checked(key, d.has_level_param());
                 return Ok(r);
