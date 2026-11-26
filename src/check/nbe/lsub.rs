@@ -1,7 +1,4 @@
-//! Universe substitutions remembered: a direct-mapped table in front of a
-//! map. Most lookups are for the few levels and lists of the declaration
-//! at hand, which the table answers with one probe. The map keeps entries
-//! evicted from the table.
+//! A direct-mapped cache for universe substitution results.
 
 use crate::env::NameList;
 use crate::level::{LevelId, LevelList};
@@ -9,7 +6,6 @@ use crate::name::NameId;
 
 use super::super::store::{IdMap, Store};
 use super::super::univ;
-use super::Cap;
 use super::val::{Ls, LsNode};
 
 /// Find the replacement for a parameter in an interned substitution.
@@ -17,9 +13,6 @@ pub(super) fn replacement(st: &Store<'_>, node: LsNode, name: NameId) -> Option<
     let i = st.name_list(node.params).iter().position(|&p| p == name)?;
     st.list(node.levels).get(i).copied()
 }
-
-/// Whether the substitution caches have the direct-mapped table.
-pub const LSUB_DIRECT: bool = true;
 
 const SLOTS: usize = 1 << 12;
 
@@ -49,7 +42,6 @@ impl Key for (LevelList, Ls) {
 pub struct Lsub<V> {
     // Key zero denotes an empty slot. The callers handle Ls::ID directly.
     direct: Box<[(u64, V); SLOTS]>,
-    map: IdMap<u64, V>,
 }
 
 impl<V: Copy + Default> Default for Lsub<V> {
@@ -59,7 +51,6 @@ impl<V: Copy + Default> Default for Lsub<V> {
                 .into_boxed_slice()
                 .try_into()
                 .unwrap_or_else(|_| unreachable!()),
-            map: IdMap::default(),
         }
     }
 }
@@ -77,40 +68,23 @@ impl<V: Copy> Lsub<V> {
     pub fn get_direct(&self, k: impl Key<Value = V>) -> Option<V> {
         let bits = k.bits();
         debug_assert_ne!(bits, 0);
-        if LSUB_DIRECT {
-            let (key, value) = self.direct[slot(bits)];
-            if key == bits {
-                return Some(value);
-            }
+        let (key, value) = self.direct[slot(bits)];
+        if key == bits {
+            return Some(value);
         }
         None
     }
 
-    /// Look up an evicted entry and restore it to the direct table.
     #[inline]
-    pub(super) fn get_evicted(&mut self, k: impl Key<Value = V>) -> Option<V> {
-        let bits = k.bits();
-        let v = *self.map.get(&bits)?;
-        if LSUB_DIRECT {
-            self.put(bits, v);
-        }
-        Some(v)
-    }
-
     pub fn insert(&mut self, k: impl Key<Value = V>, v: V) {
         let bits = k.bits();
         debug_assert_ne!(bits, 0);
-        if LSUB_DIRECT {
-            self.put(bits, v);
-        } else {
-            self.map.insert(bits, v);
-        }
+        self.direct[slot(bits)] = (bits, v);
     }
 
-    fn put(&mut self, bits: u64, v: V) {
-        let (old, value) = std::mem::replace(&mut self.direct[slot(bits)], (bits, v));
-        if old != 0 {
-            self.map.insert(old, value);
+    pub fn clear(&mut self) {
+        for (key, _) in self.direct.iter_mut() {
+            *key = 0;
         }
     }
 }
@@ -127,19 +101,6 @@ impl Lsub<LevelId> {
         let result = univ::instantiate_level(st, l, |st, n| replacement(st, node, n));
         self.insert((l, ls), result);
         result
-    }
-}
-
-impl<V: Copy> Cap for Lsub<V> {
-    fn cap(&self) -> usize {
-        self.map.cap()
-    }
-
-    fn clear_keep(&mut self) {
-        self.map.clear_keep();
-        for (key, _) in self.direct.iter_mut() {
-            *key = 0;
-        }
     }
 }
 

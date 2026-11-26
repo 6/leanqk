@@ -30,7 +30,7 @@ pub use val::OutOfRoom;
 use hashbrown::HashTable;
 use num_bigint::BigUint;
 
-use crate::env::{Decl, DeclKind};
+use crate::env::{Decl, DeclKind, NameList};
 use crate::expr::{BinderInfo, ExprId, ExprNode};
 use crate::level::{LevelId, LevelList};
 use crate::name::NameId;
@@ -605,8 +605,8 @@ impl<'e> Nbe<'e> {
         }
         shrink(&mut self.bigs);
         shrink(&mut self.big_table);
-        shrink(&mut self.level_cache);
-        shrink(&mut self.list_cache);
+        self.level_cache.clear();
+        self.list_cache.clear();
         shrink(&mut self.const_type);
         shrink(&mut self.const_value);
         self.pairs.clear();
@@ -707,18 +707,21 @@ impl<'e> Nbe<'e> {
         if ls == Ls::ID || !self.st.level_has_param(l) {
             return l;
         }
+        self.inst_param_level(l, ls)
+    }
+
+    #[inline(always)]
+    fn inst_param_level(&mut self, l: LevelId, ls: Ls) -> LevelId {
+        debug_assert!(ls != Ls::ID && self.st.level_has_param(l));
         if let Some(r) = self.level_cache.get_direct((l, ls)) {
             return r;
         }
         self.inst_level_new(l, ls)
     }
 
-    /// Fetch an evicted substitution result or instantiate the level.
+    /// Instantiate an uncached level.
     #[inline(never)]
     fn inst_level_new(&mut self, l: LevelId, ls: Ls) -> LevelId {
-        if let Some(r) = self.level_cache.get_evicted((l, ls)) {
-            return r;
-        }
         let node = self.a.ls(ls);
         self.level_cache
             .instantiate_uncached(&mut self.st, l, ls, node)
@@ -729,28 +732,39 @@ impl<'e> Nbe<'e> {
         if ls == Ls::ID || !self.st.list_has_param(ll) {
             return ll;
         }
+        self.inst_param_list(ll, ls)
+    }
+
+    #[inline(always)]
+    fn inst_param_list(&mut self, ll: LevelList, ls: Ls) -> LevelList {
+        debug_assert!(ls != Ls::ID && self.st.list_has_param(ll));
         if let Some(r) = self.list_cache.get_direct((ll, ls)) {
             return r;
         }
         self.inst_list_new(ll, ls)
     }
 
-    /// Fetch an evicted substitution result or instantiate the list.
+    /// Instantiate an uncached level list.
     #[inline(never)]
     fn inst_list_new(&mut self, ll: LevelList, ls: Ls) -> LevelList {
-        if let Some(r) = self.list_cache.get_evicted((ll, ls)) {
-            return r;
-        }
         let node = self.a.ls(ls);
+        let params = self.st.name_list(node.params);
+        if self.st.is_own_levels(params, self.st.list(ll))
+            && self.st.list(node.levels).len() == params.len()
+            && params
+                .iter()
+                .enumerate()
+                .all(|(i, p)| !params[..i].contains(p))
+        {
+            self.list_cache.insert((ll, ls), node.levels);
+            return node.levels;
+        }
         let cache = &mut self.level_cache;
         let r = univ::map_level_list(&mut self.st, ll, |st, l| {
             if !st.level_has_param(l) {
                 return l;
             }
-            if let Some(result) = cache
-                .get_direct((l, ls))
-                .or_else(|| cache.get_evicted((l, ls)))
-            {
+            if let Some(result) = cache.get_direct((l, ls)) {
                 return result;
             }
             cache.instantiate_uncached(st, l, ls, node)
@@ -760,22 +774,29 @@ impl<'e> Nbe<'e> {
     }
 
     /// The substitution of `d`'s universe parameters by `ls`.
+    #[inline(always)]
     pub fn decl_ls(&mut self, d: &Decl, ls: LevelList) -> Ls {
         let params = d.level_params;
         if params.is_empty() {
             return Ls::ID;
         }
         self.decl_ls_cache.get_or_insert(params, ls, || {
-            if super::univ::OWN_LEVELS
-                && self
-                    .st
-                    .is_own_levels(self.st.name_list(params), self.st.list(ls))
-            {
-                return Ls::ID;
-            }
-            let params = self.param_classes.class(&self.st, params);
-            self.a.mk_ls(params, ls)
+            Self::decl_ls_new(&self.st, &mut self.param_classes, &mut self.a, params, ls)
         })
+    }
+
+    #[inline(never)]
+    fn decl_ls_new(
+        st: &Store<'_>,
+        param_classes: &mut lsub::ParamClasses,
+        arena: &mut Arena,
+        params: NameList,
+        ls: LevelList,
+    ) -> Ls {
+        if univ::OWN_LEVELS && st.is_own_levels(st.name_list(params), st.list(ls)) {
+            return Ls::ID;
+        }
+        arena.mk_ls(param_classes.class(st, params), ls)
     }
 
     // ---- literals ----
