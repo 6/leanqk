@@ -835,7 +835,7 @@ impl Nbe<'_> {
         if let Some(pt) = self.is_nat_succ(t)
             && let Some(ps) = self.is_nat_succ(s)
         {
-            return Ok(Some(self.is_def_eq_core(pt, ps)?));
+            return Ok(Some(self.is_def_eq(pt, ps)?));
         }
         Ok(None)
     }
@@ -847,9 +847,9 @@ impl Nbe<'_> {
             }
             if (!self.a.has_fvar(*t) && !self.a.has_fvar(*s)) || self.eager {
                 if let Some(tv) = self.reduce_nat(*t)? {
-                    return Ok(Some(self.is_def_eq_core(tv, *s)?));
+                    return Ok(Some(self.is_def_eq(tv, *s)?));
                 } else if let Some(sv) = self.reduce_nat(*s)? {
-                    return Ok(Some(self.is_def_eq_core(*t, sv)?));
+                    return Ok(Some(self.is_def_eq(*t, sv)?));
                 }
             }
             match self.lazy_delta_reduction_step(t, s)? {
@@ -876,9 +876,9 @@ impl Nbe<'_> {
                     if let Some(t_r) = self.reduce_proj_core(*t, sname, idx)?
                         && let Some(s_r) = self.reduce_proj_core(*s, sname, idx)?
                     {
-                        return self.is_def_eq_core(t_r, s_r);
+                        return self.is_def_eq(t_r, s_r);
                     }
-                    return self.is_def_eq_core(*t, *s);
+                    return self.is_def_eq(*t, *s);
                 }
             }
         }
@@ -898,7 +898,7 @@ impl Nbe<'_> {
         {
             let c = self.string_lit_to_constructor(t)?;
             let c = self.whnf(c)?;
-            return Ok(Some(self.is_def_eq_core(c, s)?));
+            return Ok(Some(self.is_def_eq(c, s)?));
         }
         Ok(None)
     }
@@ -927,7 +927,7 @@ impl Nbe<'_> {
             _ => return Ok(false),
         }
         let ts = self.infer_value(s)?;
-        self.is_def_eq_core(t_type, ts)
+        self.is_def_eq(t_type, ts)
     }
 
     fn is_bool_true(&self, e: V) -> bool {
@@ -954,18 +954,9 @@ impl Nbe<'_> {
         }
     }
 
-    pub fn is_def_eq_core(&mut self, t: V, s: V) -> R<bool> {
-        self.is_def_eq_known(t, s, None)
-    }
-
-    /// `is_def_eq_core`, with what is `known` of `t` and `s` if looked up.
-    fn is_def_eq_known(&mut self, t0: V, s0: V, known: Option<u8>) -> R<bool> {
-        let t = self.force(t0);
-        let s = self.force(s0);
-        let quick = match known {
-            Some(k) if (t, s) == (t0, s0) && t != s => self.quick_known(t, s, k)?,
-            _ => self.quick_is_def_eq(t, s)?,
-        };
+    /// Compare values that have already been forced.
+    fn is_def_eq_forced(&mut self, t: V, s: V, known: u8) -> R<bool> {
+        let quick = self.quick_known(t, s, known)?;
         if let Some(r) = quick {
             return Ok(r);
         }
@@ -975,13 +966,20 @@ impl Nbe<'_> {
                 return Ok(true);
             }
         }
-        let mut tn = self.whnf_core(t, false, true)?;
-        let mut sn = self.whnf_core(s, false, true)?;
-        if (tn != t || sn != s)
-            && let Some(r) = self.quick_is_def_eq(tn, sn)?
-        {
+        let tn = self.whnf_core(t, false, true)?;
+        let sn = self.whnf_core(s, false, true)?;
+        let changed = (tn, sn) != (t, s);
+        if changed && let Some(r) = self.quick_is_def_eq(tn, sn)? {
             return Ok(r);
         }
+        let equal = self.is_def_eq_after_whnf(tn, sn)?;
+        if equal && changed {
+            self.pset(tn, sn, EQ);
+        }
+        Ok(equal)
+    }
+
+    fn is_def_eq_after_whnf(&mut self, mut tn: V, mut sn: V) -> R<bool> {
         if let Some(r) = self.is_def_eq_proof_irrel(tn, sn)? {
             return Ok(r);
         }
@@ -1010,7 +1008,7 @@ impl Nbe<'_> {
         let tnn = self.whnf_core(tn, false, false)?;
         let snn = self.whnf_core(sn, false, false)?;
         if tnn != tn || snn != sn {
-            return self.is_def_eq_core(tnn, snn);
+            return self.is_def_eq(tnn, snn);
         }
         if self.is_def_eq_app(tn, sn)? {
             return Ok(true);
@@ -1042,28 +1040,48 @@ impl Nbe<'_> {
         if known & NEQ != 0 {
             return Ok(false);
         }
+        if known & (EQ | SYN_OK) != 0 {
+            return Ok(true);
+        }
         // In a heavy declaration, also remember results by the terms the
         // values stand for: different values (a thunk and its value, say,
         // inside them) often stand for one term, and then compare alike.
-        let named =
-            if self.decl_steps > HEAVY_STEPS && self.a.len() > NAMES_AFTER && known & EQ == 0 {
-                match (self.name(t), self.name(s)) {
-                    (Some(a), Some(b)) => {
-                        if a == b {
-                            return Ok(true);
-                        }
-                        let k = if a.0 <= b.0 { (a, b) } else { (b, a) };
-                        if let Some(&r) = self.name_eq.get(&k) {
-                            return Ok(r);
-                        }
-                        Some(k)
+        let named = if self.decl_steps > HEAVY_STEPS && self.a.len() > NAMES_AFTER {
+            match (self.name(t), self.name(s)) {
+                (Some(a), Some(b)) => {
+                    if a == b {
+                        return Ok(true);
                     }
-                    _ => None,
+                    let k = if a.0 <= b.0 { (a, b) } else { (b, a) };
+                    if let Some(&r) = self.name_eq.get(&k) {
+                        return Ok(r);
+                    }
+                    Some(k)
                 }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let ft = self.force(t);
+        let fs = self.force(s);
+        let r = if ft == fs {
+            true
+        } else if (ft, fs) == (t, s) {
+            self.is_def_eq_forced(ft, fs, known)?
+        } else {
+            // A forced pair can be reached through several different thunks.
+            let bits = self.pf(ft, fs);
+            if bits & (EQ | SYN_OK | NEQ) != 0 {
+                bits & NEQ == 0
             } else {
-                None
-            };
-        let r = self.is_def_eq_known(t, s, Some(known))?;
+                let equal = self.is_def_eq_forced(ft, fs, bits)?;
+                if equal {
+                    self.pset(ft, fs, EQ);
+                }
+                equal
+            }
+        };
         if let Some(k) = named {
             self.name_eq.insert(k, r);
         }
@@ -1133,7 +1151,7 @@ impl Nbe<'_> {
         if known & (EQ | SYN_OK) != 0 {
             return true;
         }
-        if known & SYN_FAIL != 0 {
+        if known & (NEQ | SYN_FAIL) != 0 {
             return false;
         }
         let r = match (self.a.get(t), self.a.get(s)) {
