@@ -7,7 +7,7 @@ use hashbrown::HashTable;
 use super::val::{Env, Ls, V, spread};
 use super::{Nbe, val};
 use crate::expr::ExprId;
-use crate::hash::hash2;
+use crate::hash::{Table, fold32, hash_front, hash2};
 
 /// Whether keys hold the id of the values read (`read_tuple`), not the
 /// values.
@@ -65,6 +65,63 @@ impl<const WORDS: usize> EnvMemo<WORDS> {
     }
 }
 
+/// Inference keys use a tuple id and hold the inferred type and checked bit.
+#[derive(Default)]
+pub(super) struct InferMemo {
+    table: Table,
+    entries: Vec<InferEntry>,
+}
+
+struct InferEntry {
+    key: [u32; 3],
+    result: [u32; 2],
+}
+
+impl InferMemo {
+    #[inline]
+    pub(super) fn find_or_add(&mut self, e: ExprId, ls: Ls, tuple: u32) -> usize {
+        let key = [e.0, ls.0, tuple];
+        let hash = fold32(hash_front(e.0 as u64 | (ls.0 as u64) << 32, tuple as u64));
+        let slot = match self
+            .table
+            .find_or_slot(hash, |i| val::at(&self.entries, i as usize).key == key)
+        {
+            Ok(i) => return i as usize,
+            Err(slot) => slot,
+        };
+        let i = self.entries.len();
+        assert!(
+            i < val::NONE as usize,
+            "nitrolean: resource limit: memo too large"
+        );
+        self.entries.push(InferEntry {
+            key,
+            result: [val::NONE, 0],
+        });
+        self.table.insert_at(slot, hash, i as u32);
+        i
+    }
+
+    #[inline]
+    pub(super) fn get(&self, i: usize) -> &[u32; 2] {
+        &val::at(&self.entries, i).result
+    }
+
+    #[inline]
+    pub(super) fn set(&mut self, i: usize, w: usize, v: u32) {
+        self.entries[i].result[w] = v;
+    }
+
+    pub(super) fn clear(&mut self) {
+        if self.table.capacity() > 1 << 17 {
+            *self = Self::default();
+        } else {
+            self.table.clear();
+            self.entries.clear();
+        }
+    }
+}
+
 /// A key being looked up: its hash and fixed words; the values it reads
 /// are on `Nbe::vargs` from `base`.
 pub struct Key {
@@ -114,18 +171,8 @@ impl Nbe<'_> {
             holes & ((1u64 << n) - 1)
         };
         if READ_TUPLES {
-            let t = if FAST_KEYS && n == d.loose_bvar_range() && n < 64 {
-                // An empty list of values read is the same list whatever
-                // the range and holes.
-                if n == holes.count_ones() {
-                    EMPTY_TUPLE
-                } else {
-                    self.read_tuple(env, n, holes)
-                }
-            } else {
-                self.read_tuple(env, n, holes)
-            };
-            let h = crate::hash::hash_front(e.0 as u64 | (ls2.0 as u64) << 32, t as u64);
+            let t = self.memo_tuple(env, d.loose_bvar_range(), n, holes);
+            let h = hash_front(e.0 as u64 | (ls2.0 as u64) << 32, t as u64);
             return Some(Key {
                 h: (h >> 32) as u32,
                 head: [e.0, ls2.0, val::NONE, t, 0, 0],
@@ -152,6 +199,16 @@ impl Nbe<'_> {
             head: [e.0, ls2.0, n, holes as u32, (holes >> 32) as u32, cnt],
             base,
         })
+    }
+
+    /// The tuple id for a term's environment, with `holes` masked to `n`.
+    #[inline]
+    pub(super) fn memo_tuple(&mut self, env: Env, range: u32, n: u32, holes: u64) -> u32 {
+        if FAST_KEYS && n == range && n < 64 && n == holes.count_ones() {
+            // With the whole range present, every empty list is the same.
+            return EMPTY_TUPLE;
+        }
+        self.read_tuple(env, n, holes)
     }
 
     /// The id of the values of the first `n` entries of `env` but those

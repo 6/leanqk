@@ -573,16 +573,17 @@ impl Nbe<'_> {
     /// entries `e` reads (`memo`), or else a thunk.
     fn infer_key(&mut self, e: ExprId, d: ExprData, env: Env, ls: Ls) -> IKey {
         let trim = self.key_is_trim(e);
-        let holes = if trim {
-            d.unused_low() as u64
-        } else {
-            // Where terms are inferred again and again, sharper.
-            !self.used_bvars(e)
-        };
-        if let Some(k) = self.memo_key(e, env, ls, holes, INFER_MEMO_RANGE) {
-            let (i, _) =
-                Self::memo_find_or_add(&mut self.vargs, &mut self.infer_memo, k, [NONE, 0]);
-            return IKey::Memo(i);
+        let range = d.loose_bvar_range();
+        let n = range.min(self.a.env_len(env));
+        if n <= INFER_MEMO_RANGE {
+            let holes = if trim {
+                d.unused_low() as u64
+            } else {
+                // Where terms are inferred again and again, sharper.
+                !self.used_bvars(e)
+            } & ((1u64 << n) - 1);
+            let tuple = self.memo_tuple(env, range, n, holes);
+            return IKey::Memo(self.infer_memo.find_or_add(e, ls, tuple));
         }
         IKey::Thunk(if trim {
             // The key is the term's thunk, likely made already.
