@@ -129,6 +129,7 @@ pub struct Nbe<'e> {
     list_cache: lsub::Lsub<LevelList>,
     /// Universe parameter lists by their names (see `lsub::ParamClasses`).
     param_classes: lsub::ParamClasses,
+    decl_ls_cache: lsub::DeclLs,
     const_type: IdMap<(NameId, LevelList), V>,
     const_value: IdMap<(NameId, LevelList), V>,
     /// Values left in their `.olean` files, as built in the store.
@@ -296,6 +297,7 @@ impl<'e> Nbe<'e> {
             level_cache: Default::default(),
             list_cache: Default::default(),
             param_classes: Default::default(),
+            decl_ls_cache: Default::default(),
             const_type: IdMap::default(),
             const_value: IdMap::default(),
             lazy_values: IdMap::default(),
@@ -502,6 +504,7 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.canon_fvar);
         shrink(&mut self.level_checked);
         self.a.clear();
+        self.decl_ls_cache.clear();
         self.prunes.fill([val::NONE; 3]);
         self.trim_holes_memo.fill([val::NONE; 4]);
         self.eager_slots.fill([val::NONE; 4]);
@@ -661,15 +664,21 @@ impl<'e> Nbe<'e> {
 
     /// The substitution of `d`'s universe parameters by `ls`.
     pub fn decl_ls(&mut self, d: &Decl, ls: LevelList) -> Ls {
-        if super::univ::OWN_LEVELS
-            && self
-                .st
-                .is_own_levels(self.st.name_list(d.level_params), self.st.list(ls))
-        {
+        let params = d.level_params;
+        if params.is_empty() {
             return Ls::ID;
         }
-        let params = self.param_classes.class(&self.st, d.level_params);
-        self.a.mk_ls(params, ls)
+        self.decl_ls_cache.get_or_insert(params, ls, || {
+            if super::univ::OWN_LEVELS
+                && self
+                    .st
+                    .is_own_levels(self.st.name_list(params), self.st.list(ls))
+            {
+                return Ls::ID;
+            }
+            let params = self.param_classes.class(&self.st, params);
+            self.a.mk_ls(params, ls)
+        })
     }
 
     // ---- literals ----

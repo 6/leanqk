@@ -143,6 +143,61 @@ impl<V: Copy> Cap for Lsub<V> {
     }
 }
 
+/// Recent declaration substitutions, keyed by the original parameter range
+/// and the supplied levels. Their values are indices into the NbE arena.
+pub(super) struct DeclLs(Box<[DeclLsSlot; Self::SLOTS]>);
+
+#[derive(Clone, Copy)]
+struct DeclLsSlot {
+    params: NameList,
+    levels: LevelList,
+    value: Ls,
+}
+
+impl DeclLsSlot {
+    const EMPTY: Self = Self {
+        params: NameList { start: 0, len: 0 },
+        levels: LevelList::EMPTY,
+        value: Ls::ID,
+    };
+}
+
+impl Default for DeclLs {
+    fn default() -> Self {
+        Self(Box::new([DeclLsSlot::EMPTY; Self::SLOTS]))
+    }
+}
+
+impl DeclLs {
+    const SLOTS: usize = 512;
+
+    #[inline]
+    pub fn get_or_insert(
+        &mut self,
+        params: NameList,
+        levels: LevelList,
+        build: impl FnOnce() -> Ls,
+    ) -> Ls {
+        debug_assert!(!params.is_empty());
+        let key = (params.start as u64) << 32 | levels.0 as u64;
+        let slot = &mut self.0[slot(key) & (Self::SLOTS - 1)];
+        if slot.params == params && slot.levels == levels {
+            return slot.value;
+        }
+        let value = build();
+        *slot = DeclLsSlot {
+            params,
+            levels,
+            value,
+        };
+        value
+    }
+
+    pub fn clear(&mut self) {
+        self.0.fill(DeclLsSlot::EMPTY);
+    }
+}
+
 /// Whether constants whose universe parameters have the same names share
 /// substitutions (`ParamClasses`).
 pub const PARAM_CLASSES: bool = true;
