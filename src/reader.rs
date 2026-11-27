@@ -701,9 +701,21 @@ fn finish_viewed(
     views: Option<&dyn Views>,
     read: impl FnOnce(&mut State) -> Result<ReadStats, ReadError>,
 ) -> Result<Done, ReadError> {
-    let res = read(&mut st);
+    let mut res = read(&mut st);
     crate::trace::phase("lines");
     if let Some(v) = views {
+        // The views see the shared terms interned, and go before the
+        // records are put together.
+        if res.is_ok()
+            && let Some(b) = st.lazy.as_deref_mut()
+            && let Err(e) = b.finish_shared(&mut st.env, st.append)
+        {
+            res = Err(ReadError {
+                line: 0,
+                class: e.class,
+                msg: e.msg,
+            });
+        }
         v.drain();
         crate::trace::phase("drained");
         if let Some(b) = st.lazy.as_deref_mut() {

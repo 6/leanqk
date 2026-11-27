@@ -236,6 +236,9 @@ pub(super) struct Builder {
 /// made, as they were: a view's lazy values are built from them, not from
 /// the arena ids the view has not got. (Each record is interned once, so
 /// what is here never changes.)
+/// How many records [`Builder::undo_new`] holds at most.
+const UNDO_BATCH: usize = 1 << 12;
+
 #[derive(Default)]
 pub(crate) struct Undo(std::sync::RwLock<HashMap<u32, u64>>);
 
@@ -772,6 +775,9 @@ impl Builder {
                 };
                 if (top as usize) < self.viewed {
                     self.undo_new.push((top, r));
+                    if self.undo_new.len() >= UNDO_BATCH {
+                        self.hand_over_undo();
+                    }
                 }
                 self.recs.store_shared(top as usize, DONE | id as u64);
                 self.mark(top as usize);
@@ -870,8 +876,30 @@ impl Builder {
         if self.roots.is_empty() {
             return Ok(None);
         }
-        self.promote_shared(env, append)?;
-        crate::trace::phase("promote_shared");
+        self.finish_shared(env, append)?;
+        self.finish_stored(env, threads)
+    }
+
+    /// The first part of [`Builder::finish`], which views (and their
+    /// values) survive.
+    pub(super) fn finish_shared(&mut self, env: &mut Env, append: bool) -> R<()> {
+        if !self.roots.is_empty() {
+            self.promote_shared(env, append)?;
+            self.hand_over_undo();
+            crate::trace::phase("promote_shared");
+        }
+        Ok(())
+    }
+
+    /// The rest, once the views are gone.
+    pub(super) fn finish_stored(
+        self,
+        env: &mut Env,
+        threads: usize,
+    ) -> R<Option<Box<dyn LazyValues>>> {
+        if self.roots.is_empty() {
+            return Ok(None);
+        }
         #[cfg(test)]
         let wide_test = tests::WIDE.get();
         #[cfg(not(test))]

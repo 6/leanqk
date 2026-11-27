@@ -447,7 +447,7 @@ fn view_marks() -> Vec<u64> {
     std::env::var("NITROLEAN_VIEW_MARKS")
         .ok()
         .and_then(|v| v.split(',').map(|x| x.trim().parse().ok()).collect())
-        .unwrap_or_else(|| vec![10, 60, 200, 500])
+        .unwrap_or_else(|| vec![10, 60, 200, 500, 1000])
 }
 
 fn overlap_plan(jobs: usize, readers: usize) -> Option<(Option<usize>, usize, usize)> {
