@@ -1,5 +1,6 @@
 //! The repository's tooling, run as `cargo xtask <command>` (see README.md).
 
+mod ab;
 mod arena;
 mod ci;
 mod corpus;
@@ -70,6 +71,8 @@ enum Cmd {
     Difffuzz(difffuzz::Args),
     /// A profile-guided release build, trained on exports.
     Pgo(pgo::Args),
+    /// Summarize the rows of an A/B benchmark (.github/workflows/ab-bench.yml).
+    AbSummary(ab::Args),
 }
 
 fn main() {
@@ -97,6 +100,7 @@ fn main() {
         Cmd::Oracle(c) => oracle::main(c),
         Cmd::Difffuzz(a) => difffuzz::main(a),
         Cmd::Pgo(a) => pgo::main(a),
+        Cmd::AbSummary(a) => ab::summary(a),
     };
     if let Err(e) = r {
         match e.downcast_ref::<util::Exit>() {

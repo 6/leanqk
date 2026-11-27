@@ -1,0 +1,108 @@
+name: A/B benchmark measure
+description: >-
+  On one machine: restores the Mathlib export from the cache, takes the
+  slices, downloads both builds and runs bench/ab/run.sh; see
+  .github/workflows/ab-bench.yml.
+
+inputs:
+  job:
+    description: This job's index
+    required: true
+  slices:
+    description: Export names, space-separated
+    required: true
+  threads:
+    description: Thread counts, space-separated
+    required: true
+  reps:
+    description: A/B/B/A quadruples per slice and thread count
+    required: true
+  candidate_flags:
+    description: Extra `nitrolean check` flags for the candidate
+    default: ""
+  full_key:
+    description: Cache key of the full export, empty if not needed
+    default: ""
+  rep25s_key:
+    description: Cache key of the rep25s slice, empty if not needed
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Probe the machine
+      shell: bash
+      run: |
+        echo "META=$RUNNER_TEMP/meta.sh" >> "$GITHUB_ENV"
+        bench/ab/probe.sh "$RUNNER_TEMP/meta.sh" | tee "$RUNNER_TEMP/machine.txt"
+        df -h / /mnt 2>/dev/null | tail -n +2
+
+    - name: Restore the full export
+      if: ${{ inputs.full_key != '' }}
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/ab-export/full.ndjson
+        key: ${{ inputs.full_key }}
+        fail-on-cache-miss: true
+
+    - name: Restore the rep25s slice
+      if: ${{ inputs.rep25s_key != '' }}
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/ab-export-rep25s/rep25s.ndjson
+        key: ${{ inputs.rep25s_key }}
+        fail-on-cache-miss: true
+
+    # headNN: the first NN% of the full export's lines (a prefix of an
+    # export is a valid export).
+    - name: Take the slices
+      shell: bash
+      env:
+        SLICES: ${{ inputs.slices }}
+      run: |
+        E=$HOME/ab-slices
+        mkdir -p "$E"
+        echo "EXPORTS=$E" >> "$GITHUB_ENV"
+        for s in $SLICES; do
+          case $s in
+            full) ln -sf "$HOME/ab-export/full.ndjson" "$E/full.ndjson" ;;
+            rep25s) ln -sf "$HOME/ab-export-rep25s/rep25s.ndjson" "$E/rep25s.ndjson" ;;
+            head10) head -n 11208172 "$HOME/ab-export/full.ndjson" > "$E/head10.ndjson" ;;
+            head25) head -n 28020430 "$HOME/ab-export/full.ndjson" > "$E/head25.ndjson" ;;
+            head50) head -n 56040859 "$HOME/ab-export/full.ndjson" > "$E/head50.ndjson" ;;
+            *) echo "unknown slice $s"; exit 1 ;;
+          esac
+          echo "$s: $(stat -L -c %s "$E/$s.ndjson") bytes"
+        done
+        # The full export is only kept if measured.
+        case " $SLICES " in *" full "*) ;; *) rm -f "$HOME/ab-export/full.ndjson" ;; esac
+        df -h / | tail -1
+
+    - uses: actions/download-artifact@v8
+      with:
+        pattern: nitrolean-${{ runner.arch }}-*
+        path: ${{ runner.temp }}/bins
+
+    - name: Run A/B/B/A
+      shell: bash
+      env:
+        JOB: ${{ inputs.job }}
+        SLICES: ${{ inputs.slices }}
+        THREADS: ${{ inputs.threads }}
+        REPS: ${{ inputs.reps }}
+        B_FLAGS: ${{ inputs.candidate_flags }}
+      run: |
+        export A_BIN=$RUNNER_TEMP/bins/nitrolean-$RUNNER_ARCH-A/nitrolean
+        export B_BIN=$RUNNER_TEMP/bins/nitrolean-$RUNNER_ARCH-B/nitrolean
+        chmod +x "$A_BIN" "$B_BIN"
+        sha256sum "$A_BIN" "$B_BIN"
+        bench/ab/run.sh "$RUNNER_TEMP/rows-$RUNNER_ARCH-$JOB.tsv"
+        { echo "### Job $JOB"; echo; cat "$RUNNER_TEMP/machine.txt"; } >> "$GITHUB_STEP_SUMMARY"
+
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: rows-${{ runner.arch }}-${{ inputs.job }}
+        path: ${{ runner.temp }}/rows-*.tsv
+        retention-days: 30
+        if-no-files-found: ignore

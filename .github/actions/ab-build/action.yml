@@ -1,0 +1,59 @@
+name: A/B benchmark build
+description: >-
+  Builds nitrolean at one commit as the Mathlib benchmark builds it
+  (profile-guided, trained on the repository's exports) and uploads the
+  binary; see .github/workflows/ab-bench.yml.
+
+inputs:
+  sha:
+    description: The commit to build
+    required: true
+  side:
+    description: A (base) or B (candidate)
+    required: true
+  target_cpu:
+    description: rustc's -C target-cpu (empty for the default)
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v7
+      with:
+        ref: ${{ inputs.sha }}
+        path: tgt
+
+    # The Rust toolchain that commit's mise.toml names, with llvm-tools for
+    # the profile.
+    - name: Install Rust
+      shell: bash
+      working-directory: tgt
+      run: |
+        v=$(sed -n 's/^rust = { *version = "\([^"]*\)".*/\1/p; s/^rust = "\([^"]*\)".*/\1/p' mise.toml | head -1)
+        test -n "$v"
+        command -v rustup >/dev/null || {
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH=$HOME/.cargo/bin:$PATH
+        }
+        rustup toolchain install "$v" --profile minimal -c llvm-tools
+        echo "RUSTUP_TOOLCHAIN=$v" >> "$GITHUB_ENV"
+
+    - name: Build
+      shell: bash
+      working-directory: tgt
+      env:
+        CPU: ${{ inputs.target_cpu }}
+      run: |
+        cargo xtask pgo --repo --rustflags "${CPU:+-C target-cpu=$CPU}"
+        mkdir -p "$RUNNER_TEMP/bin"
+        cp target/release/nitrolean "$RUNNER_TEMP/bin/nitrolean"
+        "$RUNNER_TEMP/bin/nitrolean" --version
+        sha256sum "$RUNNER_TEMP/bin/nitrolean"
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: nitrolean-${{ runner.arch }}-${{ inputs.side }}
+        path: ${{ runner.temp }}/bin/nitrolean
+        retention-days: 7
+        if-no-files-found: error

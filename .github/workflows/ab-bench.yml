@@ -1,0 +1,367 @@
+name: A/B benchmark
+
+# Compares two builds of nitrolean, A (base) and B (candidate), on many
+# GitHub-hosted machines at once, and says whether B meets the bar against A.
+#
+# Jobs:
+# - setup resolves both refs to commits and picks the cache keys.
+# - export makes sure the Mathlib v4.36.0 export (`cargo xtask mathlib
+#   fetch`, 6.3 GB) and, if asked for, the rep25s slice
+#   (bench/mathlib/rep25s/) are in the Actions cache. It builds one only on a
+#   cache miss (the first run on a branch whose caches cannot see main's);
+#   the measuring jobs only restore it.
+# - build-x86 and build-arm build each ref once per architecture as the
+#   Mathlib benchmark builds nitrolean: profile-guided, trained on the
+#   repository's exports (`cargo xtask pgo --repo`), with the Rust
+#   toolchain that ref's mise.toml names. The Mathlib benchmark builds for
+#   its own machine (target-cpu=native); here one binary runs on every
+#   machine, so x86_64 builds for `x86_cpu` (x86-64-v3 by default, which
+#   both the Intel and the AMD runners have) and aarch64 for the default
+#   target.
+# - measure-x86 and measure-arm: `jobs` machines per architecture (a
+#   matrix; GitHub queues what exceeds the account's concurrent jobs). Each
+#   records its CPU model and which of `perf stat -e instructions:u` and
+#   `-e instructions` (user plus kernel, all threads) it can count. On
+#   x86_64 about one machine in three is an AMD EPYC without instruction
+#   counters: it marks itself no-counters and still measures wall time, CPU
+#   time and peak RSS. For each slice and thread count it runs
+#   `reps` interleaved A/B/B/A quadruples (bench/ab/run.sh), each run
+#   under GNU time and, where it can, perf stat; B gets `candidate_flags`
+#   after `check -j N`. Every run's output (exit status, standard output
+#   and standard error) is hashed; A's and B's must be the same.
+# - aggregate collects the rows and writes the job summary and an
+#   artifact (`cargo xtask ab-summary`, xtask/src/ab.rs). Machines differ in speed, so every
+#   comparison is paired within one machine: each machine gives one ratio
+#   B/A per metric, and the summary gives, per slice, architecture and
+#   thread count, the median of these ratios over machines with a 95%
+#   interval from the sign test, the instruction change by CPU model
+#   (Intel's on x86_64, where AMD has no counters), peak RSS, the machines
+#   by CPU model, and a PASS or FAIL line against the bar:
+#     instructions:u: median change at most +0.1%;
+#     wall and CPU time: not worse (the 95% interval not wholly above 0);
+#     peak RSS: not higher (likewise);
+#     output: identical in every run.
+#   The summary also gives the time from dispatch to result.
+#
+# Slices. All of Mathlib (`full`) decides. The other slices are for
+# screening only: a quick look before the full run, never a decision.
+#   rep25s   a dependency-closed sample, 6.9 M lines (bench/mathlib/rep25s)
+#   head10   the first 10% of the full export's lines (a prefix of an
+#   head25   export is an export): 11.2 M, 28.0 M and 56.0 M lines
+#   head50
+# Several may be given at once (e.g. "full head25"); with `full` among them,
+# the summary sets each slice's changes beside full Mathlib's from the same
+# machines, which shows how well the slice predicts. On small slices the
+# instruction change has been seen to understate full Mathlib's
+# (+0.24% on a slice against +0.4 to 1.5% on all of it), and aarch64
+# machines have misjudged x86_64 changes: decide on full, on x86_64.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Base ref (A), a branch, tag or commit (e.g. main, main~5)
+        default: main
+      candidate:
+        description: Candidate ref (B)
+        required: true
+      slice:
+        description: "Slices, space-separated: full (decides), rep25s, head10, head25, head50 (screening)"
+        default: full
+      jobs:
+        description: Machines per architecture (fan-out)
+        default: "20"
+      arch:
+        description: Where to run
+        type: choice
+        options: [x86, arm, both]
+        default: x86
+      candidate_flags:
+        description: Extra flags for the candidate's `nitrolean check` (e.g. --stream)
+        default: ""
+      threads:
+        description: Thread counts, space-separated
+        default: "1 4"
+      reps:
+        description: A/B/B/A quadruples per machine, slice and thread count
+        default: "1"
+      x86_cpu:
+        description: rustc target-cpu for the x86_64 builds (one binary for every machine)
+        type: choice
+        options: [x86-64-v3, x86-64-v4, x86-64-v2]
+        default: x86-64-v3
+
+run-name: "A/B: ${{ inputs.base }} vs ${{ inputs.candidate }} ${{ inputs.candidate_flags }} (${{ inputs.slice }}, ${{ inputs.arch }}, ${{ inputs.jobs }} jobs)"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  LEAN_TOOLCHAIN: leanprover/lean4:v4.36.0
+  # The exports' SHA-256 name their cache entries.
+  FULL_KEY: ab-mathlib-v4.36.0-full-f749dfd084fc0727d107c7aaded7d492cebfc0b517cfaa7337d8a7578a6c0dec
+  REP25S_KEY: ab-mathlib-v4.36.0-rep25s-e8aff3c872ae2b052b49646047f1e6ce331f29e14c394eb4f845a3b01e47b768
+
+jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      base_sha: ${{ steps.s.outputs.base_sha }}
+      candidate_sha: ${{ steps.s.outputs.candidate_sha }}
+      jobs: ${{ steps.s.outputs.jobs }}
+      slices: ${{ steps.s.outputs.slices }}
+      threads: ${{ steps.s.outputs.threads }}
+      reps: ${{ steps.s.outputs.reps }}
+      full_key: ${{ steps.s.outputs.full_key }}
+      rep25s_key: ${{ steps.s.outputs.rep25s_key }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: s
+        env:
+          BASE: ${{ inputs.base }}
+          CANDIDATE: ${{ inputs.candidate }}
+          SLICES: ${{ inputs.slice }}
+          JOBS: ${{ inputs.jobs }}
+          THREADS: ${{ inputs.threads }}
+          REPS: ${{ inputs.reps }}
+        run: |
+          resolve() {
+            git rev-parse --verify -q "origin/$1^{commit}" || git rev-parse --verify -q "$1^{commit}" ||
+              { echo "::error::cannot resolve $1"; exit 1; }
+          }
+          base=$(resolve "$BASE") cand=$(resolve "$CANDIDATE")
+          [[ $JOBS =~ ^[0-9]+$ ]] && [ "$JOBS" -ge 1 ] && [ "$JOBS" -le 128 ] || { echo "::error::jobs must be 1 to 128"; exit 1; }
+          [[ $REPS =~ ^[0-9]+$ ]] && [ "$REPS" -ge 1 ] && [ "$REPS" -le 20 ] || { echo "::error::reps must be 1 to 20"; exit 1; }
+          threads=$(echo $THREADS)
+          [[ $threads =~ ^[0-9]+( [0-9]+)*$ ]] || { echo "::error::threads: numbers, space-separated"; exit 1; }
+          slices=$(echo $SLICES)
+          full_key= rep25s_key=
+          for s in $slices; do
+            case $s in
+              full|head10|head25|head50) full_key=$FULL_KEY ;;
+              rep25s) rep25s_key=$REP25S_KEY ;;
+              *) echo "::error::unknown slice $s"; exit 1 ;;
+            esac
+          done
+          [ -n "$slices" ] || { echo "::error::no slice"; exit 1; }
+          {
+            echo "base_sha=$base"
+            echo "candidate_sha=$cand"
+            echo "jobs=$(seq "$JOBS" | jq -cs .)"
+            echo "slices=$slices"
+            echo "threads=$threads"
+            echo "reps=$REPS"
+            echo "full_key=$full_key"
+            echo "rep25s_key=$rep25s_key"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  export:
+    needs: setup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - id: full
+        if: needs.setup.outputs.full_key != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/ab-export/full.ndjson
+          key: ${{ needs.setup.outputs.full_key }}
+          lookup-only: true
+      - id: rep25s
+        if: needs.setup.outputs.rep25s_key != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/ab-export-rep25s/rep25s.ndjson
+          key: ${{ needs.setup.outputs.rep25s_key }}
+          lookup-only: true
+      - id: need
+        run: |
+          full=false rep25s=false
+          [ -n "$FULL" ] && [ "$FULL_HIT" != true ] && full=true
+          [ -n "$REP" ] && [ "$REP_HIT" != true ] && rep25s=true
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "rep25s=$rep25s" >> "$GITHUB_OUTPUT"
+          echo "build the full export: $full; build rep25s: $rep25s"
+        env:
+          FULL: ${{ needs.setup.outputs.full_key }}
+          REP: ${{ needs.setup.outputs.rep25s_key }}
+          FULL_HIT: ${{ steps.full.outputs.cache-hit }}
+          REP_HIT: ${{ steps.rep25s.outputs.cache-hit }}
+      # Exporting all of Mathlib takes about 14 GB of memory.
+      - name: Free disk space and add swap
+        if: steps.need.outputs.full == 'true' || steps.need.outputs.rep25s == 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/share/powershell
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile /swapfile
+          sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile
+          sudo mkswap /swapfile >/dev/null && sudo swapon /swapfile
+          df -h / | tail -1; free -g
+      - uses: jdx/mise-action@v5
+        if: steps.need.outputs.full == 'true' || steps.need.outputs.rep25s == 'true'
+      - name: Build the exports
+        if: steps.need.outputs.full == 'true' || steps.need.outputs.rep25s == 'true'
+        env:
+          FULL: ${{ steps.need.outputs.full }}
+          REP: ${{ steps.need.outputs.rep25s }}
+        run: |
+          cargo xtask install-elan --toolchain "$LEAN_TOOLCHAIN"
+          if [ "$FULL" = true ]; then
+            mkdir -p ~/ab-export
+            time cargo xtask mathlib fetch ~/ab-export/full.ndjson --work ~/mathlib4
+          fi
+          if [ "$REP" = true ]; then
+            time bench/mathlib/rep25s/build.sh ~/mathlib4 ~/ab-export-rep25s/rep25s.ndjson
+          fi
+          rm -rf ~/mathlib4 ~/.cache/mathlib
+          df -h / | tail -1
+      - if: steps.need.outputs.full == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/ab-export/full.ndjson
+          key: ${{ needs.setup.outputs.full_key }}
+      - if: steps.need.outputs.rep25s == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/ab-export-rep25s/rep25s.ndjson
+          key: ${{ needs.setup.outputs.rep25s_key }}
+
+  build-x86:
+    needs: setup
+    if: inputs.arch != 'arm'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        side: [A, B]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/ab-build
+        with:
+          sha: ${{ matrix.side == 'A' && needs.setup.outputs.base_sha || needs.setup.outputs.candidate_sha }}
+          side: ${{ matrix.side }}
+          target_cpu: ${{ inputs.x86_cpu }}
+
+  build-arm:
+    needs: setup
+    if: inputs.arch != 'x86'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        side: [A, B]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/ab-build
+        with:
+          sha: ${{ matrix.side == 'A' && needs.setup.outputs.base_sha || needs.setup.outputs.candidate_sha }}
+          side: ${{ matrix.side }}
+
+  measure-x86:
+    needs: [setup, export, build-x86]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ${{ fromJSON(needs.setup.outputs.jobs) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/ab-measure
+        with:
+          job: ${{ matrix.job }}
+          slices: ${{ needs.setup.outputs.slices }}
+          threads: ${{ needs.setup.outputs.threads }}
+          reps: ${{ needs.setup.outputs.reps }}
+          candidate_flags: ${{ inputs.candidate_flags }}
+          full_key: ${{ needs.setup.outputs.full_key }}
+          rep25s_key: ${{ needs.setup.outputs.rep25s_key }}
+
+  measure-arm:
+    needs: [setup, export, build-arm]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ${{ fromJSON(needs.setup.outputs.jobs) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/ab-measure
+        with:
+          job: ${{ matrix.job }}
+          slices: ${{ needs.setup.outputs.slices }}
+          threads: ${{ needs.setup.outputs.threads }}
+          reps: ${{ needs.setup.outputs.reps }}
+          candidate_flags: ${{ inputs.candidate_flags }}
+          full_key: ${{ needs.setup.outputs.full_key }}
+          rep25s_key: ${{ needs.setup.outputs.rep25s_key }}
+
+  aggregate:
+    needs: [setup, measure-x86, measure-arm]
+    if: always() && needs.setup.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: rows-*
+          path: rows
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: nitrolean-*
+          path: bins
+      - name: Summarize
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ inputs.base }}
+          CANDIDATE: ${{ inputs.candidate }}
+          BASE_SHA: ${{ needs.setup.outputs.base_sha }}
+          CANDIDATE_SHA: ${{ needs.setup.outputs.candidate_sha }}
+          FLAGS: ${{ inputs.candidate_flags }}
+          SLICES: ${{ needs.setup.outputs.slices }}
+          THREADS: ${{ needs.setup.outputs.threads }}
+          REPS: ${{ needs.setup.outputs.reps }}
+          JOBS: ${{ inputs.jobs }}
+          ARCH: ${{ inputs.arch }}
+          X86_CPU: ${{ inputs.x86_cpu }}
+          MEASURE: "x86: ${{ needs.measure-x86.result }}, arm: ${{ needs.measure-arm.result }}"
+        run: |
+          mkdir -p out
+          ls rows/*.tsv > /dev/null || { echo "::error::no rows"; exit 1; }
+          created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
+          secs=$(( $(date +%s) - $(date -d "$created" +%s) ))
+          bins=$(for f in bins/*/nitrolean; do
+            printf '{"key":"%s","value":"%s"}\n' "$(basename "$(dirname "$f")")" "$(sha256sum "$f" | cut -d' ' -f1)"
+          done | jq -s from_entries)
+          case $ARCH in x86) jr=$JOBS ;; arm) jr=$JOBS ;; *) jr="$JOBS per architecture" ;; esac
+          jq -n --arg base_ref "$BASE" --arg candidate_ref "$CANDIDATE" \
+            --arg base_sha "$BASE_SHA" --arg candidate_sha "$CANDIDATE_SHA" \
+            --arg candidate_flags "$FLAGS" --arg slices "$SLICES" --arg threads "$THREADS" \
+            --arg reps "$REPS" --arg jobs_requested "$jr" \
+            --arg time_to_result "$((secs / 60)) min $((secs % 60)) s" \
+            --arg build_note "cargo xtask pgo --repo; x86_64 target-cpu $X86_CPU, aarch64 default; measuring jobs: $MEASURE" \
+            --argjson binaries "$bins" '$ARGS.named' > out/build.json
+          cargo xtask ab-summary out/build.json out/summary.md out/results.json rows/*.tsv > /dev/null
+          awk 'FNR > 1 || NR == 1' rows/*.tsv > out/rows.tsv
+          cat out/summary.md >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^\*\*(PASS|FAIL|Overall)' out/summary.md
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ab-bench-summary
+          path: out/
+          if-no-files-found: ignore
