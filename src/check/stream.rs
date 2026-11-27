@@ -474,7 +474,19 @@ pub(crate) fn read_checking<R: Send>(
                 .stack_size(stack)
                 .spawn_scoped(s, move || stream.work());
         }
+        // Should the read panic, the threads end, so that the scope ends
+        // and the panic goes on.
+        struct EndOnPanic<'a>(&'a Stream);
+        impl Drop for EndOnPanic<'_> {
+            fn drop(&mut self) {
+                if std::thread::panicking() {
+                    self.0.finish();
+                }
+            }
+        }
+        let guard = EndOnPanic(&stream);
         let r = read(&stream);
+        drop(guard);
         let early = stream.finish();
         (r, early)
     })

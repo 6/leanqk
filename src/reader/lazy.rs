@@ -1702,8 +1702,22 @@ thread_local! {
 }
 
 impl Builder {
+    /// Whether [`Builder::view`] can be called: its records are in memory
+    /// that never moves. Reserves it if nothing is in it yet (no record
+    /// was read); not so where the full reservation failed.
+    pub(super) fn can_view(&mut self) -> bool {
+        if self.recs.is_empty() && !self.recs.is_fixed() {
+            self.recs = Slab::new();
+        }
+        if self.side.is_empty() && !self.side.is_fixed() {
+            self.side = Slab::new();
+        }
+        self.recs.is_fixed() && self.side.is_fixed()
+    }
+
     /// The values of the declarations read so far, for other threads to
     /// build while the read goes on; arena ids below `exprs` are theirs.
+    /// Panics unless [`Builder::can_view`].
     pub(super) fn view(&mut self, exprs: u32) -> Live {
         let n = self.from;
         self.viewed = n;

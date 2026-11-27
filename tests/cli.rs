@@ -436,3 +436,16 @@ fn stream_after_a_reread_says_the_same() {
         "{stats}"
     );
 }
+
+#[test]
+fn stream_on_small_exports_says_the_same() {
+    // Exports with no records, or no declarations, for the views.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/kernel/exports");
+    for name in [
+        "fmt-meta-only.ndjson",
+        "univ-succ-max.ndjson",
+        "fmt-fwd-expr.ndjson",
+    ] {
+        assert_stream_same(&dir.join(name));
+    }
+}

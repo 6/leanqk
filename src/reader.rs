@@ -1834,6 +1834,9 @@ impl State {
             return None;
         }
         let lazy = self.lazy.as_deref_mut()?;
+        if !lazy.can_view() {
+            return None;
+        }
         // (On an error the view is not made; the read meets it again.)
         lazy.promote_cands(&mut self.env, self.append).ok()?;
         let mut env = self
