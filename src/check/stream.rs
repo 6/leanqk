@@ -1,25 +1,26 @@
 //! Checking while the export is read: the reader hands over views of the
-//! environment so far (see [`crate::reader::Views`]), and checker threads
-//! check their blocks as they come, each against its view. Only blocks
-//! whose verdict depends on nothing after them are checked early: safe
-//! singletons, the blocks [`super::prefix_block`] selects (the ones the
-//! evaluating checker takes, which look declarations up only before
-//! themselves). A view has no index of its expressions, and an index of
-//! the names of the first view only, so a check against it may make terms
-//! of its own that the environment has (which costs nothing in a verdict:
-//! checking never takes two ids for different terms).
+//! environment so far (see [`crate::reader::Views`]), at marks through the
+//! file and once more when the whole file is read (while its names and
+//! expressions are indexed), and checker threads check the views' blocks
+//! as they come. Only blocks whose verdict depends on nothing after them
+//! are checked early: the blocks [`super::prefix_block`] selects (safe
+//! singletons the evaluating checker takes, which look declarations up
+//! only before themselves). A view has no index of its expressions, so a
+//! check against it may make terms of its own that the environment has
+//! (which costs nothing in a verdict: checking never takes two ids for
+//! different terms).
 //!
 //! What an early check finds is a judgment on the condition that the
 //! rest of the read agrees with it, which [`finish`] verifies when the
 //! read is over: the file is read once (no duplicates made it read again),
-//! the built-in extensions found in every view are those of the whole
-//! environment, and the names the checker looks up by their text are the
-//! same. Then the blocks checked early and accepted are not checked again;
+//! the names the checker looks up by their text are the same, and so are
+//! the built-in extensions the view found, but for the evaluator's
+//! (`Ext::EVAL_ONLY`) if the check never asked the evaluator anything.
+//! Then the blocks checked early and accepted are not checked again;
 //! every other block, and every block an early check failed on or did not
 //! finish (whatever the reason), is checked as usual against the whole
 //! environment, which decides the verdict and the message exactly as
-//! without views. If anything does not agree, every block is checked as
-//! usual.
+//! without views. If nothing agrees, every block is checked as usual.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
@@ -84,7 +85,7 @@ struct Ready {
     env: Env,
     ext: Ext,
     names: Vec<Option<NameId>>,
-    /// Whether the built-in extensions are all there: else a later view
+    /// Whether its built-in extensions look final: else a later view
     /// would likely find more, and this one's checks would be in vain.
     complete: bool,
 }
@@ -147,10 +148,11 @@ impl View {
 struct State {
     /// Views in order; the first is the one being worked on.
     views: Vec<Arc<View>>,
-    /// Views made so far, and the blocks they cover.
+    /// Views made at marks so far.
     made: usize,
     /// The last view's [`View::id`].
     id: usize,
+    /// Blocks the views since the last drain cover.
     covered: usize,
     /// Threads holding a view.
     busy: usize,
@@ -212,8 +214,8 @@ impl Stream {
         }
     }
 
-    /// The threads' work (each runs this): check the views' blocks until
-    /// the views are drained.
+    /// The threads' work (each runs this): check the views' blocks as
+    /// they come, until the read is over.
     pub(crate) fn work(&self) {
         QUIET.set(true);
         // The view this thread is done with.
@@ -312,18 +314,7 @@ impl Stream {
                         };
                         v.accepted[i - v.from].store(how, Ordering::Relaxed);
                     }
-                    Ok(r) => {
-                        if std::env::var_os("NITROLEAN_STREAM_DEBUG2").is_some() {
-                            eprintln!(
-                                "block {i}: {:?} corrections {}",
-                                r.err().map(|e| format!("{e:?}")
-                                    .chars()
-                                    .take(150)
-                                    .collect::<String>()),
-                                corrections.len()
-                            );
-                        }
-                    }
+                    Ok(_) => {}
                     Err(_) => {
                         tc = Tc::new(store(), ext, 0);
                         nb = Nbe::for_worker(store(), ext, jobs, share);
@@ -457,11 +448,13 @@ fn quiet_panics() {
     });
 }
 
-/// Run `read` (which reads the export, handing its views to the stream)
-/// while `jobs` threads check the views' blocks; then what they found.
 /// About how many cores a read keeps busy.
 const READER_CORES: usize = 3;
 
+/// Run `read` (which reads the export, handing its views to the stream)
+/// while threads check the views' blocks (as `jobs` would, but on the
+/// cores the read leaves: `NITROLEAN_STREAM_THREADS` says how many); then
+/// what they found.
 pub(crate) fn read_checking<R: Send>(
     jobs: usize,
     marks: Vec<u64>,
