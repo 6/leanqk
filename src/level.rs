@@ -199,6 +199,7 @@ impl Levels {
     }
 
     /// The id of the list `ls`, if interned here.
+    #[inline(always)]
     pub(crate) fn find_list(&self, ls: &[LevelId]) -> Option<LevelList> {
         if ls.is_empty() {
             return Some(LevelList::EMPTY);

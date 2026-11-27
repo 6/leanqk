@@ -882,6 +882,7 @@ impl<'e> Nbe<'e> {
     }
 
     /// Close the binder that `push_fvar` opened as `x`.
+    #[inline(always)]
     pub fn pop_fvar(&mut self, x: V) {
         let val::Val::FVar(k, _) = self.a.get(x) else {
             unreachable!()

@@ -45,6 +45,7 @@ impl Nbe<'_> {
     // ---- binders ----
 
     /// The domain of a λ, Π or `PiInfer` value.
+    #[inline(always)]
     pub fn binder_dom(&mut self, v: V) -> V {
         let (Val::Lam(t, env, ls) | Val::Pi(t, env, ls) | Val::PiInfer(t, env, ls)) = self.a.get(v)
         else {
@@ -1153,6 +1154,7 @@ impl Nbe<'_> {
 
     /// Open a binder after checking its domain. An unused variable needs
     /// only a placeholder if the body reads older variables.
+    #[inline(always)]
     fn open_inferred_binder(
         &mut self,
         (bi, name, dom, body): (BinderInfo, NameId, ExprId, ExprId),
