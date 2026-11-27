@@ -137,11 +137,9 @@ fn fill_data(
     nodes: &[ExprNode],
     from: usize,
 ) {
-    for (j, &node) in nodes.iter().enumerate().skip(from) {
-        if let Some(d) = compound_data(data, lets, node) {
-            data.set(j as u32, d);
-        }
-    }
+    data.fill_range(from, nodes.len(), |data, j| {
+        compound_data(data, lets, nodes[j])
+    });
 }
 
 /// The data of a compound node (else `None`), from its children's.

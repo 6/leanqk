@@ -357,16 +357,17 @@ impl<T: Copy> Slab<T> {
         true
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn push(&mut self, v: T) {
-        if self.len >= self.room {
-            self.grow(self.len + 1);
+        let len = self.len;
+        if len >= self.room {
+            self.grow(len + 1);
         }
         // SAFETY: `len < room <= cap` is inside the mapping, and `&mut self`
         // excludes every other access (no block is lent while it is
         // borrowed mutably).
-        unsafe { self.base.as_ptr().add(self.len).write(v) };
-        self.len += 1;
+        unsafe { self.base.as_ptr().add(len).write(v) };
+        self.len = len + 1;
     }
 
     pub fn extend_from_slice(&mut self, vs: &[T]) {
@@ -378,16 +379,6 @@ impl<T: Copy> Slab<T> {
             std::ptr::copy_nonoverlapping(vs.as_ptr(), self.base.as_ptr().add(self.len), vs.len())
         };
         self.len += vs.len();
-    }
-
-    /// Set element `i`, which must be below `len` (and not seen by any
-    /// view: see [`Slab::alias`]).
-    #[inline]
-    pub fn set(&mut self, i: u32, v: T) {
-        debug_assert!((i as usize) < self.len, "slab index {i} out of bounds");
-        assert!(i as usize >= self.frozen, "a slab's views see element {i}");
-        // SAFETY: as in `get`, with `&mut self` exclusive.
-        unsafe { self.base.as_ptr().add((i & MASK) as usize).write(v) };
     }
 
     /// Push copies of `v` until there are `n` elements.
@@ -407,11 +398,10 @@ impl<T: Copy> Slab<T> {
         self.len = n;
     }
 
+    #[inline(always)]
     pub fn as_slice(&self) -> &[T] {
-        if self.len == 0 {
-            return &[];
-        }
-        // SAFETY: elements `0..len` are initialized and inside the mapping.
+        // SAFETY: elements `0..len` are initialized and inside the mapping
+        // (with none, `base` is still aligned and not null).
         unsafe { std::slice::from_raw_parts(self.base.as_ptr(), self.len) }
     }
 
@@ -468,10 +458,39 @@ impl<T: Copy> Slab<T> {
             .is_some_and(|m| std::sync::Arc::strong_count(m) > 1)
     }
 
-    /// Push the items of `vs`.
-    pub fn extend(&mut self, vs: impl IntoIterator<Item = T>) {
-        for v in vs {
-            self.push(v);
+    /// Push `f` of each element of `src` (making room for all at once).
+    #[inline]
+    pub fn extend_map(&mut self, src: &[T], mut f: impl FnMut(T) -> T) {
+        let (len, n) = (self.len, src.len());
+        if n > self.room - len {
+            self.grow(len.saturating_add(n));
+        }
+        let to = self.base.as_ptr();
+        for (k, &v) in src.iter().enumerate() {
+            // SAFETY: as in `push`: `len + k < len + n <= room`.
+            unsafe { to.add(len + k).write(f(v)) };
+        }
+        self.len = len + n;
+    }
+
+    /// Set each element `i` in `from..to` (and below `len`) for which
+    /// `f(self, i)` (which sees the slab as it is so far) gives a value.
+    /// Panics if a view sees element `from`.
+    #[inline]
+    pub fn fill_range(
+        &mut self,
+        from: usize,
+        to: usize,
+        mut f: impl FnMut(&Self, usize) -> Option<T>,
+    ) {
+        assert!(from >= self.frozen, "a slab's views see element {from}");
+        for i in from..to.min(self.len) {
+            if let Some(v) = f(self, i) {
+                // SAFETY: `i < len`, inside the mapping, past what views
+                // see; `&mut self` excludes every other access (`f` is done
+                // with its borrow).
+                unsafe { self.base.as_ptr().add(i).write(v) };
+            }
         }
     }
 

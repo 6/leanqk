@@ -392,14 +392,14 @@ impl Builder {
         // Side offsets move from the run's table to this one.
         // (The sum stays in the low 32 bits: see `fits`.)
         let shift = (self.side.len() as u64).wrapping_sub(side_from as u64);
-        self.recs.extend(recs.iter().map(|&r| {
+        self.recs.extend_map(recs, |r| {
             let t = tag(r);
             if t == T_LAM || t == T_PI {
                 r.wrapping_add(shift)
             } else {
                 r
             }
-        }));
+        });
         self.side.extend_from_slice(side);
         // As `note_old`, but for the bits (rather than the records, which
         // are much larger): a record not marked there yet may be done by
