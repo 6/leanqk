@@ -28,7 +28,7 @@ use crate::env::{Env, LAZY_BASE, LazyValues, TermSink};
 use crate::expr::{BinderInfo, ExprId, ExprNode, LetBinder};
 use crate::idmap::IdMap;
 use crate::name::NameId;
-use crate::slab::Zeroed;
+use crate::slab::{Bits, Zeroed};
 use crate::strings::Overflow;
 
 // A record: `DONE` and an arena id in the low 32 bits, or a tag (3 bits
@@ -204,8 +204,6 @@ pub(super) struct Builder {
     starts: Vec<u32>,
     /// Lazy values whose root is a record of an earlier declaration.
     old_roots: Vec<u32>,
-    /// Where each declaration's records start (but the last's).
-    bounds: Vec<u32>,
     stack: Vec<u32>,
     /// For [`Builder::exprs`] (see `run`).
     ids: super::run::Ids,
@@ -214,11 +212,11 @@ pub(super) struct Builder {
     side_batch: Vec<u32>,
     /// Records of earlier declarations that records use and that are not
     /// interned (yet), as records are added: what
-    /// [`Builder::promote_shared`] interns. Unless `scan_at_end`, when it
-    /// finds them in one pass at the end instead (the records read ahead
-    /// on other threads are added without looking).
+    /// [`Builder::promote_shared`] interns.
     cands: Vec<u32>,
-    scan_at_end: bool,
+    /// While runs are read ahead (see [`Builder::share_done`]): a bit per
+    /// record marked done, set as they are.
+    done: Option<std::sync::Arc<Bits>>,
     /// Where [`Builder::exprs`] puts records before they join `recs`.
     fresh: Vec<u64>,
 }
@@ -248,17 +246,36 @@ impl Builder {
         b
     }
 
-    /// Have [`Builder::promote_shared`] scan all records at the end (for a
-    /// read that adds records without [`note_old`]).
-    pub(super) fn scan_at_end(&mut self) {
-        self.scan_at_end = true;
-    }
-
-    /// The first record of the current declaration, for [`note_old`] (0,
-    /// so that it notes nothing, when scanning at the end).
+    /// The first record of the current declaration, for [`note_old`].
     #[inline(always)]
     fn note_from(&self) -> usize {
-        if self.scan_at_end { 0 } else { self.from }
+        self.from
+    }
+
+    /// Keep a bit per record marked done (for about `n` records), for the
+    /// threads that read runs ahead to look up (see [`Runs::take`]), until
+    /// [`Builder::unshare_done`].
+    pub(super) fn share_done(&mut self, n: usize) -> std::sync::Arc<Bits> {
+        let bits = std::sync::Arc::new(Bits::new(n));
+        for (x, &r) in self.recs.iter().enumerate() {
+            if r & DONE != 0 {
+                bits.set(x);
+            }
+        }
+        self.done = Some(bits.clone());
+        bits
+    }
+
+    pub(super) fn unshare_done(&mut self) {
+        self.done = None;
+    }
+
+    /// Record `x` is now marked done.
+    #[inline(always)]
+    fn mark(&self, x: usize) {
+        if let Some(d) = &self.done {
+            d.set(x);
+        }
     }
 
     /// Whether `id` is the next expression id.
@@ -303,7 +320,7 @@ impl Builder {
             self.side_batch = vec![0; 3 * BATCH];
         }
         let from = self.note_from();
-        let mut out = Out {
+        let mut out = Out::<false> {
             batch: (&mut self.batch[..]).try_into().expect("a batch"),
             side_batch: (&mut self.side_batch[..]).try_into().expect("a batch"),
             sn: 0,
@@ -313,6 +330,8 @@ impl Builder {
             names: names.min(u32::MAX as u64),
             old: &self.recs[..from],
             cands: &mut self.cands,
+            first: 0,
+            done: None,
             leaf: Some(leaf),
         };
         let res = super::run::all_exprs(s, e, &mut self.ids, &mut out);
@@ -329,12 +348,15 @@ impl Builder {
     /// Records that [`Runs::take`] read ahead, starting at the next
     /// expression id (`side` being their side records, which they point
     /// into from `side_from` on), if their names are among the first
-    /// `names` and the tables have room: whether it added them.
+    /// `names` and the tables have room: whether it added them. `cands`
+    /// are their children that may be of earlier declarations, in order (see
+    /// [`Runs::take`]): noted here as [`Builder::exprs`] would have.
     pub(super) fn append_run(
         &mut self,
         recs: &[u64],
         side: &[u32],
         side_from: usize,
+        cands: &[u32],
         max_name: u64,
         names: &IdMap,
     ) -> bool {
@@ -357,6 +379,16 @@ impl Builder {
             }
         }));
         self.side.extend_from_slice(side);
+        // As `note_old`, but for the bits (rather than the records, which
+        // are much larger): a record not marked there yet may be done by
+        // now; `promote_shared` looks again.
+        let from = self.note_from();
+        let done = self.done.as_deref();
+        for &c in cands {
+            if (c as usize) < from && !done.is_some_and(|d| d.get(c as usize)) {
+                self.cands.push(c);
+            }
+        }
         true
     }
 }
@@ -368,6 +400,9 @@ impl Builder {
 pub(super) struct Runs {
     pub(super) recs: Vec<u64>,
     pub(super) side: Vec<u32>,
+    /// The runs' children that may be of earlier declarations (see
+    /// [`Out::first`]).
+    pub(super) cands: Vec<u32>,
     batch: Vec<u64>,
     side_batch: Vec<u32>,
     ids: super::run::Ids,
@@ -375,8 +410,16 @@ pub(super) struct Runs {
 
 impl Runs {
     /// The run at the start of `s`, its first id being `e`: how many bytes
-    /// and lines it took, and the largest name id its binders use.
-    pub(super) fn take(&mut self, s: &[u8], e: u64) -> (usize, u64, u64) {
+    /// and lines it took, and the largest name id its binders use. Its
+    /// children below `from` (at most `e`) go to `cands`, but those
+    /// `done` says are done.
+    pub(super) fn take(
+        &mut self,
+        s: &[u8],
+        e: u64,
+        from: u64,
+        done: Option<&Bits>,
+    ) -> (usize, u64, u64) {
         if e + s.len() as u64 / 32 >= MAX_IDS {
             return (0, 0, 0);
         }
@@ -385,7 +428,7 @@ impl Runs {
             self.side_batch = vec![0; 3 * BATCH];
         }
         let side_from = self.side.len();
-        let mut out = Out {
+        let mut out = Out::<true> {
             batch: (&mut self.batch[..]).try_into().expect("a batch"),
             side_batch: (&mut self.side_batch[..]).try_into().expect("a batch"),
             sn: 0,
@@ -394,7 +437,9 @@ impl Runs {
             side: &mut self.side,
             names: u32::MAX as u64,
             old: &[],
-            cands: &mut Vec::new(),
+            cands: &mut self.cands,
+            first: from.min(e),
+            done,
             leaf: None,
         };
         let (n, m) = super::run::all_exprs(s, e, &mut self.ids, &mut out);
@@ -478,6 +523,7 @@ impl Builder {
         if !self.next(id) {
             return false;
         }
+        self.mark(self.recs.len());
         self.recs.push(DONE | arena as u64);
         true
     }
@@ -621,6 +667,7 @@ impl Builder {
                 }
             };
             self.recs[x] = DONE | id as u64;
+            self.mark(x);
         }
         Ok(ExprId(self.recs[i] as u32))
     }
@@ -705,6 +752,7 @@ impl Builder {
                     _ => add(env, append, decode(&self.side, r), ids)?,
                 };
                 self.recs[top as usize] = DONE | id as u64;
+                self.mark(top as usize);
                 stack.pop();
             }
             Ok(())
@@ -736,9 +784,6 @@ impl Builder {
     /// At the end of a declaration.
     #[inline(always)]
     pub(super) fn decl_done(&mut self) {
-        if self.from != self.recs.len() {
-            self.bounds.push(self.from as u32);
-        }
         self.from = self.recs.len();
     }
 
@@ -772,78 +817,12 @@ impl Builder {
     /// the roots of values older than their declarations), so that each
     /// record left is used by its own declaration's value alone: built
     /// once here, not again for every value that uses it.
-    fn promote_shared(&mut self, env: &mut Env, append: bool, threads: usize) -> R<()> {
-        if !self.scan_at_end {
-            // Noted as the records were added, in order.
-            for c in std::mem::take(&mut self.cands) {
-                let c = self.real(c);
-                if self.recs[c as usize] & DONE == 0 {
-                    self.promote_old(env, append, c)?;
-                }
-            }
-            return self.promote_old_roots(env, append);
-        }
-        self.bounds.push(self.from as u32);
-        let bounds = std::mem::take(&mut self.bounds);
-        // The records to intern, found on `threads` threads (a group of
-        // declarations each at a time), then interned in order.
-        let decls = bounds.len().saturating_sub(1);
-        const GROUP: usize = 4096;
-        let groups = decls.div_ceil(GROUP);
-        let found: Vec<std::sync::Mutex<Vec<u32>>> = (0..groups)
-            .map(|_| std::sync::Mutex::new(Vec::new()))
-            .collect();
-        let next = std::sync::atomic::AtomicUsize::new(0);
-        let (recs, side) = (&self.recs, &self.side);
-        let scan = || {
-            let mut out = Vec::new();
-            loop {
-                let g = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if g >= groups {
-                    return;
-                }
-                let hi = ((g + 1) * GROUP).min(decls);
-                for w in bounds[g * GROUP..=hi].windows(2) {
-                    let (lo, hi) = (w[0], w[1]);
-                    for x in lo..hi {
-                        let r = recs[x as usize];
-                        if r & DONE != 0 || tag(r) == T_ALIAS {
-                            continue;
-                        }
-                        let (kids, k) = decode(side, r).kids();
-                        for &c in &kids[..k] {
-                            if c < lo {
-                                let r = recs[c as usize];
-                                let c = if r & DONE == 0 && tag(r) == T_ALIAS {
-                                    (r & ID_MASK) as u32
-                                } else {
-                                    c
-                                };
-                                if recs[c as usize] & DONE == 0 {
-                                    out.push(c);
-                                }
-                            }
-                        }
-                    }
-                }
-                *found[g].lock().expect("group") = std::mem::take(&mut out);
-            }
-        };
-        let threads = threads.clamp(1, groups.max(1));
-        if threads == 1 {
-            scan();
-        } else {
-            std::thread::scope(|s| {
-                for _ in 0..threads {
-                    s.spawn(scan);
-                }
-            });
-        }
-        for g in found {
-            for c in g.into_inner().expect("group") {
-                if self.recs[c as usize] & DONE == 0 {
-                    self.promote_old(env, append, c)?;
-                }
+    fn promote_shared(&mut self, env: &mut Env, append: bool) -> R<()> {
+        // Noted as the records were added, in order.
+        for c in std::mem::take(&mut self.cands) {
+            let c = self.real(c);
+            if self.recs[c as usize] & DONE == 0 {
+                self.promote_old(env, append, c)?;
             }
         }
         self.promote_old_roots(env, append)
@@ -868,7 +847,7 @@ impl Builder {
         if self.roots.is_empty() {
             return Ok(None);
         }
-        self.promote_shared(env, append, threads)?;
+        self.promote_shared(env, append)?;
         #[cfg(test)]
         let wide_test = tests::WIDE.get();
         #[cfg(not(test))]
@@ -1329,7 +1308,7 @@ const BATCH: usize = super::run::BATCH as usize;
 
 /// Where [`Builder::exprs`] puts records: a batch at a time, to `recs`
 /// and `side`.
-struct Out<'a> {
+struct Out<'a, const AHEAD: bool> {
     /// Records by id (modulo the batch's length).
     batch: &'a mut [u64; BATCH],
     side_batch: &'a mut [u32; 3 * BATCH],
@@ -1345,19 +1324,41 @@ struct Out<'a> {
     /// The records of earlier declarations, for [`note_old`] (not in
     /// `recs`, so that the compiler knows that they stay put).
     old: &'a [u64],
+    /// With `AHEAD` (a run read ahead, see [`Runs::take`]): every child
+    /// below `first`, for [`Builder::append_run`] to note as [`note_old`]
+    /// would have.
     cands: &'a mut Vec<u32>,
+    /// With `AHEAD`: children below this are candidates (at most the run's
+    /// first id, and at least where its declaration's expressions start).
+    first: u64,
+    /// With `AHEAD`: records known to be done, not candidates.
+    done: Option<&'a Bits>,
     /// For constant lines (see [`Builder::exprs`]).
     leaf: Option<&'a mut LeafLine<'a>>,
 }
 
-impl super::run::Records for Out<'_> {
+impl<const AHEAD: bool> Out<'_, AHEAD> {
+    /// A child `c` of a record: see [`note_old`], and `cands`.
+    #[inline(always)]
+    fn note(&mut self, c: u64) {
+        if AHEAD {
+            if c < self.first && !self.done.is_some_and(|d| d.get(c as usize)) {
+                self.cands.push(c as u32);
+            }
+        } else {
+            note_old(self.old, self.old.len(), c, self.cands);
+        }
+    }
+}
+
+impl<const AHEAD: bool> super::run::Records for Out<'_, AHEAD> {
     #[inline(always)]
     fn app(&mut self, id: u64, f: u64, a: u64) -> bool {
         if f >= id || a >= id {
             return false;
         }
-        note_old(self.old, self.old.len(), f, self.cands);
-        note_old(self.old, self.old.len(), a, self.cands);
+        self.note(f);
+        self.note(a);
         self.batch[id as usize % BATCH] = T_APP << TAG | f << ID_BITS | a;
         true
     }
@@ -1368,8 +1369,8 @@ impl super::run::Records for Out<'_> {
         if name >= self.names || ty >= id || body >= id || o > u32::MAX as usize - 4 {
             return false;
         }
-        note_old(self.old, self.old.len(), ty, self.cands);
-        note_old(self.old, self.old.len(), body, self.cands);
+        self.note(ty);
+        self.note(body);
         let side = &mut self.side_batch.as_chunks_mut::<3>().0[self.sn % BATCH];
         *side = [name as u32, ty as u32, body as u32];
         self.sn += 1;
