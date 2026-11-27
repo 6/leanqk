@@ -22,7 +22,7 @@
 //! usual.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use super::*;
@@ -59,15 +59,21 @@ struct View {
     from: usize,
     /// The next of them to take.
     next: AtomicUsize,
-    /// Per block from `from` on: accepted.
-    accepted: Vec<AtomicBool>,
+    /// Per block from `from` on: [`PLAIN`] or [`EVAL`] if accepted.
+    accepted: Vec<AtomicU8>,
     /// Where it leaves what it found when it goes.
     found: Arc<Mutex<Vec<Found>>>,
 }
 
-/// What a view found: its first block, which of its blocks it accepted,
-/// and what must agree with the whole environment.
-type Found = (usize, Vec<bool>, (Ext, Vec<Option<NameId>>));
+/// A block accepted without asking the evaluator anything: its verdict
+/// does not depend on [`Ext::EVAL_ONLY`].
+const PLAIN: u8 = 1;
+/// A block accepted with the evaluator's help.
+const EVAL: u8 = 2;
+
+/// What a view found: its first block, which of its blocks it accepted
+/// (and how), and what must agree with the whole environment.
+type Found = (usize, Vec<u8>, (Ext, Vec<Option<NameId>>));
 
 /// A view prepared for checking: its names indexed, its extensions found.
 struct Ready {
@@ -99,14 +105,15 @@ impl View {
             }
             let ext = Ext::with_decls(&env, &env.decls);
             let names: Vec<_> = LOOKED_UP.iter().map(|s| env.names.find_dotted(s)).collect();
-            // A view that lacks something `Ext` looks up is likely to
-            // find less than the whole environment (and then its checks
-            // are in vain), unless the view before found as much.
+            // A view that lacks something `Ext` looks up (but for the
+            // evaluator) is likely to find less than the whole environment
+            // (and then its checks are in vain), unless the view before
+            // found as much.
             let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
             let complete = ext.nat_ops_complete
                 && names.iter().all(Option::is_some)
-                && (Ext::names().all(|s| env.names.find_dotted(s).is_some())
-                    || last.as_ref().is_some_and(|l| l.agrees(&ext)));
+                && (Ext::kernel_names().all(|s| env.names.find_dotted(s).is_some())
+                    || last.as_ref().is_some_and(|l| l.agrees_but_eval(&ext)));
             *last = Some(ext.clone());
             drop(last);
             if std::env::var_os("NITROLEAN_STREAM_DEBUG").is_some() {
@@ -150,7 +157,7 @@ impl Early {
     pub(crate) fn accepted(&self) -> usize {
         self.found
             .iter()
-            .map(|f| f.1.iter().filter(|&&a| a).count())
+            .map(|f| f.1.iter().filter(|&&a| a != 0).count())
             .sum()
     }
 
@@ -280,6 +287,7 @@ impl Stream {
                     continue;
                 }
                 let traced = crate::trace::now();
+                let asked = eval::entries();
                 let mut corrections = Vec::new();
                 let res = catch_unwind(AssertUnwindSafe(|| {
                     check_block(&mut tc, &mut nb, b, decls, &mut corrections)
@@ -287,7 +295,12 @@ impl Stream {
                 crate::trace::check(i, usize::MAX, traced, true);
                 match res {
                     Ok(Ok(())) if corrections.is_empty() => {
-                        v.accepted[i - v.from].store(true, Ordering::Relaxed);
+                        let how = if eval::entries() == asked {
+                            PLAIN
+                        } else {
+                            EVAL
+                        };
+                        v.accepted[i - v.from].store(how, Ordering::Relaxed);
                     }
                     Ok(r) => {
                         if std::env::var_os("NITROLEAN_STREAM_DEBUG2").is_some() {
@@ -373,7 +386,7 @@ impl Views for Stream {
             ready: OnceLock::new(),
             from,
             next: AtomicUsize::new(from),
-            accepted: (0..n).map(|_| AtomicBool::new(false)).collect(),
+            accepted: (0..n).map(|_| AtomicU8::new(0)).collect(),
             found: self.found.clone(),
         });
         st.views.push(v);
@@ -472,19 +485,21 @@ pub(crate) fn finish(
     let mut accepted = vec![false; env.blocks.len()];
     let mut any = false;
     for (from, acc, (e, n)) in &early.found {
+        // Blocks accepted without the evaluator need all but its part.
         let agrees = e.agrees(&ext) && *n == names;
+        let plain = e.agrees_but_eval(&ext) && *n == names;
         if std::env::var_os("NITROLEAN_STREAM_DEBUG").is_some() {
             eprintln!(
-                "view from block {from}: agrees {agrees} (Ext differs in {:?}, names {})",
+                "view from block {from}: agrees {agrees}, but for the evaluator {plain} (Ext differs in {:?}, names {})",
                 e.differs(&ext),
                 *n == names
             );
         }
-        if !agrees || from + acc.len() > accepted.len() {
+        if !plain || from + acc.len() > accepted.len() {
             continue;
         }
         for (i, &a) in acc.iter().enumerate() {
-            if a {
+            if a == PLAIN || (a == EVAL && agrees) {
                 accepted[from + i] = true;
                 any = true;
             }

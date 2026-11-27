@@ -316,6 +316,22 @@ impl Ext {
         self.differs(o).is_empty()
     }
 
+    /// The fields only the closed-term evaluator (`eval/`) reads.
+    pub(super) const EVAL_ONLY: [&str; 6] = [
+        "array_ops",
+        "list_ops",
+        "dec_eq_ops",
+        "fast",
+        "beq_prod",
+        "int_ops",
+    ];
+
+    /// [`Ext::agrees`] but for [`Ext::EVAL_ONLY`]: for checks that never
+    /// ask the evaluator anything.
+    pub(super) fn agrees_but_eval(&self, o: &Ext) -> bool {
+        self.differs(o).iter().all(|f| Self::EVAL_ONLY.contains(f))
+    }
+
     /// The fields in which `self` and `o` differ (all but the notes).
     pub(super) fn differs(&self, o: &Ext) -> Vec<&'static str> {
         let Ext {
@@ -405,12 +421,13 @@ impl Ext {
         self.ops.get(&n).copied()
     }
 
-    /// Every name [`Ext::with_decls`] looks up. An environment holding
-    /// declarations of all of them gets the same `Ext` as any longer one
+    /// The names [`Ext::with_decls`] looks up for all but
+    /// [`Ext::EVAL_ONLY`]. An environment holding declarations of all of
+    /// them gets the same `Ext` but for those fields as any longer one
     /// that extends it (what it finds depends only on those declarations
     /// and the ones before them).
-    pub(super) fn names() -> impl Iterator<Item = &'static str> {
-        const OTHERS: [&str; 26] = [
+    pub(super) fn kernel_names() -> impl Iterator<Item = &'static str> {
+        const NAMES: [&str; 19] = [
             "eagerReduce",
             "Eq",
             "Quot",
@@ -426,26 +443,12 @@ impl Ext {
             "List",
             "List.nil",
             "List.cons",
-            "Prod",
-            "Subtype",
-            "Decidable",
-            "BEq",
-            "Int",
-            "Int.ofNat",
-            "Int.negSucc",
-            "Decidable.isTrue",
-            "Decidable.isFalse",
             "Char",
             "Char.ofNat",
+            "String",
+            "String.ofList",
         ];
-        OTHERS
-            .into_iter()
-            .chain(["String", "String.ofList", BEQ_PROD])
-            .chain(NAT_OPS.iter().map(|o| o.0))
-            .chain(ARRAY_OPS.iter().map(|o| o.0))
-            .chain(LIST_OPS.iter().map(|o| o.0))
-            .chain(INT_OPS.iter().map(|o| o.0))
-            .chain(DEC_EQ_OPS.iter().map(|o| o.0))
+        NAMES.into_iter().chain(NAT_OPS.iter().map(|o| o.0))
     }
 
     pub fn new(env: &Env) -> Ext {
