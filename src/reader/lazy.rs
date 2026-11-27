@@ -846,6 +846,34 @@ impl Builder {
     /// the roots of values older than their declarations), so that each
     /// record left is used by its own declaration's value alone: built
     /// once here, not again for every value that uses it.
+    /// [`Builder::promote_shared`] for the candidates and old roots so far
+    /// (before a view: its values then find the terms they share with
+    /// others interned, as the lazy values put together do).
+    /// On an error, the candidates from the one that failed on are left
+    /// for `promote_shared`, which meets it again.
+    pub(super) fn promote_cands(&mut self, env: &mut Env, append: bool) -> R<()> {
+        let cands = std::mem::take(&mut self.cands);
+        for (k, &c) in cands.iter().enumerate() {
+            let c = self.real(c);
+            if self.recs[c as usize] & DONE == 0
+                && let Err(e) = self.promote_old(env, append, c)
+            {
+                self.cands = cands[k..].to_vec();
+                return Err(e);
+            }
+        }
+        let roots = std::mem::take(&mut self.old_roots);
+        for (k, &i) in roots.iter().enumerate() {
+            if self.recs[i as usize] & DONE == 0
+                && let Err(e) = self.promote_old(env, append, i)
+            {
+                self.old_roots = roots[k..].to_vec();
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
     fn promote_shared(&mut self, env: &mut Env, append: bool) -> R<()> {
         // Noted as the records were added, in order.
         for c in std::mem::take(&mut self.cands) {
@@ -1679,6 +1707,13 @@ impl Builder {
     pub(super) fn view(&mut self, exprs: u32) -> Live {
         let n = self.from;
         self.viewed = n;
+        // With no view left, what the views needed goes.
+        if let Some(u) = self.undo.as_mut()
+            && let Some(u) = std::sync::Arc::get_mut(u)
+        {
+            u.0.get_mut().unwrap_or_else(|e| e.into_inner()).clear();
+            self.undo_new.clear();
+        }
         self.hand_over_undo();
         Live {
             recs: self.recs.atomic_alias(n),
@@ -1789,7 +1824,7 @@ impl Live {
                     if t >= start {
                         ExprId(s.own[(t - start) as usize])
                     } else {
-                        self.build(t, sink, &mut s.memo, &mut s.stack)?
+                        self.old(t, keep, sink, s)?
                     }
                 } else {
                     let n = decode(&self.side, r);
@@ -1799,7 +1834,7 @@ impl Live {
                         *id = if c >= start {
                             ExprId(s.own[(c - start) as usize])
                         } else {
-                            self.build(c, sink, &mut s.memo, &mut s.stack)?
+                            self.old(c, keep, sink, s)?
                         };
                     }
                     make(sink, n, ids, true, keep)
@@ -1808,6 +1843,24 @@ impl Live {
             }
             Ok(ExprId(*s.own.last().expect("the root")))
         })
+    }
+
+    /// Record `c` of another declaration: its arena id if it is interned
+    /// (most are), else built by [`Live::build`].
+    #[inline(always)]
+    fn old<S: TermSink + ?Sized>(
+        &self,
+        c: u32,
+        keep: bool,
+        sink: &mut S,
+        s: &mut Scratch,
+    ) -> Result<ExprId, String> {
+        let r = self.rec(c)?;
+        if r & DONE != 0 {
+            let a = self.arena(r)?;
+            return Ok(if keep { a } else { sink.shared_expr(a) });
+        }
+        self.build(c, sink, &mut s.memo, &mut s.stack)
     }
 
     /// Record `root` (of another declaration) in `sink`, hash-consed, as
