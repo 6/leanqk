@@ -286,7 +286,7 @@ pub struct QuotNames {
     pub ind: NameId,
 }
 
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug, PartialEq, Eq)]
 pub struct Ext {
     pub nat: Option<NameId>,
     pub nat_zero: Option<NameId>,

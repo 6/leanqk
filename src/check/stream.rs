@@ -62,8 +62,11 @@ struct View {
     next: AtomicUsize,
     /// Its place among the views, from 1.
     id: usize,
-    /// Blocks accepted in earlier views, if it may take some of theirs.
+    /// Blocks accepted in earlier views, if it may take some of theirs:
+    /// then it is the view of the whole file.
     skip: Option<Vec<bool>>,
+    /// Whether it is of the whole file.
+    whole: bool,
     /// Per block from `from` on: [`PLAIN`] or [`EVAL`] if accepted.
     accepted: Vec<AtomicU8>,
     /// Where it leaves what it found when it goes.
@@ -91,10 +94,8 @@ struct Ready {
 }
 
 impl View {
-    /// Prepared (by the first thread to ask). `last` is what the view
-    /// before found (views are prepared in order), and becomes what this
-    /// one found.
-    fn ready(&self, last: &Mutex<Option<Ext>>) -> &Ready {
+    /// Prepared (by the first thread to ask).
+    fn ready(&self) -> &Ready {
         self.ready.get_or_init(|| {
             let t = std::time::Instant::now();
             let mut env = self
@@ -112,14 +113,10 @@ impl View {
             let names: Vec<_> = LOOKED_UP.iter().map(|s| env.names.find_dotted(s)).collect();
             // A view that lacks something `Ext` looks up (but for the
             // evaluator) is likely to find less than the whole environment
-            // (and then its checks are in vain), unless the view before
-            // found as much.
-            let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
-            let complete = names.iter().all(Option::is_some)
-                && (Ext::kernel_names().all(|s| env.names.find_dotted(s).is_some())
-                    || last.as_ref().is_some_and(|l| l.agrees_but_eval(&ext)));
-            *last = Some(ext.clone());
-            drop(last);
+            // (and then its checks are in vain); the last view is of all.
+            let complete = self.whole
+                || (names.iter().all(Option::is_some)
+                    && Ext::kernel_names().all(|s| env.names.find_dotted(s).is_some()));
             if std::env::var_os("NITROLEAN_STREAM_DEBUG").is_some() {
                 eprintln!(
                     "view of {} blocks prepared in {:?}: complete {complete} (nat ops {}, lacks {:?})",
@@ -195,8 +192,6 @@ pub(crate) struct Stream {
     /// Set while views are drained: the threads drop theirs.
     stop: AtomicBool,
     found: Arc<Mutex<Vec<Found>>>,
-    /// What the last view prepared found.
-    last_ext: Mutex<Option<Ext>>,
 }
 
 impl Stream {
@@ -210,7 +205,6 @@ impl Stream {
             cv: Condvar::new(),
             stop: AtomicBool::new(false),
             found: Arc::default(),
-            last_ext: Mutex::new(None),
         }
     }
 
@@ -254,7 +248,7 @@ impl Stream {
     fn check_view(&self, v: &View) {
         let Ready {
             env, ext, complete, ..
-        } = v.ready(&self.last_ext);
+        } = v.ready();
         if !complete {
             return;
         }
@@ -393,6 +387,7 @@ impl Views for Stream {
         st.id += 1;
         let v = Arc::new(View {
             id: st.id,
+            whole: skip.is_some(),
             skip,
             raw: Mutex::new(Some(env)),
             ready: OnceLock::new(),
