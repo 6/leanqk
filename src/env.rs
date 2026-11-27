@@ -252,6 +252,33 @@ pub(crate) trait LazyValues: Send + Sync {
     fn heap_bytes(&self) -> usize;
 }
 
+/// Lazy values two environments share (a view and its reader's: see
+/// `reader::State::last_view`).
+pub(crate) struct SharedLazy(pub std::sync::Arc<dyn LazyValues>);
+
+impl LazyValues for SharedLazy {
+    fn decode(&self, env: &Env, k: u32, sink: &mut dyn TermSink) -> Result<ExprId, String> {
+        self.0.decode(env, k, sink)
+    }
+
+    fn decode_store(
+        &self,
+        env: &Env,
+        k: u32,
+        sink: &mut crate::check::store::Store<'_>,
+    ) -> Result<ExprId, String> {
+        self.0.decode_store(env, k, sink)
+    }
+
+    fn count(&self) -> usize {
+        self.0.count()
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.0.heap_bytes()
+    }
+}
+
 /// Where a declaration's value is (see [`Env::value_into`]).
 enum Lazy<'a> {
     /// Read at load time (or none).

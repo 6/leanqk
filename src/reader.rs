@@ -724,39 +724,26 @@ fn finish_viewed(
         *m = IdMap::new(0);
     }
     let mut stats = res?;
-    let lazy_err = |e: Fail| ReadError {
-        line: 0,
-        class: e.class,
-        msg: e.msg,
-    };
-    let mut lazy = st.lazy.take();
-    if let Some(b) = lazy.as_deref_mut() {
-        b.finish_shared(&mut st.env, st.append).map_err(lazy_err)?;
+    if let Some(mut b) = st.lazy.take() {
+        b.end_views();
+        st.env.lazy = b
+            .finish(&mut st.env, st.append, st.index_threads.unwrap_or(1))
+            .map_err(|e| ReadError {
+                line: 0,
+                class: e.class,
+                msg: e.msg,
+            })?;
+        crate::trace::phase("lazy");
     }
-    // A last view, of everything, while the names and expressions are
-    // indexed (which leaves what views see as it is); the lazy values
-    // are put together after.
+    // A last view, of everything (sharing the lazy values), while the
+    // names and expressions are indexed: that leaves what views see as
+    // it is.
     let mut last = None;
-    if let Some((v, size)) = views.filter(|(v, _)| v.wanted_last()) {
-        st.lazy = lazy;
-        if let Some(env) = st.view(size) {
-            v.publish(env);
-            last = Some(v);
-        }
-        lazy = st.lazy.take();
-    }
-    let put_together = |st: &mut State, lazy: Option<Box<lazy::Builder>>| {
-        if let Some(mut b) = lazy {
-            b.end_views();
-            st.env.lazy = b
-                .finish_stored(&mut st.env, st.index_threads.unwrap_or(1))
-                .map_err(lazy_err)?;
-            crate::trace::phase("lazy");
-        }
-        Ok::<_, ReadError>(())
-    };
-    if last.is_none() {
-        put_together(&mut st, lazy.take())?;
+    if let Some((v, size)) = views.filter(|(v, _)| v.wanted_last())
+        && let Some(env) = st.last_view(size)
+    {
+        v.publish(env);
+        last = Some(v);
     }
     stats.shared_exprs = st.shared_exprs;
     stats.id_map_bytes = id_map_bytes;
@@ -792,7 +779,6 @@ fn finish_viewed(
     if let Some(v) = last {
         v.drain();
         crate::trace::phase("drained");
-        put_together(&mut st, lazy.take())?;
     }
     Ok(Done {
         env: st.env,
@@ -1853,6 +1839,28 @@ impl State {
             .view(crate::intern::IdTable::default(), None, above);
         env.lazy = Some(Box::new(lazy.view(env.exprs.len() as u32)));
         Some(env)
+    }
+
+    /// [`State::view`] once the lazy values are put together: the view
+    /// shares them.
+    fn last_view(&mut self, size: u64) -> Option<Env> {
+        const MAX_LINES_PER_BYTE: u64 = 16;
+        let above = (size / MAX_LINES_PER_BYTE + (1 << 20)) as usize;
+        if !self.append
+            || self.failed.is_some()
+            || self.capture.is_some()
+            || !self.env.can_view()
+            || above > crate::slab::CAP / 2
+        {
+            return None;
+        }
+        let shared: std::sync::Arc<dyn crate::env::LazyValues> = self.env.lazy.take()?.into();
+        self.env.lazy = Some(Box::new(crate::env::SharedLazy(shared.clone())));
+        Some(self.env.view(
+            crate::intern::IdTable::default(),
+            Some(Box::new(crate::env::SharedLazy(shared))),
+            above,
+        ))
     }
 
     fn new() -> Self {

@@ -866,10 +866,20 @@ impl Builder {
         Ok(())
     }
 
+    /// The source of the lazy values, once the read is done.
+    pub(super) fn finish(
+        mut self,
+        env: &mut Env,
+        append: bool,
+        threads: usize,
+    ) -> R<Option<Box<dyn LazyValues>>> {
+        self.finish_shared(env, append)?;
+        self.finish_stored(env, threads)
+    }
+
     /// Intern the shared terms (see `promote_shared`): the first part of
-    /// putting the lazy values together, which views (and their values)
-    /// survive; [`Builder::finish_stored`] is the rest.
-    pub(super) fn finish_shared(&mut self, env: &mut Env, append: bool) -> R<()> {
+    /// [`Builder::finish`].
+    fn finish_shared(&mut self, env: &mut Env, append: bool) -> R<()> {
         if !self.roots.is_empty() {
             self.promote_shared(env, append)?;
             self.hand_over_undo();
@@ -878,12 +888,8 @@ impl Builder {
         Ok(())
     }
 
-    /// The rest, once the views are gone.
-    pub(super) fn finish_stored(
-        self,
-        env: &mut Env,
-        threads: usize,
-    ) -> R<Option<Box<dyn LazyValues>>> {
+    /// The rest of [`Builder::finish`] (once no view is alive).
+    fn finish_stored(self, env: &mut Env, threads: usize) -> R<Option<Box<dyn LazyValues>>> {
         if self.roots.is_empty() {
             return Ok(None);
         }
