@@ -286,8 +286,21 @@ const FAR: u16 = u16::MAX;
 impl NameIndex {
     const NONE: u32 = u32::MAX;
 
+    /// The common case inline (a packed entry near its group's base); the
+    /// rest out of line, so that callers on hot paths stay small.
     #[inline]
     pub(crate) fn get(&self, n: &NameId) -> Option<u32> {
+        if let Some(&e) = self.small.get(n.0 as usize)
+            && e != 0
+            && e != FAR
+        {
+            return Some(self.bases[(n.0 >> GROUP_BITS) as usize] + u32::from(e) - 1);
+        }
+        self.get_rest(n)
+    }
+
+    #[inline(never)]
+    fn get_rest(&self, n: &NameId) -> Option<u32> {
         if self.small.is_empty() {
             return self
                 .v
