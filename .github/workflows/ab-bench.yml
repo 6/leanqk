@@ -102,6 +102,10 @@ permissions:
   actions: read
 
 env:
+  # elan for the export job's Lean (cargo xtask install-elan), as in
+  # mathlib-bench.yml.
+  ELAN_VERSION: v4.4.0
+  ELAN_SHA256: 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2
   LEAN_TOOLCHAIN: leanprover/lean4:v4.36.0
   # The exports' SHA-256 name their cache entries.
   FULL_KEY: ab-mathlib-v4.36.0-full-f749dfd084fc0727d107c7aaded7d492cebfc0b517cfaa7337d8a7578a6c0dec
@@ -344,6 +348,12 @@ jobs:
           ls rows/*.tsv > /dev/null || { echo "::error::no rows"; exit 1; }
           created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
           secs=$(( $(date +%s) - $(date -d "$created" +%s) ))
+          # How many measuring jobs ran at once, at most: +1 at each start,
+          # -1 at each end, in time order.
+          peak=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name | startswith("measure")) | select(.started_at != null) |
+                  [.started_at, 1], [(.completed_at // "9999"), -1] | @tsv' |
+            sort | awk -F'\t' '{ n += $2; if (n > m) m = n } END { print m + 0 }')
           bins=$(for f in bins/*/nitrolean; do
             printf '{"key":"%s","value":"%s"}\n' "$(basename "$(dirname "$f")")" "$(sha256sum "$f" | cut -d' ' -f1)"
           done | jq -s from_entries)
@@ -353,7 +363,7 @@ jobs:
             --arg candidate_flags "$FLAGS" --arg slices "$SLICES" --arg threads "$THREADS" \
             --arg reps "$REPS" --arg jobs_requested "$jr" \
             --arg time_to_result "$((secs / 60)) min $((secs % 60)) s" \
-            --arg build_note "cargo xtask pgo --repo; x86_64 target-cpu $X86_CPU, aarch64 default; measuring jobs: $MEASURE" \
+            --arg build_note "cargo xtask pgo --repo; x86_64 target-cpu $X86_CPU, aarch64 default; measuring jobs: $MEASURE; at most $peak measuring jobs ran at once" \
             --argjson binaries "$bins" '$ARGS.named' > out/build.json
           cargo xtask ab-summary out/build.json out/summary.md out/results.json rows/*.tsv > /dev/null
           awk 'FNR > 1 || NR == 1' rows/*.tsv > out/rows.tsv
