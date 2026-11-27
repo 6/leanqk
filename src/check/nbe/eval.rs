@@ -114,12 +114,13 @@ impl Nbe<'_> {
         let si = (crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64) >> 50)
             as usize
             & (super::BINDER_SLOTS - 1);
-        let s = self.binder_slots[si];
-        if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
+        let (si, te) = self.front_at(env, si, super::BINDER_SLOTS);
+        let s = *super::val::at(&self.binder_slots[..], si);
+        if s[0] == e.0 && s[1] == te && s[2] == ls.0 {
             return V(s[3]);
         }
         let v = self.eval_binder_new(e, env, ls);
-        self.binder_slots[si] = [e.0, env.0, ls.0, v.0];
+        *super::val::at_mut(&mut self.binder_slots[..], si) = [e.0, te, ls.0, v.0];
         v
     }
 
@@ -246,11 +247,12 @@ impl Nbe<'_> {
     fn eager(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let sh = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
-        let s = self.eager_slots[si];
-        if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
+        let (si, te) = self.front_at(env, si, super::EAGER_SLOTS);
+        let s = *super::val::at(&self.eager_slots[..], si);
+        if s[0] == e.0 && s[1] == te && s[2] == ls.0 {
             return V(s[3]);
         }
-        self.eager_miss(e, env, ls, si)
+        self.eager_miss(e, env, ls, si, te)
     }
 
     /// `eval`, remembered by the exact term, environment and levels in
@@ -259,18 +261,20 @@ impl Nbe<'_> {
     pub(super) fn eval_slot(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let sh = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
-        let s = self.eager_slots[si];
-        if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
+        let (si, te) = self.front_at(env, si, super::EAGER_SLOTS);
+        let s = *super::val::at(&self.eager_slots[..], si);
+        if s[0] == e.0 && s[1] == te && s[2] == ls.0 {
             return V(s[3]);
         }
         let v = self.eval(e, env, ls);
-        self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+        *super::val::at_mut(&mut self.eager_slots[..], si) = [e.0, te, ls.0, v.0];
         v
     }
 
-    /// `eager` past its front (slot `si`): out of line, as it evaluates.
+    /// `eager` past its front (slot `si`, holding `env` as `te`): out of
+    /// line, as it evaluates.
     #[inline(never)]
-    fn eager_miss(&mut self, e: ExprId, env: Env, ls: Ls, si: usize) -> V {
+    fn eager_miss(&mut self, e: ExprId, env: Env, ls: Ls, si: usize, te: u32) -> V {
         let d = self.st.data(e);
         let n = d.loose_bvar_range().min(self.a.env_len(env));
         if n > EAGER_MEMO_RANGE {
@@ -302,7 +306,7 @@ impl Nbe<'_> {
                 self.eager_direct[di] = [ke, kls, kt, v.0];
                 v
             };
-            self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+            *super::val::at_mut(&mut self.eager_slots[..], si) = [e.0, te, ls.0, v.0];
             return v;
         }
         let (i, found) = Self::memo_find_or_add(
@@ -321,7 +325,7 @@ impl Nbe<'_> {
             self.eager_memo.set(i, 0, v.0);
             v
         };
-        self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+        *super::val::at_mut(&mut self.eager_slots[..], si) = [e.0, te, ls.0, v.0];
         v
     }
 

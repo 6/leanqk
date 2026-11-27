@@ -247,6 +247,7 @@ impl Nbe<'_> {
 
     /// The id of the values of the first `n` entries of `env` but those
     /// `holes` sets (from bit 64 on, all): equal values, equal ids.
+    #[inline(always)]
     fn read_tuple(&mut self, env: Env, n: u32, holes: u64) -> u32 {
         // All of a whole environment: environments are hash-consed, so its
         // id names its values (with the top bit, which no record id has).
@@ -255,12 +256,14 @@ impl Nbe<'_> {
         }
         let si = (crate::hash::hash_front(env.0 as u64 | (n as u64) << 32, holes) >> 50) as usize
             & (TUPLE_SLOTS - 1);
-        let s = self.tuple_slots[si];
-        if s[0] == env.0 && s[1] == n && s[2] == holes as u32 && s[3] == (holes >> 32) as u32 {
+        let (si, te) = self.front_at(env, si, TUPLE_SLOTS);
+        let s = *val::at(&self.tuple_slots[..], si);
+        if s[0] == te && s[1] == n && s[2] == holes as u32 && s[3] == (holes >> 32) as u32 {
             return s[4];
         }
         let t = self.read_tuple_in_place(env, n, holes);
-        self.tuple_slots[si] = [env.0, n, holes as u32, (holes >> 32) as u32, t];
+        *val::at_mut(&mut self.tuple_slots[..], si) =
+            [te, n, holes as u32, (holes >> 32) as u32, t];
         t
     }
 

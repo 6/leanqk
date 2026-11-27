@@ -106,7 +106,7 @@ pub(super) fn at_slice<T>(v: &[T], a: usize, b: usize) -> &[T] {
 
 #[inline(always)]
 #[allow(unsafe_code)]
-fn at_mut<T>(v: &mut [T], i: usize) -> &mut T {
+pub(super) fn at_mut<T>(v: &mut [T], i: usize) -> &mut T {
     debug_assert!(i < v.len(), "arena index {i} out of bounds");
     // SAFETY: as `at`.
     unsafe { v.get_unchecked_mut(i) }
@@ -299,7 +299,19 @@ pub struct Arena {
     projs: Box<[[u32; 4]; PROJS]>,
     /// Far variables found (`lookup`): (environment, index, value).
     fars: Box<[std::cell::Cell<[u32; 3]>; FARS]>,
+    /// The first environment of the current declaration: those from it
+    /// on are young (`young`).
+    young_env0: u32,
+    /// The current declaration's tag, in the bits above an id, for the
+    /// young parts of the evaluator's fronts (`ytag`).
+    young_tag: u32,
 }
+
+/// Bits of an arena id: a young front's tag goes above them.
+const ID_BITS: u32 = LIMIT.ilog2();
+/// Declarations before the young fronts are emptied by storing: the
+/// largest tag stays below `NONE` with any id.
+const YOUNG_TAGS: u32 = (NONE >> ID_BITS) - 1;
 
 /// The neutral `head` with the spine `sp` in place of its own.
 fn with_sp(head: Val, sp: Sp) -> Val {
@@ -372,7 +384,52 @@ impl Arena {
                 .collect::<Box<[_]>>()
                 .try_into()
                 .unwrap_or_else(|_| unreachable!()),
+            young_env0: 1,
+            young_tag: 1 << ID_BITS,
         }
+    }
+
+    /// Whether `env` was made in the current declaration (or since the
+    /// arena was last emptied): an entry keyed by it can only have been
+    /// made in this declaration too.
+    #[inline(always)]
+    pub fn young(&self, env: Env) -> bool {
+        env.0 >= self.young_env0
+    }
+
+    /// `env` tagged with the current declaration, as the young fronts hold
+    /// it. Entries of earlier declarations, or empty ones (`NONE`), never
+    /// equal it.
+    #[inline(always)]
+    pub fn ytag(&self, env: Env) -> u32 {
+        debug_assert!(env.0 < LIMIT);
+        env.0 | self.young_tag
+    }
+
+    /// A declaration starts: the environments made so far are old, and
+    /// the young fronts empty by moving to the next tag. True if the tags
+    /// ran out, so that the young fronts must be emptied by storing.
+    pub fn begin_young(&mut self) -> bool {
+        self.young_env0 = self.envs.len() as u32;
+        let g = (self.young_tag >> ID_BITS) + 1;
+        if g > YOUNG_TAGS {
+            self.young_tag = 1 << ID_BITS;
+            true
+        } else {
+            self.young_tag = g << ID_BITS;
+            false
+        }
+    }
+
+    /// The young fronts' tag, for a new arena that is to follow this one:
+    /// the fronts outside it hold this arena's tags.
+    pub fn young_tag(&self) -> u32 {
+        self.young_tag
+    }
+
+    /// Follow an arena whose young tag was `prev` (see `young_tag`).
+    pub fn follow_young(&mut self, prev: u32) {
+        self.young_tag = prev;
     }
 
     pub fn len(&self) -> usize {
@@ -387,7 +444,9 @@ impl Arena {
             || self.envtable.capacity() > 1 << 18
             || self.nutable.capacity() > 1 << 18
         {
+            let y = self.young_tag;
             *self = Arena::new();
+            self.young_tag = y;
             return;
         }
         self.vals.clear();

@@ -64,7 +64,7 @@ const MANY_BVARS: u64 = 1 << 63;
 const NAMES_KEEP: usize = 1 << 18;
 
 /// Values an arena may hold before it is dropped between declarations.
-const KEEP_VALUES: usize = 1 << 16;
+const KEEP_VALUES: usize = 1 << 15;
 
 /// Whether closures and thunks hold holes at the entries their terms do
 /// not read (`prune`).
@@ -73,6 +73,12 @@ const PRUNE: bool = true;
 /// Slots of the direct-mapped structural comparison memo `Nbe::syn_t`.
 const SYN_T: usize = 1 << 12;
 const SYN_BVARS: usize = 1 << 10;
+
+/// Slots of the young part of the eager, binder and tuple fronts, after
+/// their old part: small, so that it stays in the first caches. An entry
+/// keyed by an environment of the current declaration goes there
+/// (`Nbe::front_at`), and is dropped (by tag) when the declaration ends.
+pub(super) const YOUNG_SLOTS: usize = 1 << 10;
 
 /// Slots of `Nbe::eager_slots`.
 pub(super) const EAGER_SLOTS: usize = 1 << 14;
@@ -114,19 +120,19 @@ pub struct Nbe<'e> {
     big_table: HashTable<u32>,
     /// A direct-mapped front of `eager_memo`: (term, environment,
     /// substitution, value).
-    pub(super) eager_slots: Box<[[u32; 4]; EAGER_SLOTS]>,
+    pub(super) eager_slots: Box<[[u32; 4]; EAGER_SLOTS + YOUNG_SLOTS]>,
     /// Values of terms evaluated by `thunk` at once (`eager`).
     pub(super) eager_memo: memo::EnvMemo<1>,
     /// `eager`'s direct-mapped memo: (term, substitution, values read,
     /// value).
     pub(super) eager_direct: Box<[[u32; 4]; EAGER_DIRECT_SLOTS]>,
     /// λ and Π values by term, environment and substitution (`eval_binder`).
-    pub(super) binder_slots: Box<[[u32; 4]; BINDER_SLOTS]>,
+    pub(super) binder_slots: Box<[[u32; 4]; BINDER_SLOTS + YOUNG_SLOTS]>,
     /// Lists of values read from environments (`read_tuple`).
     tuples: memo::TupleMemo,
     /// A direct-mapped front of `tuples`: (environment, range, holes (two
     /// words), id).
-    pub(super) tuple_slots: Box<[[u32; 5]; memo::TUPLE_SLOTS]>,
+    pub(super) tuple_slots: Box<[[u32; 5]; memo::TUPLE_SLOTS + YOUNG_SLOTS]>,
     /// Types of terms (`infer_term`): the type, and whether checked.
     infer_memo: memo::InferMemo,
     /// A direct-mapped front of `infer_memo`: (term, environment,
@@ -446,6 +452,7 @@ impl<'e> Nbe<'e> {
             self.a.clear_checked(v);
         }
         self.fresh = self.a.is_empty();
+        self.begin_young();
     }
 
     /// Note that `env2` is `env` with one more binder, of type `dom` in
@@ -621,7 +628,9 @@ impl<'e> Nbe<'e> {
             // Over this checker's share: the storage kept for the next
             // declarations goes, then what is known of the environment's
             // terms.
+            let y = self.a.young_tag();
             self.a = Arena::new();
+            self.a.follow_young(y);
             self.tuples = Default::default();
             self.infer_memo = Default::default();
             self.eager_memo = Default::default();
@@ -633,6 +642,36 @@ impl<'e> Nbe<'e> {
             }
         }
         self.fresh = true;
+        self.begin_young();
+    }
+
+    /// A declaration starts: the young parts of the fronts empty.
+    fn begin_young(&mut self) {
+        if self.a.begin_young() {
+            self.eager_slots[EAGER_SLOTS..]
+                .as_flattened_mut()
+                .fill(val::NONE);
+            self.binder_slots[BINDER_SLOTS..]
+                .as_flattened_mut()
+                .fill(val::NONE);
+            self.tuple_slots[memo::TUPLE_SLOTS..]
+                .as_flattened_mut()
+                .fill(val::NONE);
+        }
+    }
+
+    /// The slot of a front of `n` old slots for an entry keyed by `env`,
+    /// from its old slot `si`, and `env` as that slot holds it: in the
+    /// young part, tagged, if `env` is young. An entry keyed by an old
+    /// environment cannot be in the young part, nor one keyed by a young
+    /// environment in the old.
+    #[inline(always)]
+    pub(super) fn front_at(&self, env: val::Env, si: usize, n: usize) -> (usize, u32) {
+        if self.a.young(env) {
+            (n + (si & (YOUNG_SLOTS - 1)), self.a.ytag(env))
+        } else {
+            (si, env.0)
+        }
     }
 
     /// Whether nothing is kept from an earlier declaration.
