@@ -482,7 +482,7 @@ struct Shapes<'a> {
 
 impl Shapes<'_> {
     fn find(&self, n: NameId) -> Option<&Decl> {
-        self.env.by_name.get(&n).map(|i| &self.decls[i as usize])
+        self.env.by_name.get(&n).map(|&i| &self.decls[i as usize])
     }
 
     fn decl(&self, s: &str) -> Option<(NameId, &Decl)> {

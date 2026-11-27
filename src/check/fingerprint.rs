@@ -360,7 +360,7 @@ impl<'e> Checker<'e> {
                 .env
                 .by_name
                 .get(&m)
-                .map(|i| &self.declarations[i as usize])
+                .map(|&i| &self.declarations[i as usize])
                 .expect("matched");
             deps.clear();
             self.deps(d, &mut deps);
@@ -376,7 +376,7 @@ impl<'e> Checker<'e> {
             .env
             .by_name
             .get(&m)
-            .map(|i| &self.declarations[i as usize])
+            .map(|&i| &self.declarations[i as usize])
         else {
             return Err(format!(
                 "depends on `{}`, which is not declared",
