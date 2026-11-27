@@ -15,7 +15,7 @@ inputs:
     description: Thread counts, space-separated
     required: true
   reps:
-    description: A/B/B/A quadruples per slice and thread count
+    description: Quadruples per slice and thread count
     required: true
   candidate_flags:
     description: Extra `nitrolean check` flags for the candidate
@@ -83,7 +83,9 @@ runs:
         pattern: nitrolean-${{ runner.arch }}-*
         path: ${{ runner.temp }}/bins
 
-    - name: Run A/B/B/A
+    # Odd jobs run A/B/B/A, even jobs B/A/A/B, so that about half the
+    # machines of each architecture, slice and thread count use each order.
+    - name: Run the quadruples
       shell: bash
       env:
         JOB: ${{ inputs.job }}
@@ -95,6 +97,8 @@ runs:
         export A_BIN=$RUNNER_TEMP/bins/nitrolean-$RUNNER_ARCH-A/nitrolean
         export B_BIN=$RUNNER_TEMP/bins/nitrolean-$RUNNER_ARCH-B/nitrolean
         chmod +x "$A_BIN" "$B_BIN"
+        if [ $((JOB % 2)) = 1 ]; then export ORDER=ABBA; else export ORDER=BAAB; fi
+        echo "order: $ORDER"
         sha256sum "$A_BIN" "$B_BIN"
         bench/ab/run.sh "$RUNNER_TEMP/rows-$RUNNER_ARCH-$JOB.tsv"
         { echo "### Job $JOB"; echo; cat "$RUNNER_TEMP/machine.txt"; } >> "$GITHUB_STEP_SUMMARY"
