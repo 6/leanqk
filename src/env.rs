@@ -286,7 +286,10 @@ const FAR: u16 = u16::MAX;
 impl NameIndex {
     const NONE: u32 = u32::MAX;
 
-    #[inline]
+    // Out of line: Mathlib checks with 6.8M lookups, too few for a call
+    // to cost, and its callers on the evaluator's hot paths stay small,
+    // which is what the profile-guided build's inlining decides on.
+    #[inline(never)]
     pub(crate) fn get(&self, n: &NameId) -> Option<u32> {
         if self.small.is_empty() {
             return self
