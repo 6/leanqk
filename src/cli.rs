@@ -49,6 +49,10 @@ enum Command {
         /// Check a prefix while reading a large export with automatic reader threads.
         #[arg(long, conflicts_with_all = ["olean", "parse_only"])]
         overlap: bool,
+        /// Start checking declarations while the export is still being read
+        /// (experimental). The verdict is the same.
+        #[arg(long, conflicts_with_all = ["olean", "parse_only", "overlap"])]
+        stream: bool,
         /// Read Lean's compiled .olean files instead of an export: FILE is a
         /// module name (e.g. `Mathlib`), an .olean file, or a Lake project
         /// directory (every module it built). Imports are found in
@@ -170,6 +174,7 @@ pub fn main() -> ExitCode {
             stats,
             parse_only,
             overlap,
+            stream,
             olean,
             search_path,
             threads,
@@ -185,7 +190,11 @@ pub fn main() -> ExitCode {
                     lazy_proofs: lazy_proofs(true),
                 })
             } else {
-                Source::Export { threads, overlap }
+                Source::Export {
+                    threads,
+                    overlap,
+                    stream,
+                }
             };
             let jobs = if jobs == 0 {
                 check::default_jobs()
@@ -215,7 +224,11 @@ pub fn main() -> ExitCode {
 }
 
 enum Source {
-    Export { threads: usize, overlap: bool },
+    Export {
+        threads: usize,
+        overlap: bool,
+        stream: bool,
+    },
     Olean(olean::Options),
 }
 
@@ -230,6 +243,7 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: us
 fn check_traced(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: usize) -> u8 {
     let start = Instant::now();
     let mut prefix = None;
+    let mut early = None;
     let (mut env, rs, os) = match src {
         Source::Olean(opts) => match olean::load(&file.to_string_lossy(), opts) {
             Ok((env, st)) => (env, None, Some(st)),
@@ -241,13 +255,30 @@ fn check_traced(file: &Path, src: &Source, show_stats: bool, parse_only: bool, j
                 };
             }
         },
-        Source::Export { threads, overlap } => {
+        Source::Export {
+            threads,
+            overlap,
+            stream,
+        } => {
             let opts = reader::Options {
                 lazy_proofs: lazy_proofs(true),
                 threads: *threads,
             };
             let res = if file.as_os_str() == "-" {
                 reader::read_stdin_with(&opts)
+            } else if *stream
+                && opts.lazy_proofs
+                && !parse_only
+                && jobs > 1
+                && std::env::var_os("NITROLEAN_DECL_TIMES").is_none()
+            {
+                let (res, found) = check::stream::read_checking(jobs, view_marks(), |views| {
+                    reader::read_file_viewed(file, &opts, views)
+                });
+                res.map(|(env, stats, same)| {
+                    early = Some((found, same));
+                    (env, stats)
+                })
             } else if *overlap
                 && opts.lazy_proofs
                 && let Some((bytes, readers, workers)) = overlap_plan(jobs, opts.threads)
@@ -345,7 +376,15 @@ fn check_traced(file: &Path, src: &Source, show_stats: bool, parse_only: bool, j
     let prefix_blocks = checked.as_ref().map_or(0, check::CheckedPrefix::blocks);
     let reused = checked.and_then(|p| check::finish_after_prefix(&env, jobs, p));
     let overlap = reused.is_some();
-    let res = reused.map_or_else(|| check::check_env_jobs(&env, jobs), Ok);
+    let streamed = early
+        .as_ref()
+        .and_then(|(e, same)| check::stream::finish(&env, jobs, e, *same));
+    let streamed_ok = streamed.is_some();
+    let res = match (reused, streamed) {
+        (Some(r), _) => Ok(r),
+        (None, Some(r)) => r,
+        (None, None) => check::check_env_jobs(&env, jobs),
+    };
     let secs = start.elapsed().as_secs_f64();
     let mut out = String::new();
     let code = match res {
@@ -385,6 +424,14 @@ fn check_traced(file: &Path, src: &Source, show_stats: bool, parse_only: bool, j
                 p.full_read.as_secs_f64(),
             ));
         }
+        if let Some((e, _)) = &early {
+            out.push_str(&format!(
+                "early         {} blocks accepted in {} views ({})\n",
+                e.accepted(),
+                e.views(),
+                if streamed_ok { "used" } else { "not used" }
+            ));
+        }
         out.push_str(&format!("check time    {secs:.3} s ({jobs} threads)\n"));
         if let Some(b) = peak_rss_bytes() {
             out.push_str(&format!("peak RSS      {}\n", human_bytes(b)));
@@ -392,6 +439,15 @@ fn check_traced(file: &Path, src: &Source, show_stats: bool, parse_only: bool, j
     }
     let _ = io::stdout().lock().write_all(out.as_bytes());
     code
+}
+
+/// Where `--stream` makes views of the export, in thousandths of its
+/// bytes: `NITROLEAN_VIEW_MARKS` (comma-separated), or a default.
+fn view_marks() -> Vec<u64> {
+    std::env::var("NITROLEAN_VIEW_MARKS")
+        .ok()
+        .and_then(|v| v.split(',').map(|x| x.trim().parse().ok()).collect())
+        .unwrap_or_else(|| vec![10, 60, 200, 500])
 }
 
 fn overlap_plan(jobs: usize, readers: usize) -> Option<(Option<usize>, usize, usize)> {

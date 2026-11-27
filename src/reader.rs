@@ -176,6 +176,40 @@ pub fn read_stdin_with(opts: &Options) -> Result<(Env, ReadStats), ReadError> {
 }
 
 fn read_open_file(f: File, opts: &Options) -> Result<(Env, ReadStats), ReadError> {
+    read_open_file_viewed(f, opts, None).map(|(env, stats, _)| (env, stats))
+}
+
+/// What a read hands views of the environment so far to, for checkers to
+/// start on while it goes on (see [`read_file_viewed`]).
+pub(crate) trait Views: Sync {
+    /// Whether to make a view now, with `done` bytes of `size` read.
+    fn wanted(&self, done: u64, size: u64) -> bool;
+    /// A view: an environment of the declarations read so far, whose
+    /// arenas are views of the reader's (see [`Env::view`]).
+    fn publish(&self, env: Env);
+    /// Return once no view is alive (the read is about to change what
+    /// they see).
+    fn drain(&self);
+}
+
+/// [`read_file_with`], handing views to `views` as it goes, when it can
+/// (a regular file read on several threads with lazy proofs). The flag
+/// says whether the environment is the one the views showed the start
+/// of: false if the file was read again (see `read_open_file`).
+pub(crate) fn read_file_viewed(
+    path: &Path,
+    opts: &Options,
+    views: &dyn Views,
+) -> Result<(Env, ReadStats, bool), ReadError> {
+    let f = File::open(path).map_err(|e| io_error(path, e))?;
+    read_open_file_viewed(f, opts, Some(views))
+}
+
+fn read_open_file_viewed(
+    f: File,
+    opts: &Options,
+    views: Option<&dyn Views>,
+) -> Result<(Env, ReadStats, bool), ReadError> {
     // Only a regular file's length says anything about its contents.
     let size = match f.metadata() {
         Ok(m) if m.is_file() => m.len(),
@@ -190,7 +224,7 @@ fn read_open_file(f: File, opts: &Options) -> Result<(Env, ReadStats), ReadError
             state(opts, size, false),
             BufReader::with_capacity(1 << 20, f),
         )?;
-        return Ok((r.env, r.stats));
+        return Ok((r.env, r.stats, true));
     }
     // A regular file is read optimistically: names and expressions are
     // added without hash-consing (an export lists each once) and indexed
@@ -199,7 +233,7 @@ fn read_open_file(f: File, opts: &Options) -> Result<(Env, ReadStats), ReadError
     let t0 = std::time::Instant::now();
     let mut st = state(opts, size, true);
     st.index_threads = Some(threads);
-    let r = read_regular(&f, size, threads, st)?;
+    let r = read_regular(&f, size, threads, st, views)?;
     if std::env::var_os("NITROLEAN_READ_PROFILE").is_some() {
         let index = INDEX_NS.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
         eprintln!(
@@ -211,11 +245,11 @@ fn read_open_file(f: File, opts: &Options) -> Result<(Env, ReadStats), ReadError
         );
     }
     match r.dup {
-        None => Ok((r.env, r.stats)),
+        None => Ok((r.env, r.stats, true)),
         Some(_) => {
             drop(r);
-            let r = read_regular(&f, size, threads, state(opts, size, false))?;
-            Ok((r.env, r.stats))
+            let r = read_regular(&f, size, threads, state(opts, size, false), None)?;
+            Ok((r.env, r.stats, false))
         }
     }
 }
@@ -240,12 +274,18 @@ fn state(opts: &Options, size: u64, append: bool) -> State {
     st
 }
 
-fn read_regular(f: &File, size: u64, threads: usize, st: State) -> Result<Done, ReadError> {
+fn read_regular(
+    f: &File,
+    size: u64,
+    threads: usize,
+    st: State,
+    views: Option<&dyn Views>,
+) -> Result<Done, ReadError> {
     if threads > 1
         && st.lazy.is_some()
         && let Some(m) = crate::olean::Mapped::new(f)
     {
-        return finish(st, |st| map_lines_par(st, &m, threads));
+        return finish_viewed(st, views, |st| map_lines_par(st, &m, threads, views));
     }
     if threads > 1 {
         // The interning stage runs on this thread.
@@ -648,11 +688,25 @@ struct Done {
 /// Run `read` on `st`, then complete the environment and the totals (and
 /// index it, if `st` says so).
 fn finish(
+    st: State,
+    read: impl FnOnce(&mut State) -> Result<ReadStats, ReadError>,
+) -> Result<Done, ReadError> {
+    finish_viewed(st, None, read)
+}
+
+/// [`finish`], with views of the environment made by `read` (drained
+/// before the lazy values are put together).
+fn finish_viewed(
     mut st: State,
+    views: Option<&dyn Views>,
     read: impl FnOnce(&mut State) -> Result<ReadStats, ReadError>,
 ) -> Result<Done, ReadError> {
     let res = read(&mut st);
     crate::trace::phase("lines");
+    if let Some(v) = views {
+        v.drain();
+        crate::trace::phase("drained");
+    }
     let id_map_bytes =
         st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
     // The id maps are done with: free them before the lazy values are
@@ -795,6 +849,7 @@ fn map_lines_par(
     st: &mut State,
     m: &crate::olean::Mapped,
     threads: usize,
+    views: Option<&dyn Views>,
 ) -> Result<ReadStats, ReadError> {
     let b = m.bytes();
     let chunks = b.len().div_ceil(AHEAD).max(1);
@@ -853,6 +908,12 @@ fn map_lines_par(
                     continue;
                 }
                 st.lines_in(&mut lines, &b[p.bytes.start..], p.bytes.len())?;
+            }
+            if let Some(v) = views
+                && v.wanted(a.end as u64, b.len() as u64)
+                && let Some(env) = st.view(b.len() as u64)
+            {
+                v.publish(env);
             }
             let mut a = a;
             a.done = Some((done, a.end));
@@ -1714,6 +1775,29 @@ fn binder_info(s: &str) -> R<BinderInfo> {
 }
 
 impl State {
+    /// A view of the environment so far (see [`Env::view`]), for a file of
+    /// `size` bytes read with lazy proofs and without hash-consing; `None`
+    /// if it cannot have one. The checkers' own expressions get ids above
+    /// any the file can give: at most one per line, of 17 bytes at least.
+    fn view(&mut self, size: u64) -> Option<Env> {
+        const MAX_LINES_PER_BYTE: u64 = 16;
+        let above = (size / MAX_LINES_PER_BYTE + (1 << 20)) as usize;
+        if !self.append
+            || self.failed.is_some()
+            || self.capture.is_some()
+            || !self.env.can_view()
+            || above > crate::slab::CAP / 2
+        {
+            return None;
+        }
+        let lazy = self.lazy.as_deref_mut()?;
+        let mut env = self
+            .env
+            .view(crate::intern::IdTable::default(), None, above);
+        env.lazy = Some(Box::new(lazy.view(env.exprs.len() as u32)));
+        Some(env)
+    }
+
     fn new() -> Self {
         State {
             env: Env::new(),

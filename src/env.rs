@@ -493,6 +493,40 @@ impl Env {
 
     /// Packs the name index once no more declarations are added (lookups
     /// answer as before; a later addition unpacks it).
+    /// Whether the arenas are in memory that never moves, so that
+    /// [`Env::view`] works.
+    pub(crate) fn can_view(&self) -> bool {
+        self.names.is_fixed() && self.exprs.is_fixed()
+    }
+
+    /// The environment so far, for checkers on other threads while this
+    /// one goes on growing: its arenas are views of this one's (see
+    /// [`crate::slab::Slab::alias`]), the rest copies. Names are looked up
+    /// in `names` (an index of some of them), expressions in no index; the
+    /// values left unbuilt come from `lazy`. The checkers' stores take ids
+    /// from `above` on (more than the arena will hold).
+    pub(crate) fn view(
+        &mut self,
+        names: crate::intern::IdTable,
+        lazy: Option<Box<dyn LazyValues>>,
+        above: usize,
+    ) -> Env {
+        Env {
+            meta: self.meta.clone(),
+            names: self.names.view(names),
+            levels: self.levels.clone(),
+            exprs: self.exprs.view(above),
+            decls: self.decls.clone(),
+            blocks: self.blocks.clone(),
+            name_pool: self.name_pool.clone(),
+            rule_pool: self.rule_pool.clone(),
+            by_name: self.by_name.clone(),
+            lazy,
+            mdata_errors: self.mdata_errors.clone(),
+            mdata_types: self.mdata_types.clone(),
+        }
+    }
+
     pub fn finish_loading(&mut self) {
         self.by_name.freeze();
     }

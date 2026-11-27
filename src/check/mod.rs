@@ -22,6 +22,7 @@ pub mod nbe;
 pub mod pp;
 mod quot;
 pub mod store;
+pub(crate) mod stream;
 mod subst;
 pub mod tc;
 pub mod univ;

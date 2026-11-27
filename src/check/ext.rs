@@ -310,6 +310,48 @@ pub struct Ext {
 }
 
 impl Ext {
+    /// Whether the two give a checker the same extensions (the notes on
+    /// those that are off aside).
+    pub(super) fn agrees(&self, o: &Ext) -> bool {
+        let Ext {
+            nat,
+            nat_zero,
+            nat_succ,
+            bool_true,
+            bool_false,
+            ops,
+            nat_ops_complete,
+            array_ops,
+            list_ops,
+            dec_eq_ops,
+            fast,
+            beq_prod,
+            int_ops,
+            strings,
+            eager_reduce,
+            quot,
+            eq,
+            notes: _,
+        } = self;
+        *nat == o.nat
+            && *nat_zero == o.nat_zero
+            && *nat_succ == o.nat_succ
+            && *bool_true == o.bool_true
+            && *bool_false == o.bool_false
+            && *ops == o.ops
+            && *nat_ops_complete == o.nat_ops_complete
+            && *array_ops == o.array_ops
+            && *list_ops == o.list_ops
+            && *dec_eq_ops == o.dec_eq_ops
+            && *fast == o.fast
+            && *beq_prod == o.beq_prod
+            && *int_ops == o.int_ops
+            && *strings == o.strings
+            && *eager_reduce == o.eager_reduce
+            && *quot == o.quot
+            && *eq == o.eq
+    }
+
     pub fn string(&self) -> Option<&StrExt> {
         self.strings.as_ref()
     }

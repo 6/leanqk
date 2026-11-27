@@ -329,19 +329,6 @@ impl IdTable {
     pub fn heap_bytes(&self) -> usize {
         self.slots.len() * 8
     }
-
-    /// A copy of the table (another thread may not insert meanwhile).
-    pub fn copy(&self) -> IdTable {
-        IdTable {
-            slots: self
-                .slots
-                .iter()
-                .map(|s| AtomicU64::new(s.load(Ordering::Relaxed)))
-                .collect(),
-            lines: self.lines,
-            len: AtomicUsize::new(self.len()),
-        }
-    }
 }
 
 /// The arena of the environment's big kinds (expressions, names): like

@@ -1613,6 +1613,195 @@ impl Stored {
     }
 }
 
+/// Theorem values read from the records as they are while the read goes
+/// on (see [`Builder::view`]): those of the declarations read so far. A
+/// value is built as [`Stored`] builds it, but for the records the read
+/// interns after the view was made, which it builds too (as their terms,
+/// not as arena ids). A value that needs an arena id the view does not
+/// have (one interned after it was made) is not built: an error.
+pub(crate) struct Live {
+    recs: crate::slab::AtomicView,
+    side: Slab<u32>,
+    roots: Vec<u32>,
+    starts: Vec<u32>,
+    /// The view's expressions: arena ids below this.
+    exprs: u32,
+}
+
+/// Why [`Live`] did not build a value.
+pub(crate) const LIVE_LATER: &str = "the value needs terms read after the view";
+
+thread_local! {
+    static LIVE_SCRATCH: RefCell<Scratch> = RefCell::default();
+}
+
+impl Builder {
+    /// The values of the declarations read so far, for other threads to
+    /// build while the read goes on; arena ids below `exprs` are theirs.
+    pub(super) fn view(&mut self, exprs: u32) -> Live {
+        let n = self.from;
+        Live {
+            recs: self.recs.atomic_alias(n),
+            side: self.side.alias(self.side.len()),
+            roots: self.roots.clone(),
+            starts: self.starts.clone(),
+            exprs,
+        }
+    }
+}
+
+impl LazyValues for Live {
+    fn decode(&self, _env: &Env, k: u32, sink: &mut dyn TermSink) -> Result<ExprId, String> {
+        self.decode_in(k, sink)
+    }
+
+    fn decode_store(
+        &self,
+        _env: &Env,
+        k: u32,
+        sink: &mut crate::check::store::Store<'_>,
+    ) -> Result<ExprId, String> {
+        self.decode_in(k, sink)
+    }
+
+    fn count(&self) -> usize {
+        self.roots.len()
+    }
+
+    fn heap_bytes(&self) -> usize {
+        (self.roots.capacity() + self.starts.capacity()) * 4
+    }
+}
+
+impl Live {
+    /// Record `x`, if the view has it.
+    #[inline(always)]
+    fn rec(&self, x: u32) -> Result<u64, String> {
+        if (x as usize) < self.recs.len() {
+            Ok(self.recs.load(x as usize))
+        } else {
+            Err("internal: a record past the view".into())
+        }
+    }
+
+    /// The arena id of done record `r`, if the view has it.
+    #[inline(always)]
+    fn arena(&self, r: u64) -> Result<ExprId, String> {
+        let id = r as u32;
+        if id < self.exprs {
+            Ok(ExprId(id))
+        } else {
+            Err(LIVE_LATER.into())
+        }
+    }
+
+    fn decode_in<S: TermSink + ?Sized>(&self, k: u32, sink: &mut S) -> Result<ExprId, String> {
+        let (Some(&root), Some(&start)) = (self.roots.get(k as usize), self.starts.get(k as usize))
+        else {
+            return Err("internal: no such lazy value".into());
+        };
+        LIVE_SCRATCH.with(|s| {
+            let s = &mut *s.borrow_mut();
+            s.memo.clear();
+            s.stack.clear();
+            s.own.clear();
+            let keep = sink.keeps_shared();
+            // As in `Stored::build_own`: the records of the value's own
+            // declaration are taken as its own.
+            for x in start..=root {
+                let r = self.rec(x)?;
+                let id = if r & DONE != 0 {
+                    let a = self.arena(r)?;
+                    if keep { a } else { sink.shared_expr(a) }
+                } else if tag(r) == T_ALIAS {
+                    let t = (r & ID_MASK) as u32;
+                    if t >= start {
+                        ExprId(s.own[(t - start) as usize])
+                    } else {
+                        self.build(t, sink, &mut s.memo, &mut s.stack)?
+                    }
+                } else {
+                    let n = decode(&self.side, r);
+                    let (kids, k) = n.kids();
+                    let mut ids = [ExprId(0); 3];
+                    for (&c, id) in kids[..k].iter().zip(&mut ids) {
+                        *id = if c >= start {
+                            ExprId(s.own[(c - start) as usize])
+                        } else {
+                            self.build(c, sink, &mut s.memo, &mut s.stack)?
+                        };
+                    }
+                    make(sink, n, ids, true, keep)
+                };
+                s.own.push(id.0);
+            }
+            Ok(ExprId(*s.own.last().expect("the root")))
+        })
+    }
+
+    /// Record `root` (of another declaration) in `sink`, hash-consed, as
+    /// [`Stored::build`] does.
+    fn build<S: TermSink + ?Sized>(
+        &self,
+        root: u32,
+        sink: &mut S,
+        memo: &mut HashMap<u32, ExprId>,
+        stack: &mut Vec<u32>,
+    ) -> Result<ExprId, String> {
+        if let Some(&e) = memo.get(&root) {
+            return Ok(e);
+        }
+        stack.clear();
+        stack.push(root);
+        while let Some(&top) = stack.last() {
+            if memo.contains_key(&top) {
+                stack.pop();
+                continue;
+            }
+            let r = self.rec(top)?;
+            let id = if r & DONE != 0 {
+                let a = self.arena(r)?;
+                if sink.keeps_shared() {
+                    a
+                } else {
+                    sink.shared_expr(a)
+                }
+            } else if tag(r) == T_ALIAS {
+                let t = (r & ID_MASK) as u32;
+                match memo.get(&t) {
+                    Some(&e) => e,
+                    None => {
+                        stack.push(t);
+                        continue;
+                    }
+                }
+            } else {
+                let n = decode(&self.side, r);
+                let (kids, k) = n.kids();
+                let mut ready = true;
+                for &c in &kids[..k] {
+                    if !memo.contains_key(&c) {
+                        stack.push(c);
+                        ready = false;
+                    }
+                }
+                if !ready {
+                    continue;
+                }
+                let mut ids = [ExprId(0); 3];
+                for (&c, id) in kids[..k].iter().zip(&mut ids) {
+                    *id = memo[&c];
+                }
+                let keep = sink.keeps_shared();
+                make(sink, n, ids, false, keep)
+            };
+            memo.insert(top, id);
+            stack.pop();
+        }
+        Ok(memo[&root])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::reader::{Options, read_file_with};
