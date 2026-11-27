@@ -1585,6 +1585,7 @@ impl Nbe<'_> {
 
     /// Whether the value `x` is, structurally, the term `t` in `e` under
     /// `l` (as `syn_eq`).
+    #[inline(always)]
     pub(super) fn syn_eq_term(
         &mut self,
         x: V,
