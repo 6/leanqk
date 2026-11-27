@@ -59,13 +59,30 @@ done
 events=$(IFS=,; echo "${evs[*]}")
 
 # The most AnonHugePages (KiB) of the processes named $1, until $2 exits.
+# For nitrolean, also each mapping's Rss and AnonHugePages (KiB) when its
+# total Rss was highest, into $3 (address range, size, Rss, AnonHugePages,
+# name; the 25 largest by Rss).
 thp_watch() {
-  local name=$1 pid=$2 max=0 n
+  local name=$1 pid=$2 maps=${3:-} max=0 top=0 n p r
   while kill -0 "$pid" 2>/dev/null; do
     n=$(for p in $(pgrep -x "$name"); do
           awk '/^AnonHugePages:/ {print $2}' "/proc/$p/smaps_rollup" 2>/dev/null
         done | awk '{s += $1} END {print s + 0}')
     [ "$n" -gt "$max" ] && max=$n
+    if [ -n "$maps" ]; then
+      for p in $(pgrep -x "$name"); do
+        r=$(awk '/^Rss:/ {print $2}' "/proc/$p/smaps_rollup" 2>/dev/null)
+        if [ -n "$r" ] && [ "$r" -gt "$top" ]; then
+          top=$r
+          awk -v total="$r" '
+            /^[0-9a-f]+-[0-9a-f]+ / { if (range != "") print range "\t" size "\t" rss "\t" thp "\t" what
+              range = $1; what = (NF >= 6) ? $6 : "[anon]"; size = rss = thp = 0; next }
+            /^Size:/ { size = $2 } /^Rss:/ { rss = $2 } /^AnonHugePages:/ { thp = $2 }
+            END { if (range != "") print range "\t" size "\t" rss "\t" thp "\t" what }' "/proc/$p/smaps" 2>/dev/null |
+            sort -t$'\t' -k3,3nr | head -n 25 > "$maps.tmp" && mv "$maps.tmp" "$maps"
+        fi
+      done
+    fi
     sleep 2
   done
   echo "$max"
@@ -78,7 +95,9 @@ count_run() {
   cat "$IN" "$W/in.susz" > /dev/null
   (cd "$dir" && TMPDIR=$W exec perf stat -x, -e "$events" -o "$f" -- sh -c "$cmd" > /dev/null 2>&1) &
   local pid=$!
-  local thp; thp=$(thp_watch "$proc" "$pid")
+  local maps=
+  [ "$proc" = nitrolean ] && maps=${f%.csv}.maps.tsv
+  local thp; thp=$(thp_watch "$proc" "$pid" "$maps")
   wait "$pid"; local status=$?
   echo "$name	$status	$thp	$f" >> "$raw/stat-index.tsv"
 }
@@ -168,6 +187,14 @@ by_symbol() {
   while IFS=$'\t' read -r name status thp f; do
     echo "#### $name (exit $status, at most $((thp / 1024)) MiB in huge pages)"
     echo
+    if [ -s "${f%.csv}.maps.tsv" ]; then
+      echo "Largest mappings at the highest Rss (MiB): range, size, Rss, AnonHugePages, name:"
+      echo
+      echo '```'
+      awk -F'\t' '{ printf "%s %9.1f %8.1f %8.1f %s\n", $1, $2 / 1024, $3 / 1024, $4 / 1024, $5 }' "${f%.csv}.maps.tsv"
+      echo '```'
+      echo
+    fi
     echo "| event | count | counted % |"
     echo "|---|--:|--:|"
     awk -F, '$1 ~ /^[0-9.]+$/ { printf "| %s | %s | %s |\n", $3, $1, $5 }' "$f"
