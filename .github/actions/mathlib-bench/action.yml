@@ -1,7 +1,7 @@
 name: Mathlib benchmark
 description: >-
-  Builds nitrolean and gruszka, fetches Mathlib v4.36.0 (or its rep25s
-  slice) and measures both checkers on it; see
+  Builds nitrolean, nano-lean and gruszka, fetches Mathlib v4.36.0 (or its
+  rep25s slice) and measures the three checkers on it; see
   .github/workflows/mathlib-bench.yml.
 
 inputs:
@@ -52,11 +52,25 @@ runs:
       run: |
         bench/mathlib-ci/probe.sh "$RUNNER_TEMP/counter" > "$RUNNER_TEMP/probe.md"
         cat "$RUNNER_TEMP/probe.md"
-        counter=$(cat "$RUNNER_TEMP/counter")
+        probed=$(cat "$RUNNER_TEMP/counter")
+        counter=$probed
         [ "$WANTED" = auto ] || counter=$WANTED
+        notes=$RUNNER_TEMP/counter-notes.md
+        : > "$notes"
+        echo "COUNTER_NOTES=$notes" >> "$GITHUB_ENV"
+        # perf asked for on a runner whose perf cannot count (no hardware
+        # counters, as on some AMD EPYC VMs): no count, rather than runs
+        # that fail. instructions:u will do for perf-u.
+        case $counter/$probed in
+          perf/perf|perf-u/perf|perf-u/perf-u) ;;
+          perf/*|perf-u/*)
+            echo "- \`$counter\` was asked for, but \`perf stat\` cannot count instructions on this runner (the table below): no instruction counts." >> "$notes"
+            counter=none ;;
+        esac
         # Under cachegrind a full Mathlib run would not end within the
         # job's time limit: auto takes it only for a slice.
         if [ "$WANTED" = auto ] && [ "$counter" = cachegrind ] && [ "$SLICE" = full ] && [ -z "$LINES_WANTED" ]; then
+          echo "- This runner has no hardware instruction counters that \`perf stat\` can read (the table below), and cachegrind would not end within the time limit on all of Mathlib: no instruction counts." >> "$notes"
           counter=none
         fi
         # valgrind runs neither AVX-512 nor SVE code: under cachegrind,
@@ -98,6 +112,21 @@ runs:
         FLAGS="$FLAGS" scripts/build-pgo.sh "$PWD/init.susz"
         rm -f init.susz
         rm -rf target/pgo
+
+    # As the arena's checkers/nano-lean.yaml: its own PGO script
+    # (scripts/pgo.sh, trained on Init, with -C target-cpu=native), with
+    # the Rust toolchain its rust-toolchain.toml names.
+    - name: Build nano-lean
+      shell: bash
+      run: |
+        eval "$(mise -C "$GITHUB_WORKSPACE" env)"  # rustup, from mise's Rust
+        unset RUSTUP_TOOLCHAIN                     # nano-lean's own toolchain
+        git clone -q --depth 1 --branch "$NANO_LEAN_TAG" "$NANO_LEAN_URL" "$W/nano-lean" && cd "$W/nano-lean"
+        test "$(git rev-parse HEAD)" = "$NANO_LEAN_REV"
+        rustup toolchain install  # the one rust-toolchain.toml names, with llvm-tools
+        scripts/pgo.sh
+        rm -rf target/pgo-data
+        ls -l target/release/nl-fast
 
     - name: Install elan and Lean
       shell: bash
@@ -142,7 +171,7 @@ runs:
         time "$W/gruszka/.susz/bin/susz" pack --no-index "$IN" "$W/in.susz"
         ls -l "$W/in.susz"
 
-    # Round by round, nitrolean and gruszka alternate. Under cachegrind
+    # Round by round, nitrolean, nano-lean and gruszka alternate. Under cachegrind
     # only the first round counts (an extra run each); perf counts every
     # run.
     - name: Run
@@ -154,14 +183,19 @@ runs:
         m=$PWD/bench/mathlib-ci/measure.sh
         nl=$PWD/target/release/nitrolean
         gr() { (cd "$W/gruszka" && TMPDIR=$W "$m" "$@"); }
+        # From $W, where no nano-lean.toml sets options.
+        nn() { (cd "$W" && "$m" "$@"); }
+        nf=$W/nano-lean/target/release/nl-fast
         warm() { cat "$IN" "$W/in.susz" > /dev/null; }
         counter=$COUNTER
         for ROUND in $(seq "$ROUNDS"); do
           export ROUND
           if [ "$ROUND" -gt 1 ] && [ "$counter" = cachegrind ]; then export COUNTER=none; fi
           warm; $m "nitrolean -j1" "$out" "$nl check -j 1 '$IN'"
+          warm; nn "nano-lean -j1" "$out" "'$nf' -q -j 1 '$IN'"
           warm; gr "gruszka (susz pack + 1 worker)" "$out" "scripts/arena-run '$IN' 1"
           warm; $m "nitrolean -j4" "$out" "$nl check -j 4 '$IN'"
+          warm; nn "nano-lean -j4" "$out" "'$nf' -q -j 4 '$IN'"
           warm; gr "gruszka (susz pack + 4 workers)" "$out" "scripts/arena-run '$IN' 4"
           warm; $m "gruszka alone (4 workers)" "$out" "'$W/gruszka/target/release/gruszka' '$W/in.susz' 4"
         done
@@ -178,13 +212,17 @@ runs:
         export PATH=$W/hyperfine/bin:$PATH
         nl=$PWD/target/release/nitrolean
         g="env TMPDIR='$W' '$W/gruszka/scripts/arena-run' '$IN'"
+        nf=$W/nano-lean/target/release/nl-fast
+        cd "$W"  # where no nano-lean.toml sets options
         hyperfine --warmup 1 --runs "$RUNS" --style basic \
           --export-markdown "$RUNNER_TEMP/hyperfine-1.md" --export-json "$RUNNER_TEMP/hyperfine-1.json" \
           -n "nitrolean -j1" "$nl check -j 1 '$IN'" \
+          -n "nano-lean -j1" "'$nf' -q -j 1 '$IN'" \
           -n "gruszka (susz pack + 1 worker)" "$g 1"
         hyperfine --warmup 1 --runs "$RUNS" --style basic \
           --export-markdown "$RUNNER_TEMP/hyperfine-4.md" --export-json "$RUNNER_TEMP/hyperfine-4.json" \
           -n "nitrolean -j4" "$nl check -j 4 '$IN'" \
+          -n "nano-lean -j4" "'$nf' -q -j 4 '$IN'" \
           -n "gruszka (susz pack + 4 workers)" "$g 4" \
           -n "gruszka alone (4 workers)" "'$W/gruszka/target/release/gruszka' '$W/in.susz' 4"
 
@@ -200,9 +238,18 @@ runs:
           echo
           cat "$RUNNER_TEMP/input.md"
           echo
-          echo "nitrolean \`$(git rev-parse --short HEAD)\`, gruszka \`${GRUSZKA_REV:0:12}\`, susz $SUSZ_VERSION;"
-          echo "rustc flags \`${FLAGS:-(none)}\`, both PGO; instructions by \`$COUNTER\`."
+          echo "nitrolean \`$(git rev-parse --short HEAD)\`, nano-lean $NANO_LEAN_TAG \`${NANO_LEAN_REV:0:12}\`, gruszka \`${GRUSZKA_REV:0:12}\`, susz $SUSZ_VERSION;"
+          echo "rustc flags \`${FLAGS:-(none)}\` (nano-lean: its own script's), all PGO; instructions by \`$COUNTER\`."
           echo
+          if [ -s "${COUNTER_NOTES:-}" ]; then
+            echo "> **Note: instructions not counted.** Wall time, CPU time and peak RSS are measured as usual; the instructions column shows \`-\` where there is no count."
+            echo ">"
+            sed 's/^/> /' "$COUNTER_NOTES"
+            echo
+          elif [ "$COUNTER" = none ]; then
+            echo "> **Note: instructions not counted** (counter \`none\`). Wall time, CPU time and peak RSS are measured as usual."
+            echo
+          fi
           bench/mathlib-ci/report.sh "$out" || ok=$?
           echo
           if ls "$RUNNER_TEMP"/hyperfine-*.json > /dev/null 2>&1; then
@@ -237,4 +284,5 @@ runs:
           ${{ runner.temp }}/summary.md
           ${{ runner.temp }}/probe.md
           ${{ runner.temp }}/input.md
+          ${{ runner.temp }}/counter-notes.md
         if-no-files-found: ignore
