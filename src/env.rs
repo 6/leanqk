@@ -538,43 +538,20 @@ impl Env {
         lazy: Option<Box<dyn LazyValues>>,
         above: usize,
     ) -> Env {
-        let mut t = std::time::Instant::now();
-        let mut lap = |what: &str| {
-            if std::env::var_os("NITROLEAN_VIEW_PROFILE").is_some() {
-                eprintln!("  {what} {:?}", t.elapsed());
-            }
-            t = std::time::Instant::now();
-        };
-        let meta = self.meta.clone();
-        let names_v = self.names.view(names);
-        lap("names");
-        let levels = self.levels.clone();
-        lap("levels");
-        let exprs = self.exprs.view(above);
-        lap("exprs");
-        let decls = self.decls.clone();
-        let blocks = self.blocks.clone();
-        let name_pool = self.name_pool.clone();
-        let rule_pool = self.rule_pool.clone();
-        lap("decls");
-        let by_name = self.by_name.clone();
-        lap("by_name");
-        let e = Env {
-            meta,
-            names: names_v,
-            levels,
-            exprs,
-            decls,
-            blocks,
-            name_pool,
-            rule_pool,
-            by_name,
+        Env {
+            meta: self.meta.clone(),
+            names: self.names.view(names),
+            levels: self.levels.clone(),
+            exprs: self.exprs.view(above),
+            decls: self.decls.clone(),
+            blocks: self.blocks.clone(),
+            name_pool: self.name_pool.clone(),
+            rule_pool: self.rule_pool.clone(),
+            by_name: self.by_name.clone(),
             lazy,
             mdata_errors: self.mdata_errors.clone(),
             mdata_types: self.mdata_types.clone(),
-        };
-        lap("rest");
-        e
+        }
     }
 
     pub fn finish_loading(&mut self) {
