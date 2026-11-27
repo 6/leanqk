@@ -111,9 +111,11 @@ impl Nbe<'_> {
     #[inline(never)]
     fn eval_binder(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         // A front by the environment as given, before it is cut.
-        let si = (crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64) >> 50)
-            as usize
-            & (super::BINDER_SLOTS - 1);
+        let si = super::front_slot(
+            crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64),
+            env.0,
+            super::BINDER_SLOTS,
+        );
         let s = self.binder_slots[si];
         if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
             return V(s[3]);
@@ -245,7 +247,7 @@ impl Nbe<'_> {
     #[inline]
     fn eager(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let sh = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
-        let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
+        let si = super::front_slot(sh, env.0, super::EAGER_SLOTS);
         let s = self.eager_slots[si];
         if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
             return V(s[3]);
@@ -258,7 +260,7 @@ impl Nbe<'_> {
     /// the same).
     pub(super) fn eval_slot(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let sh = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
-        let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
+        let si = super::front_slot(sh, env.0, super::EAGER_SLOTS);
         let s = self.eager_slots[si];
         if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
             return V(s[3]);

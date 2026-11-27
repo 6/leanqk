@@ -253,8 +253,11 @@ impl Nbe<'_> {
         if n < 64 && holes & ((1u64 << n) - 1) == 0 && n == self.a.env_len(env) {
             return env.0 | WHOLE_ENV;
         }
-        let si = (crate::hash::hash_front(env.0 as u64 | (n as u64) << 32, holes) >> 50) as usize
-            & (TUPLE_SLOTS - 1);
+        let si = super::front_slot(
+            crate::hash::hash_front(env.0 as u64 | (n as u64) << 32, holes),
+            env.0,
+            TUPLE_SLOTS,
+        );
         let s = self.tuple_slots[si];
         if s[0] == env.0 && s[1] == n && s[2] == holes as u32 && s[3] == (holes >> 32) as u32 {
             return s[4];

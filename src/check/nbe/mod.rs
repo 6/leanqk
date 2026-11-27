@@ -77,6 +77,25 @@ const SYN_BVARS: usize = 1 << 10;
 /// Slots of `Nbe::eager_slots`.
 pub(super) const EAGER_SLOTS: usize = 1 << 14;
 
+/// The direct-mapped fronts keyed by an environment (`eager_slots`,
+/// `binder_slots`, `tuple_slots`) are cut into regions of
+/// `1 << FRONT_REGION` slots, and an entry goes to the region picked by its
+/// environment's id. Ids are given in order, and those of
+/// `1 << FRONT_REGION` environments made one after another share a region:
+/// a declaration's entries keep to the regions of the environments it
+/// makes, and leave those of earlier declarations' environments in place.
+/// No age is tested, and the slot costs one instruction more than a plain
+/// hash slot.
+const FRONT_REGION: u32 = 11;
+
+/// The slot for hash `h` (of a key with environment `env`) in a front of
+/// `n` slots: see `FRONT_REGION`.
+#[inline(always)]
+pub(super) fn front_slot(h: u64, env: u32, n: usize) -> usize {
+    ((h >> (64 - FRONT_REGION)) as usize | ((env >> FRONT_REGION) as usize) << FRONT_REGION)
+        & (n - 1)
+}
+
 /// Slots of `Nbe::infer_slots`.
 pub(super) const INFER_SLOTS: usize = 1 << 14;
 
