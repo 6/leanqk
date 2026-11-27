@@ -190,6 +190,9 @@ pub(crate) trait Views: Sync {
     /// Return once no view is alive (the read is about to change what
     /// they see).
     fn drain(&self);
+    /// Whether to make a last view once the whole file is read (while the
+    /// names and expressions are indexed).
+    fn wanted_last(&self) -> bool;
 }
 
 /// [`read_file_with`], handing views to `views` as it goes, when it can
@@ -285,7 +288,10 @@ fn read_regular(
         && st.lazy.is_some()
         && let Some(m) = crate::olean::Mapped::new(f)
     {
-        return finish_viewed(st, views, |st| map_lines_par(st, &m, threads, views));
+        let size = m.bytes().len() as u64;
+        return finish_viewed(st, views.map(|v| (v, size)), |st| {
+            map_lines_par(st, &m, threads, views)
+        });
     }
     if threads > 1 {
         // The interning stage runs on this thread.
@@ -698,24 +704,12 @@ fn finish(
 /// before the lazy values are put together).
 fn finish_viewed(
     mut st: State,
-    views: Option<&dyn Views>,
+    views: Option<(&dyn Views, u64)>,
     read: impl FnOnce(&mut State) -> Result<ReadStats, ReadError>,
 ) -> Result<Done, ReadError> {
-    let mut res = read(&mut st);
+    let res = read(&mut st);
     crate::trace::phase("lines");
-    if let Some(v) = views {
-        // The views see the shared terms interned, and go before the
-        // records are put together.
-        if res.is_ok()
-            && let Some(b) = st.lazy.as_deref_mut()
-            && let Err(e) = b.finish_shared(&mut st.env, st.append)
-        {
-            res = Err(ReadError {
-                line: 0,
-                class: e.class,
-                msg: e.msg,
-            });
-        }
+    if let Some((v, _)) = views {
         v.drain();
         crate::trace::phase("drained");
         if let Some(b) = st.lazy.as_deref_mut() {
@@ -730,15 +724,39 @@ fn finish_viewed(
         *m = IdMap::new(0);
     }
     let mut stats = res?;
-    if let Some(b) = st.lazy.take() {
-        st.env.lazy = b
-            .finish(&mut st.env, st.append, st.index_threads.unwrap_or(1))
-            .map_err(|e| ReadError {
-                line: 0,
-                class: e.class,
-                msg: e.msg,
-            })?;
-        crate::trace::phase("lazy");
+    let lazy_err = |e: Fail| ReadError {
+        line: 0,
+        class: e.class,
+        msg: e.msg,
+    };
+    let mut lazy = st.lazy.take();
+    if let Some(b) = lazy.as_deref_mut() {
+        b.finish_shared(&mut st.env, st.append).map_err(lazy_err)?;
+    }
+    // A last view, of everything, while the names and expressions are
+    // indexed (which leaves what views see as it is); the lazy values
+    // are put together after.
+    let mut last = None;
+    if let Some((v, size)) = views.filter(|(v, _)| v.wanted_last()) {
+        st.lazy = lazy;
+        if let Some(env) = st.view(size) {
+            v.publish(env);
+            last = Some(v);
+        }
+        lazy = st.lazy.take();
+    }
+    let put_together = |st: &mut State, lazy: Option<Box<lazy::Builder>>| {
+        if let Some(mut b) = lazy {
+            b.end_views();
+            st.env.lazy = b
+                .finish_stored(&mut st.env, st.index_threads.unwrap_or(1))
+                .map_err(lazy_err)?;
+            crate::trace::phase("lazy");
+        }
+        Ok::<_, ReadError>(())
+    };
+    if last.is_none() {
+        put_together(&mut st, lazy.take())?;
     }
     stats.shared_exprs = st.shared_exprs;
     stats.id_map_bytes = id_map_bytes;
@@ -770,6 +788,11 @@ fn finish_viewed(
             t.elapsed().as_nanos() as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
+    }
+    if let Some(v) = last {
+        v.drain();
+        crate::trace::phase("drained");
+        put_together(&mut st, lazy.take())?;
     }
     Ok(Done {
         env: st.env,

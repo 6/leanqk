@@ -59,6 +59,10 @@ struct View {
     from: usize,
     /// The next of them to take.
     next: AtomicUsize,
+    /// Its place among the views, from 1.
+    id: usize,
+    /// Blocks accepted in earlier views, if it may take some of theirs.
+    skip: Option<Vec<bool>>,
     /// Per block from `from` on: [`PLAIN`] or [`EVAL`] if accepted.
     accepted: Vec<AtomicU8>,
     /// Where it leaves what it found when it goes.
@@ -145,9 +149,14 @@ struct State {
     views: Vec<Arc<View>>,
     /// Views made so far, and the blocks they cover.
     made: usize,
+    /// The last view's [`View::id`].
+    id: usize,
     covered: usize,
-    /// The read is over (or the views are drained): no more views, and
-    /// the threads stop taking blocks.
+    /// Threads holding a view.
+    busy: usize,
+    /// Views were drained: the next one skips what they accepted.
+    drained: bool,
+    /// The read is over: the threads end.
     over: bool,
 }
 
@@ -181,9 +190,7 @@ pub(crate) struct Stream {
     marks: Vec<u64>,
     state: Mutex<State>,
     cv: Condvar,
-    /// Views (and threads holding them) alive.
-    alive: Mutex<usize>,
-    gone: Condvar,
+    /// Set while views are drained: the threads drop theirs.
     stop: AtomicBool,
     found: Arc<Mutex<Vec<Found>>>,
     /// What the last view prepared found.
@@ -199,8 +206,6 @@ impl Stream {
             marks,
             state: Mutex::new(State::default()),
             cv: Condvar::new(),
-            alive: Mutex::new(0),
-            gone: Condvar::new(),
             stop: AtomicBool::new(false),
             found: Arc::default(),
             last_ext: Mutex::new(None),
@@ -211,9 +216,8 @@ impl Stream {
     /// the views are drained.
     pub(crate) fn work(&self) {
         QUIET.set(true);
-        *self.alive.lock().unwrap() += 1;
-        let _left = Left(self);
-        let mut current: Option<Arc<View>> = None;
+        // The view this thread is done with.
+        let mut done = 0;
         loop {
             let view = {
                 let mut st = self.state.lock().unwrap();
@@ -223,25 +227,25 @@ impl Stream {
                     }
                     // Past the view this thread finished: the next one.
                     if let Some(v) = st.views.first()
-                        && !current.as_ref().is_some_and(|c| Arc::ptr_eq(c, v))
+                        && v.id > done
                     {
-                        break v.clone();
+                        let v = v.clone();
+                        st.busy += 1;
+                        break v;
                     }
                     st = self.cv.wait(st).unwrap();
                 }
             };
-            current = Some(view.clone());
+            done = view.id;
             self.check_view(&view);
-            // The first thread done with it takes it off the list.
             let mut st = self.state.lock().unwrap();
-            if st.views.first().is_some_and(|v| Arc::ptr_eq(v, &view)) {
+            // The first thread done with it takes it off the list.
+            if st.views.first().is_some_and(|v| v.id == done) {
                 st.views.remove(0);
-                self.cv.notify_all();
             }
-            drop(st);
-            if self.stop.load(Ordering::Relaxed) {
-                return;
-            }
+            drop(view);
+            st.busy -= 1;
+            self.cv.notify_all();
         }
     }
 
@@ -281,7 +285,7 @@ impl Stream {
                 }
                 let b = &env.blocks[i];
                 let decls = &env.decls[b.start as usize..b.start as usize + b.len()];
-                if !prefix_block(b, decls) {
+                if !prefix_block(b, decls) || v.skip.as_ref().is_some_and(|s| s[i]) {
                     continue;
                 }
                 // Big blocks wait for the ordinary check, where the
@@ -333,20 +337,11 @@ impl Stream {
     /// drained).
     pub(crate) fn finish(&self) -> Early {
         self.drain();
+        self.state.lock().unwrap().over = true;
+        self.cv.notify_all();
         let mut found = std::mem::take(&mut *self.found.lock().unwrap());
         found.sort_by_key(|f| f.0);
         Early { found }
-    }
-}
-
-/// Counts a working thread out when it ends.
-struct Left<'a>(&'a Stream);
-
-impl Drop for Left<'_> {
-    fn drop(&mut self) {
-        let mut n = self.0.alive.lock().unwrap();
-        *n -= 1;
-        self.0.gone.notify_all();
     }
 }
 
@@ -375,7 +370,11 @@ impl Views for Stream {
             && self
                 .marks
                 .get(st.made)
-                .is_some_and(|&m| done.saturating_mul(1000) >= size.saturating_mul(m))
+                .is_some_and(|&m| m < 1000 && done.saturating_mul(1000) >= size.saturating_mul(m))
+    }
+
+    fn wanted_last(&self) -> bool {
+        self.marks.last().is_some_and(|&m| m >= 1000)
     }
 
     fn publish(&self, env: Env) {
@@ -387,7 +386,23 @@ impl Views for Stream {
         let from = st.covered;
         st.covered = env.blocks.len();
         let n = env.blocks.len() - from;
+        let skip = std::mem::take(&mut st.drained).then(|| {
+            let mut skip = vec![false; env.blocks.len()];
+            for (from, acc, _) in self.found.lock().unwrap().iter() {
+                for (i, &a) in acc.iter().enumerate() {
+                    if a != 0
+                        && let Some(s) = skip.get_mut(from + i)
+                    {
+                        *s = true;
+                    }
+                }
+            }
+            skip
+        });
+        st.id += 1;
         let v = Arc::new(View {
+            id: st.id,
+            skip,
             raw: Mutex::new(Some(env)),
             ready: OnceLock::new(),
             from,
@@ -408,17 +423,17 @@ impl Views for Stream {
             }
         }
         self.stop.store(true, Ordering::Relaxed);
-        let views = {
-            let mut st = self.state.lock().unwrap();
-            st.over = true;
-            self.cv.notify_all();
-            std::mem::take(&mut st.views)
-        };
-        drop(views);
-        let mut n = self.alive.lock().unwrap();
-        while *n > 0 {
-            n = self.gone.wait(n).unwrap();
+        let mut st = self.state.lock().unwrap();
+        let views = std::mem::take(&mut st.views);
+        while st.busy > 0 {
+            st = self.cv.wait(st).unwrap();
         }
+        // (The views go, and what they found is kept.)
+        drop(views);
+        // A view after this one takes every block not accepted yet.
+        st.covered = 0;
+        st.drained = true;
+        self.stop.store(false, Ordering::Relaxed);
     }
 }
 

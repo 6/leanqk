@@ -866,22 +866,9 @@ impl Builder {
         Ok(())
     }
 
-    /// The source of the lazy values, once the read is done.
-    pub(super) fn finish(
-        mut self,
-        env: &mut Env,
-        append: bool,
-        threads: usize,
-    ) -> R<Option<Box<dyn LazyValues>>> {
-        if self.roots.is_empty() {
-            return Ok(None);
-        }
-        self.finish_shared(env, append)?;
-        self.finish_stored(env, threads)
-    }
-
-    /// The first part of [`Builder::finish`], which views (and their
-    /// values) survive.
+    /// Intern the shared terms (see `promote_shared`): the first part of
+    /// putting the lazy values together, which views (and their values)
+    /// survive; [`Builder::finish_stored`] is the rest.
     pub(super) fn finish_shared(&mut self, env: &mut Env, append: bool) -> R<()> {
         if !self.roots.is_empty() {
             self.promote_shared(env, append)?;
@@ -1959,6 +1946,9 @@ mod tests {
             }
             fn publish(&self, env: crate::env::Env) {
                 self.views.lock().unwrap().push(env);
+            }
+            fn wanted_last(&self) -> bool {
+                true
             }
             fn drain(&self) {
                 for mut v in self.views.lock().unwrap().drain(..) {
