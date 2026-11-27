@@ -1864,6 +1864,91 @@ mod tests {
         assert!(lazy_values > 0, "some values are lazy");
     }
 
+    /// Views made while reading (see [`crate::reader::Views`]) hold the
+    /// declarations read so far as reading them eagerly does, values that
+    /// a view cannot build aside.
+    #[test]
+    fn views_match_eager() {
+        use crate::reader::{Views, read_file_viewed};
+        struct Collect<'a> {
+            eager: &'a crate::env::Env,
+            views: std::sync::Mutex<Vec<crate::env::Env>>,
+            checked: std::sync::atomic::AtomicUsize,
+        }
+        impl Views for Collect<'_> {
+            fn wanted(&self, _: u64, _: u64) -> bool {
+                true
+            }
+            fn publish(&self, env: crate::env::Env) {
+                self.views.lock().unwrap().push(env);
+            }
+            fn drain(&self) {
+                for mut v in self.views.lock().unwrap().drain(..) {
+                    let t = v.names.new_index().expect("distinct names");
+                    v.names.set_index(t);
+                    v.exprs.index(1).expect("distinct expressions");
+                    // (`compare` builds the second one's lazy values.)
+                    // Values that need terms read after the view are
+                    // not compared (the view reports them as later).
+                    let mut later = std::collections::HashSet::new();
+                    for d in &v.decls {
+                        let mut st = crate::check::store::Store::new(&v);
+                        if let Err(e) = v.value_into_store(d, &mut st) {
+                            assert_eq!(e, super::LIVE_LATER);
+                            later.insert(v.names.display(d.name).to_string());
+                        }
+                    }
+                    let d = crate::compare::compare(self.eager, &v);
+                    let differ: Vec<_> = d
+                        .differ
+                        .iter()
+                        .filter(|(n, why)| !(*why == "value" && later.contains(n)))
+                        .collect();
+                    assert!(
+                        d.only_b.is_empty() && differ.is_empty() && d.common == v.decls.len(),
+                        "{} of {} declarations: {:?} {:?}",
+                        v.decls.len(),
+                        self.eager.decls.len(),
+                        &d.only_b[..d.only_b.len().min(5)],
+                        &differ[..differ.len().min(5)]
+                    );
+                    self.checked
+                        .fetch_add(d.common - later.len(), std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let prefix =
+            std::env::temp_dir().join(format!("init-prefix-views-{}.ndjson", std::process::id()));
+        let unpacked = std::fs::File::create(&prefix).ok().is_some_and(|f| {
+            std::process::Command::new("xz")
+                .arg("-dc")
+                .arg(root.join("bench/arena/pgo/init-prefix.ndjson.xz"))
+                .stdout(f)
+                .status()
+                .is_ok_and(|s| s.success())
+        });
+        if !unpacked {
+            eprintln!("xz cannot unpack the Init prefix: skipped");
+            return;
+        }
+        let (eager, _) = read_file_with(&prefix, &Options::default()).expect("reads");
+        let c = Collect {
+            eager: &eager,
+            views: Default::default(),
+            checked: Default::default(),
+        };
+        let opts = Options {
+            lazy_proofs: true,
+            threads: 4,
+        };
+        let (env, _, same) = read_file_viewed(&prefix, &opts, &c).expect("reads with views");
+        let _ = std::fs::remove_file(&prefix);
+        assert!(same);
+        assert_eq!(env.decls.len(), eager.decls.len());
+        assert!(c.checked.into_inner() > 0, "some views");
+    }
+
     /// With `NITROLEAN_EXPORT` set to an export file: reading it with lazy
     /// proofs gives the same environment as reading it eagerly (every
     /// lazily built value included).
