@@ -19,6 +19,11 @@ name: Mathlib benchmark
 # worker, and four), one invocation per group (all runs of a command, then
 # the next). Its numbers go into the summary after the rounds'.
 #
+# With `profile` true, one more nitrolean -j1 run, untimed, goes under
+# `perf record -e instructions:u`, and the 60 symbols with the most user-space
+# instructions go into the summary and the artifact (profile.txt). It needs
+# hardware counters; without them the step says so and passes.
+#
 # Each job reports which instruction counters its machine offers. GitHub's hosted runners are VMs of
 # several kinds: some expose hardware counters (an Intel Xeon 6975P-C on
 # KVM did) and some do not (an AMD EPYC 9V74 on Hyper-V did not). With
@@ -56,6 +61,11 @@ on:
       hyperfine_runs:
         description: Runs of each command for hyperfine (0 to skip it)
         default: "3"
+      profile:
+        description: Also profile nitrolean -j1 by symbol with perf record (needs hardware counters)
+        type: choice
+        options: ["false", "true"]
+        default: "false"
   # On a pull request that changes the benchmark: the rep25s slice, x86_64.
   pull_request:
     paths:
@@ -102,6 +112,7 @@ jobs:
           counter: ${{ inputs.counter || 'auto' }}
           rounds: ${{ inputs.rounds || '5' }}
           hyperfine_runs: ${{ inputs.hyperfine_runs || '3' }}
+          profile: ${{ inputs.profile || 'false' }}
 
   aarch64:
     if: github.event_name == 'workflow_dispatch' && inputs.arch != 'x86_64'
@@ -117,3 +128,4 @@ jobs:
           counter: ${{ inputs.counter }}
           rounds: ${{ inputs.rounds }}
           hyperfine_runs: ${{ inputs.hyperfine_runs }}
+          profile: ${{ inputs.profile }}
