@@ -23,6 +23,9 @@ inputs:
   hyperfine_runs:
     description: Runs of each command for hyperfine (0 to skip it)
     default: "3"
+  profile:
+    description: Also profile nitrolean -j1 with perf record (true or false)
+    default: "false"
 
 runs:
   using: composite
@@ -200,6 +203,32 @@ runs:
           warm; $m "gruszka alone (4 workers)" "$out" "'$W/gruszka/target/release/gruszka' '$W/in.susz' 4"
         done
 
+    # Where nitrolean -j1 spends its user-space instructions, by symbol:
+    # one extra, untimed run under perf record, after the rounds. It needs
+    # hardware counters (the perf or perf-u counter).
+    - name: Profile nitrolean
+      if: ${{ inputs.profile == 'true' }}
+      shell: bash
+      run: |
+        p=$RUNNER_TEMP/profile.txt
+        if [ "$COUNTER" != perf ] && [ "$COUNTER" != perf-u ]; then
+          echo "No profile: this runner has no instruction counters (counter: $COUNTER)." | tee "$p"
+          exit 0
+        fi
+        if ! perf record -q -e instructions:u -c 1000003 -o "$W/perf.data" -- \
+          target/release/nitrolean check -j 1 "$IN" > /dev/null; then
+          echo "No profile: perf record failed." | tee "$p"
+          exit 0
+        fi
+        # To a file first: a pipe cut short would fail the step (pipefail).
+        perf report -i "$W/perf.data" --stdio --no-children --sort symbol 2>/dev/null > "$W/report.txt"
+        {
+          echo "nitrolean \`$(git rev-parse --short HEAD)\` -j1, perf record -e instructions:u, by symbol (top 60):"
+          echo
+          awk '!/^#/ && NF { print; if (++n == 60) exit }' "$W/report.txt"
+        } > "$p"
+        cat "$p"
+
     # Timing only, after the rounds.
     - name: Time with hyperfine
       if: ${{ inputs.hyperfine_runs != '0' }}
@@ -265,6 +294,14 @@ runs:
             done
             echo
           fi
+          if [ -f "$RUNNER_TEMP/profile.txt" ]; then
+            echo "### Profile"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/profile.txt"
+            echo '```'
+            echo
+          fi
           cat "$RUNNER_TEMP/probe.md"
         } > "$RUNNER_TEMP/summary.md"
         cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
@@ -285,4 +322,5 @@ runs:
           ${{ runner.temp }}/probe.md
           ${{ runner.temp }}/input.md
           ${{ runner.temp }}/counter-notes.md
+          ${{ runner.temp }}/profile.txt
         if-no-files-found: ignore
