@@ -25,6 +25,8 @@ list every option.
 | `arena ...` | the Lean Kernel Arena benchmark (`bench/arena`): `fetch`, `run`, `report`, `pin`, `collect`, `verify` |
 | `oracle ...` | the per-declaration oracle against Lean's checker (`bench/oracle`): `build`, `run`, `reduce`, `all` |
 | `pgo EXPORT... [--repo] [--rustflags FLAGS]`, `pgo --use PROFDATA` | a profile-guided `target/release/nitrolean`: an instrumented build checks each export on one thread, `llvm-profdata` (`rustup component add llvm-tools`) merges the profiles into `target/pgo/nitrolean.profdata`, and the release build uses it; `--repo` trains on the exports in the repository (`tests/kernel` and the `Init` prefix in `bench/arena/pgo`); `--use` builds with a profile made before |
+| `perf-lines --raw DIR --name NAME [--bin BIN] [--period N] [--dir DIR] -- CMD...` | the Mathlib benchmark's profile by source line (`bench/mathlib-ci/profile.sh`): tries `mem_load_retired.l2_miss` and `br_misp_retired.all_branches` alone at `:upp`, `:up`, then `:u` (marked approximate), records CMD with those perf takes (each alone if not together), and writes the reports, the binary, perf's errors (`record-notes.txt`) and a Markdown table (`lines-NAME.md`) into DIR |
+| `perf-lines-test` | `perf-lines` on a fake `perf`: precise, fallback to `:u`, one event refused, events refused together |
 
 The commands drive git, curl, elan, lake and the checkers directly. Lean
 sources stay Lean; the upstream tools some benchmarks use (the Arena's

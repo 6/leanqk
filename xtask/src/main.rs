@@ -12,6 +12,7 @@ mod limited;
 mod matcert;
 mod mathlib;
 mod oracle;
+mod perf_lines;
 mod pgo;
 mod proc;
 mod public_check;
@@ -71,6 +72,10 @@ enum Cmd {
     Difffuzz(difffuzz::Args),
     /// A profile-guided release build, trained on exports.
     Pgo(pgo::Args),
+    /// Sample a command's L2-missing loads and mispredicted branches by source line.
+    PerfLines(perf_lines::Args),
+    /// Test perf-lines on a fake perf.
+    PerfLinesTest,
     /// Summarize the rows of an A/B benchmark (.github/workflows/ab-bench.yml).
     AbSummary(ab::Args),
 }
@@ -79,6 +84,9 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.first().and_then(|a| a.rsplit('/').next()) == Some("nitrolean") {
         selfcheck::fake_nitrolean(&args);
+    }
+    if args.first().and_then(|a| a.rsplit('/').next()) == Some("perf") {
+        perf_lines::fake_perf(&args);
     }
     let cli = Cli::parse();
     let r = match cli.cmd {
@@ -100,6 +108,8 @@ fn main() {
         Cmd::Oracle(c) => oracle::main(c),
         Cmd::Difffuzz(a) => difffuzz::main(a),
         Cmd::Pgo(a) => pgo::main(a),
+        Cmd::PerfLines(a) => perf_lines::main(a),
+        Cmd::PerfLinesTest => perf_lines::self_test(),
         Cmd::AbSummary(a) => ab::summary(a),
     };
     if let Err(e) = r {
