@@ -40,6 +40,7 @@ use crate::idmap::IdMap;
 use crate::json::{Doc, Member, Tape, Val};
 use crate::level::{LevelId, LevelNode};
 use crate::name::{NameId, NameNode};
+use crate::slab::Bits;
 use crate::strings::Overflow;
 
 mod fast;
@@ -673,9 +674,25 @@ fn finish(
     let mut dup = None;
     if let Some(threads) = st.index_threads {
         let t = std::time::Instant::now();
-        dup = match st.env.names.index(threads) {
-            Err((a, b)) => Some((a.0, b.0)),
-            Ok(()) => st.env.exprs.index(threads).err().map(|(a, b)| (a.0, b.0)),
+        dup = if threads > 1 {
+            // The names on a thread of their own, alongside the
+            // expressions (on three: see `Exprs::index`), each as on one
+            // thread.
+            let (names, exprs) = (&mut st.env.names, &mut st.env.exprs);
+            let (n, e) = std::thread::scope(|s| {
+                let n = s.spawn(|| names.index(1));
+                let e = exprs.index(threads);
+                (n.join().unwrap_or_else(|e| std::panic::resume_unwind(e)), e)
+            });
+            match (n, e) {
+                (Err((a, b)), _) => Some((a.0, b.0)),
+                (Ok(()), e) => e.err().map(|(a, b)| (a.0, b.0)),
+            }
+        } else {
+            match st.env.names.index(threads) {
+                Err((a, b)) => Some((a.0, b.0)),
+                Ok(()) => st.env.exprs.index(threads).err().map(|(a, b)| (a.0, b.0)),
+            }
         };
         INDEX_NS.store(
             t.elapsed().as_nanos() as u64,
@@ -777,14 +794,18 @@ fn map_lines_par(
     threads: usize,
 ) -> Result<ReadStats, ReadError> {
     let b = m.bytes();
-    if let Some(l) = st.lazy.as_deref_mut() {
-        l.scan_at_end();
-    }
     let chunks = b.len().div_ceil(AHEAD).max(1);
     let readers = (threads - 1).clamp(1, chunks);
+    // The records marked done, for the readers to leave out of their
+    // candidates (one bit per 16 bytes of the file: a line is longer).
+    let done_bits = st
+        .lazy
+        .as_deref_mut()
+        .map(|l| l.share_done(b.len() / 16 + 64));
+    let bits = done_bits.as_deref();
     // Chunks the applying thread is done with, for reuse.
     let pool = std::sync::Mutex::new(Vec::<Ahead>::new());
-    std::thread::scope(|sc| {
+    let res = std::thread::scope(|sc| {
         let mut rxs = Vec::new();
         for t in 0..readers {
             // No queue: a reader holds at most the chunk it has read, and
@@ -803,7 +824,13 @@ fn map_lines_par(
                     {
                         m.release(from, to);
                     }
-                    let a = read_ahead(b, c * AHEAD, (c + 1) * AHEAD, reuse.unwrap_or_default());
+                    let a = read_ahead(
+                        b,
+                        c * AHEAD,
+                        (c + 1) * AHEAD,
+                        bits,
+                        reuse.unwrap_or_default(),
+                    );
                     if tx.send(a).is_err() {
                         return;
                     }
@@ -822,7 +849,7 @@ fn map_lines_par(
                 {
                     continue;
                 }
-                st.lines(&mut lines, &b[p.bytes.clone()])?;
+                st.lines_in(&mut lines, &b[p.bytes.start..], p.bytes.len())?;
             }
             let mut a = a;
             a.done = Some((done, a.end));
@@ -837,7 +864,11 @@ fn map_lines_par(
         }
         m.release(done, b.len());
         st.end_lines(lines)
-    })
+    });
+    if let Some(l) = st.lazy.as_deref_mut() {
+        l.unshare_done();
+    }
+    res
 }
 
 /// A chunk read ahead: its pieces in order, the runs' tables, and where
@@ -857,18 +888,20 @@ struct Piece {
     run: Option<RunAhead>,
 }
 
-/// A run read ahead: its first id, its lines, its records and side
-/// records (in [`Ahead::runs`]), and the largest name its binders use.
+/// A run read ahead: its first id, its lines, its records, side records
+/// and the candidates among its children (in [`Ahead::runs`]), and the largest
+/// name its binders use.
 struct RunAhead {
     first: u64,
     lines: u64,
     recs: std::ops::Range<usize>,
     side: std::ops::Range<usize>,
+    cands: std::ops::Range<usize>,
     max_name: u64,
 }
 
 /// Read the runs of the lines that start in `b[lo..hi]`.
-fn read_ahead(b: &[u8], lo: usize, hi: usize, mut a: Ahead) -> Ahead {
+fn read_ahead(b: &[u8], lo: usize, hi: usize, done: Option<&Bits>, mut a: Ahead) -> Ahead {
     let start_at = |p: usize| {
         if p == 0 {
             0
@@ -882,17 +915,29 @@ fn read_ahead(b: &[u8], lo: usize, hi: usize, mut a: Ahead) -> Ahead {
     a.pieces.clear();
     a.runs.recs.clear();
     a.runs.side.clear();
+    a.runs.cands.clear();
     a.end = end;
     let mut pos = start;
     let mut other = start;
+    // The first id of the first run after the last declaration line
+    // passed, if any: the current declaration's expressions start at or
+    // before it, so that its runs' children from it on are not candidates
+    // (see `Builder::append_run`). Whether a declaration line came since.
+    let (mut from, mut decl) = (None, false);
     while pos < end {
         let rest = &b[pos..end];
         if matches!(rest.get(2..4), Some(b"ap" | b"fo" | b"ie"))
             && let Some(e) = ie_of(rest)
         {
-            let (r0, s0) = (a.runs.recs.len(), a.runs.side.len());
-            let (n, k, max_name) = a.runs.take(rest, e);
-            if k > 0 {
+            let (r0, s0, c0) = (a.runs.recs.len(), a.runs.side.len(), a.runs.cands.len());
+            let bound = if decl { e } else { from.unwrap_or(e) };
+            let (n, k, max_name) = a.runs.take(rest, e, bound, done);
+            if k == 0 {
+                a.runs.cands.truncate(c0);
+            } else {
+                if decl {
+                    (from, decl) = (Some(e), false);
+                }
                 if other < pos {
                     a.pieces.push(Piece {
                         bytes: other..pos,
@@ -906,6 +951,7 @@ fn read_ahead(b: &[u8], lo: usize, hi: usize, mut a: Ahead) -> Ahead {
                         lines: k,
                         recs: r0..a.runs.recs.len(),
                         side: s0..a.runs.side.len(),
+                        cands: c0..a.runs.cands.len(),
                         max_name,
                     }),
                 });
@@ -914,6 +960,7 @@ fn read_ahead(b: &[u8], lo: usize, hi: usize, mut a: Ahead) -> Ahead {
                 continue;
             }
         }
+        decl |= is_decl(rest);
         pos += line_len(rest);
     }
     if other < end {
@@ -923,6 +970,21 @@ fn read_ahead(b: &[u8], lo: usize, hi: usize, mut a: Ahead) -> Ahead {
         });
     }
     a
+}
+
+/// Whether the line at the start of `s` is a declaration record (each of
+/// which ends a declaration's lines: see `State::decl_record`).
+fn is_decl(s: &[u8]) -> bool {
+    [
+        &b"{\"thm\":"[..],
+        b"{\"def\":",
+        b"{\"axiom\":",
+        b"{\"opaque\":",
+        b"{\"quot\":",
+        b"{\"inductive\":",
+    ]
+    .iter()
+    .any(|k| s.starts_with(k))
 }
 
 /// The `ie` of an application or binder line, guessed: after `{"ie":` at
@@ -939,7 +1001,7 @@ fn ie_of(s: &[u8]) -> Option<u64> {
         return digits(&r[..n]);
     }
     let w = &s[..s.len().min(160)];
-    let nl = w.iter().position(|&c| c == b'\n')?;
+    let nl = newline(w)?;
     let line = w[..nl].strip_suffix(b"}")?;
     let n = line
         .iter()
@@ -954,7 +1016,27 @@ fn ie_of(s: &[u8]) -> Option<u64> {
 
 /// The first newline at or after `from`.
 fn memchr_from(b: &[u8], from: usize) -> Option<usize> {
-    b[from..].iter().position(|&c| c == b'\n').map(|p| from + p)
+    newline(&b[from..]).map(|p| from + p)
+}
+
+/// The first newline in `s`: eight bytes at a time.
+#[inline]
+fn newline(s: &[u8]) -> Option<usize> {
+    const ONES: u64 = u64::from_le_bytes([1; 8]);
+    const HIGH: u64 = ONES << 7;
+    const NL: u64 = ONES * b'\n' as u64;
+    let (words, rest) = s.as_chunks::<8>();
+    for (i, w) in words.iter().enumerate() {
+        let x = u64::from_le_bytes(*w) ^ NL;
+        // The lowest byte set here is the first zero byte of `x` (a byte
+        // above it may be set too, by the borrow).
+        let z = x.wrapping_sub(ONES) & !x & HIGH;
+        if z != 0 {
+            return Some(8 * i + (z.trailing_zeros() / 8) as usize);
+        }
+    }
+    let at = 8 * words.len();
+    rest.iter().position(|&c| c == b'\n').map(|p| at + p)
 }
 
 /// Time the index at the end of a read took (for
@@ -1550,7 +1632,7 @@ struct Lines {
 
 /// The length of the line at the start of `s`, its newline included.
 fn line_len(s: &[u8]) -> usize {
-    match s.iter().position(|&b| b == b'\n') {
+    match newline(s) {
         Some(p) => p + 1,
         None => s.len(),
     }
@@ -1758,11 +1840,19 @@ impl State {
     /// Apply `data`, whole lines (the last one may lack its newline only
     /// at the end of the input).
     fn lines(&mut self, l: &mut Lines, data: &[u8]) -> Result<(), ReadError> {
+        self.lines_in(l, data, data.len())
+    }
+
+    /// [`State::lines`] for the lines that start in `buf[..to]`, which
+    /// end there (the scanner may look at the bytes after, so that it
+    /// need not copy a line near `to`).
+    fn lines_in(&mut self, l: &mut Lines, buf: &[u8], to: usize) -> Result<(), ReadError> {
         let fail = |line: u64, f: Fail| ReadError {
             line,
             class: f.class,
             msg: f.msg,
         };
+        let data = &buf[..to];
         l.bytes += data.len() as u64;
         let mut pos = 0;
         let mut k = l.lines;
@@ -1788,7 +1878,7 @@ impl State {
             }
             k += 1;
             if l.seen_first {
-                match scan::line(&data[pos..], &mut l.us, self) {
+                match scan::line(&buf[pos..], &mut l.us, self) {
                     Some((n, true)) => {
                         pos += n;
                         continue;
@@ -1846,6 +1936,7 @@ impl State {
                 &runs.recs[r.recs.clone()],
                 &runs.side[r.side.clone()],
                 r.side.start,
+                &runs.cands[r.cands.clone()],
                 r.max_name,
                 &self.name_ids,
             )
@@ -2598,6 +2689,48 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn newline_finds_the_first() {
+        let mut s = vec![b'x'; 40];
+        assert_eq!(newline(&s), None);
+        for at in 0..40 {
+            let mut t = s.clone();
+            t[at] = b'\n';
+            // A later newline, and bytes that a borrow could mistake for one.
+            t[39] = b'\n';
+            if at + 1 < 39 {
+                t[at + 1] = b'\x0b';
+            }
+            assert_eq!(newline(&t), Some(at), "at {at}");
+            assert_eq!(newline(&t[..at]), None);
+        }
+        s[3] = b'\n' + 0x80;
+        assert_eq!(newline(&s), None);
+    }
+
+    #[test]
+    fn declaration_lines() {
+        for l in [
+            "{\"thm\":{",
+            "{\"def\":{",
+            "{\"axiom\":",
+            "{\"opaque\":",
+            "{\"quot\":",
+            "{\"inductive\":",
+        ] {
+            assert!(is_decl(l.as_bytes()), "{l}");
+        }
+        for l in [
+            "{\"const\":",
+            "{\"app\":",
+            "{\"in\":",
+            "{\"meta\":",
+            "{\"ie\":1,\"lam\"",
+        ] {
+            assert!(!is_decl(l.as_bytes()), "{l}");
+        }
+    }
 
     /// An item with its batch ranges resolved, for comparing two batches.
     fn describe(b: &Batch, item: Item) -> String {

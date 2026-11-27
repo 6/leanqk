@@ -42,7 +42,7 @@
 
 use std::marker::PhantomData;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 /// Index bits of a slab: ids are `u32`s below 2^31.
@@ -652,6 +652,50 @@ impl<T: Plain> Drop for Zeroed<T> {
     }
 }
 
+/// A fixed set of bits in memory of its own (as [`Zeroed`], so that its
+/// pages cost nothing until a bit in them is set), which one thread sets
+/// while others read it.
+pub struct Bits(Zeroed<u64>);
+
+impl Bits {
+    /// `n` bits, all clear.
+    pub fn new(n: usize) -> Self {
+        Bits(Zeroed::new(n.div_ceil(64)))
+    }
+
+    fn words(&self) -> &[AtomicU64] {
+        const _: () = assert!(
+            size_of::<AtomicU64>() == size_of::<u64>()
+                && align_of::<AtomicU64>() == align_of::<u64>()
+        );
+        // SAFETY: the words of the mapping, owned by `self`, as atomics of
+        // the same size and alignment; no plain reference to them is
+        // handed out (`self.0` is private and only read through here).
+        unsafe { std::slice::from_raw_parts(self.0.ptr.as_ptr().cast::<AtomicU64>(), self.0.len) }
+    }
+
+    /// Whether bit `i` is set (false past the end).
+    #[inline(always)]
+    pub fn get(&self, i: usize) -> bool {
+        self.words()
+            .get(i / 64)
+            .is_some_and(|w| w.load(Ordering::Relaxed) >> (i % 64) & 1 != 0)
+    }
+
+    /// Set bit `i` (nothing past the end). Meant for one thread: another
+    /// setting a bit of the same word at once may clear it again.
+    #[inline(always)]
+    pub fn set(&self, i: usize) {
+        if let Some(w) = self.words().get(i / 64) {
+            let m = 1 << (i % 64);
+            let v = w.load(Ordering::Relaxed);
+            if v & m == 0 {
+                w.store(v | m, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
 pub(crate) fn page_size() -> usize {
     static PAGE: OnceLock<usize> = OnceLock::new();
     *PAGE.get_or_init(|| {
@@ -681,10 +725,32 @@ pub fn release<T: Plain>(v: &mut [T]) {
     }
 }
 
+/// `s` as atomics, for threads that share it.
+pub fn atomic_u32(s: &mut [u32]) -> &[AtomicU32] {
+    const { assert!(align_of::<AtomicU32>() == align_of::<u32>()) };
+    // SAFETY: AtomicU32 has u32's size and (asserted) alignment, and the
+    // exclusive borrow covers every access through the atomics.
+    unsafe { std::slice::from_raw_parts(s.as_mut_ptr().cast::<AtomicU32>(), s.len()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn bits_set_and_get() {
+        let b = Bits::new(130);
+        for i in [0, 1, 63, 64, 129] {
+            assert!(!b.get(i));
+            b.set(i);
+            assert!(b.get(i));
+        }
+        assert!(!b.get(2) && !b.get(65) && !b.get(128));
+        // Past the end: nothing set, nothing found.
+        b.set(1 << 20);
+        assert!(!b.get(1 << 20));
+    }
 
     thread_local! {
         /// Slabs made on this thread take the reduced path, with this share.

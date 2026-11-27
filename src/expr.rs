@@ -18,8 +18,9 @@ use crate::hash::{hash_bytes, hash2};
 use crate::intern::{Big, IdTable, Interner, Node};
 use crate::level::{LevelId, LevelList, Levels};
 use crate::name::NameId;
-use crate::slab::{Block, Pool, Reader, Slab};
+use crate::slab::{Block, Pool, Reader, Slab, atomic_u32};
 use crate::strings::{Overflow, StrId};
+use std::sync::atomic::Ordering;
 
 /// Id of an interned expression.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
@@ -127,8 +128,24 @@ impl Node for ExprNode {
     }
 }
 
+/// The data of the compound nodes from `from` on, from their children's
+/// (see [`Exprs::finish_data`]).
+#[inline(never)]
+fn fill_data(
+    data: &mut Slab<ExprData>,
+    lets: &Interner<LetBinder>,
+    nodes: &[ExprNode],
+    from: usize,
+) {
+    for (j, &node) in nodes.iter().enumerate().skip(from) {
+        if let Some(d) = compound_data(data, lets, node) {
+            data.set(j as u32, d);
+        }
+    }
+}
+
 /// The data of a compound node (else `None`), from its children's.
-#[inline]
+#[inline(always)]
 fn compound_data(
     data: &Slab<ExprData>,
     lets: &Interner<LetBinder>,
@@ -255,6 +272,11 @@ impl From<Overflow> for ExprError {
     }
 }
 
+/// A scoped thread's result, its panic resumed.
+fn join_scoped<T>(h: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    h.join().unwrap_or_else(|e| std::panic::resume_unwind(e))
+}
+
 /// Applications grouped by the larger of their two child IDs.
 struct AppIndex {
     /// Zero for an empty group, a tagged App ID for one member, or an offset
@@ -333,6 +355,148 @@ impl AppIndex {
         ))
     }
 
+    /// [`AppIndex::prepare`], the scatter and [`AppIndex::finish`] at
+    /// once, on `parts` threads: the counts and the scatter split the
+    /// nodes between them (with atomic counts and cursors), the layout and
+    /// the checks split the keys. Each group is then sorted by ID, as the
+    /// serial scatter leaves it, so it is the same index. `None` as
+    /// `prepare` gives it.
+    fn build(nodes: &[ExprNode], parts: usize) -> Option<Result<Self, (u32, u32)>> {
+        let n = nodes.len();
+        let parts = parts.max(1);
+        let per_node = n.div_ceil(parts).max(1);
+        let per_key = n.div_ceil(parts).max(1);
+        let mut heads = vec![0u32; n];
+        // The groups' sizes, and the other nodes; `None` for a bad key.
+        let non_apps: Option<usize> = {
+            let hs = atomic_u32(&mut heads);
+            std::thread::scope(|s| {
+                let handles: Vec<_> = nodes
+                    .chunks(per_node)
+                    .map(|chunk| {
+                        s.spawn(move || {
+                            let mut others = 0;
+                            for node in chunk {
+                                let ExprNode::App(fun, arg) = *node else {
+                                    others += 1;
+                                    continue;
+                                };
+                                hs.get(Self::key(fun, arg))?.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Some(others)
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(join_scoped).sum()
+            })
+        };
+        let non_apps = non_apps?;
+        // Per key range, the pairs' words its groups take (headers
+        // included).
+        let words: Vec<usize> = std::thread::scope(|s| {
+            let handles: Vec<_> = heads
+                .chunks(per_key)
+                .map(|hs| {
+                    s.spawn(move || {
+                        hs.iter()
+                            .filter(|&&c| c >= 2)
+                            .map(|&c| 1 + c as usize)
+                            .sum::<usize>()
+                    })
+                })
+                .collect();
+            handles.into_iter().map(join_scoped).collect()
+        });
+        let pairs_len = 1 + words.iter().sum::<usize>();
+        if pairs_len > Self::SINGLE as usize
+            || heads.len() * size_of::<u32>()
+                + pairs_len * size_of::<[u32; 2]>()
+                + IdTable::bytes_for_capacity(non_apps)
+                > IdTable::bytes_for_capacity(n)
+        {
+            return None;
+        }
+        let mut pairs = vec![[0u32; 2]; pairs_len];
+        // The groups' places, in key order: a header [count, cursor] at
+        // the group's offset, or `SINGLE` for a group of one.
+        std::thread::scope(|s| {
+            let mut rest = &mut pairs[1..];
+            let mut base = 1;
+            for (hs, &w) in heads.chunks_mut(per_key).zip(&words) {
+                let (ps, tail) = std::mem::take(&mut rest).split_at_mut(w);
+                rest = tail;
+                s.spawn(move || {
+                    let mut offset = 0;
+                    for head in hs {
+                        let count = *head;
+                        if count == 1 {
+                            *head = Self::SINGLE;
+                        } else if count != 0 {
+                            ps[offset] = [count, 1];
+                            *head = (base + offset) as u32;
+                            offset += 1 + count as usize;
+                        }
+                    }
+                });
+                base += w;
+            }
+        });
+        {
+            let hs = atomic_u32(&mut heads);
+            let ps = atomic_u32(pairs.as_flattened_mut());
+            std::thread::scope(|s| {
+                for (c, chunk) in nodes.chunks(per_node).enumerate() {
+                    s.spawn(move || {
+                        for (id, node) in ((c * per_node) as u32..).zip(chunk) {
+                            let ExprNode::App(fun, arg) = *node else {
+                                continue;
+                            };
+                            let head = &hs[Self::key(fun, arg)];
+                            let at = head.load(Ordering::Relaxed);
+                            if at == Self::SINGLE {
+                                head.store(Self::SINGLE | id, Ordering::Relaxed);
+                            } else {
+                                let at = at as usize;
+                                let cursor =
+                                    ps[2 * at + 1].fetch_add(1, Ordering::Relaxed) as usize;
+                                ps[2 * (at + cursor)]
+                                    .store(Self::other(fun, arg), Ordering::Relaxed);
+                                ps[2 * (at + cursor) + 1].store(id, Ordering::Relaxed);
+                            }
+                        }
+                    });
+                }
+            });
+        }
+        let res: Result<(), (u32, u32)> = std::thread::scope(|s| {
+            let mut rest = &mut pairs[1..];
+            let handles: Vec<_> = words
+                .iter()
+                .map(|&w| {
+                    let (ps, tail) = std::mem::take(&mut rest).split_at_mut(w);
+                    rest = tail;
+                    s.spawn(move || {
+                        let mut groups = &mut *ps;
+                        while let Some((header, after)) = groups.split_first_mut() {
+                            let (group, next) = after.split_at_mut(header[0] as usize);
+                            if group.len() <= Self::SCAN {
+                                group.sort_unstable_by_key(|pair| pair[1]);
+                            }
+                            groups = next;
+                        }
+                        Self::check_groups(ps)
+                    })
+                })
+                .collect();
+            handles.into_iter().try_for_each(join_scoped)
+        });
+        Some(res.map(|()| Self {
+            heads,
+            pairs,
+            has_dynamic_apps: false,
+        }))
+    }
+
     /// Scatter an App during the scan that hashes the other expressions.
     #[inline]
     fn scatter_or_keep(&mut self, id: u32, node: ExprNode) -> bool {
@@ -351,7 +515,13 @@ impl AppIndex {
 
     #[inline(never)]
     fn finish(&mut self) -> Result<(), (u32, u32)> {
-        let mut rest = &mut self.pairs[1..];
+        Self::check_groups(&mut self.pairs[1..])
+    }
+
+    /// Sort the groups laid out in `rest` (each a header, then its pairs)
+    /// as lookups need; if two applications are equal, a pair of their
+    /// ids.
+    fn check_groups(mut rest: &mut [[u32; 2]]) -> Result<(), (u32, u32)> {
         while let Some((header, after)) = rest.split_first_mut() {
             let (group, next) = after.split_at_mut(header[0] as usize);
             if group.len() <= Self::SCAN {
@@ -586,27 +756,74 @@ impl Exprs {
             return;
         }
         self.data.fill_to(self.arena.len(), ExprData(0));
-        let (lets, data, nodes) = (&self.lets, &mut self.data, self.arena.nodes());
-        for (j, &node) in nodes.as_slice().iter().enumerate().skip(from) {
-            if let Some(d) = compound_data(data, lets, node) {
-                data.set(j as u32, d);
-            }
-        }
+        fill_data(
+            &mut self.data,
+            &self.lets,
+            self.arena.nodes().as_slice(),
+            from,
+        );
         self.data_from = u32::MAX;
     }
 
     /// Index every node, on `threads` threads; if two are equal, a pair
     /// of their ids (the later, the earlier).
     pub fn index(&mut self, threads: usize) -> Result<(), (ExprId, ExprId)> {
-        self.finish_data();
-        if threads == 1 && self.arena.len() >= 1 << 16 && self.index_apps()? {
-            return Ok(());
+        if threads > 1 && self.arena.len() >= 1 << 16 {
+            if self.index_apps_alongside(threads)? {
+                return Ok(());
+            }
+        } else {
+            self.finish_data();
+            if threads == 1 && self.arena.len() >= 1 << 16 && self.index_apps()? {
+                return Ok(());
+            }
         }
+        self.finish_data();
         self.arena
             .index(threads)
             .map_err(|(a, b)| (ExprId(a), ExprId(b)))?;
         self.app_index = None;
         Ok(())
+    }
+
+    /// [`Exprs::index_apps`] with [`Exprs::finish_data`], on `threads`
+    /// threads (one being the names' in the reader): the data on one, the
+    /// other expressions' table on one, and the applications' groups on
+    /// the rest. The data are set even if it gives false.
+    fn index_apps_alongside(&mut self, threads: usize) -> Result<bool, (ExprId, ExprId)> {
+        let from = self.data_start() as usize;
+        let len = self.arena.len();
+        if from < len {
+            self.data.fill_to(len, ExprData(0));
+        }
+        let (arena, data, lets) = (&self.arena, &mut self.data, &self.lets);
+        let nodes = arena.nodes();
+        let errors = |(a, b)| (ExprId(a), ExprId(b));
+        let res: Result<_, (ExprId, ExprId)> = std::thread::scope(|s| {
+            if from < len {
+                s.spawn(move || fill_data(data, lets, nodes.as_slice(), from));
+            }
+            let table = s.spawn(move || {
+                let is_app = |node: &ExprNode| matches!(node, ExprNode::App(..));
+                let non_apps = nodes.as_slice().iter().filter(|n| !is_app(n)).count();
+                arena.build_index_here(non_apps, |_, node| !is_app(node))
+            });
+            let apps = AppIndex::build(nodes.as_slice(), threads.saturating_sub(3).max(1));
+            let table = table
+                .join()
+                .unwrap_or_else(|e| std::panic::resume_unwind(e));
+            let Some(apps) = apps else {
+                return Ok(None);
+            };
+            Ok(Some((table.map_err(errors)?, apps.map_err(errors)?)))
+        });
+        self.data_from = u32::MAX;
+        let Some((table, apps)) = res? else {
+            return Ok(false);
+        };
+        self.arena.replace_index(table);
+        self.app_index = Some(apps);
+        Ok(true)
     }
 
     fn index_apps(&mut self) -> Result<bool, (ExprId, ExprId)> {
@@ -825,6 +1042,62 @@ mod tests {
         assert_eq!(es.find(&fresh), Some(new));
         let duplicate = es.append(reverse, &levels).unwrap();
         assert_eq!(es.index_apps(), Err((duplicate, second)));
+    }
+
+    #[test]
+    fn parallel_application_groups_match_the_serial_ones() {
+        let mut nodes: Vec<ExprNode> = (0..64).map(ExprNode::BVar).collect();
+        let mut seen = std::collections::HashSet::new();
+        let mut x = 12345u64;
+        while nodes.len() < 50_000 {
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let n = nodes.len() as u64;
+            // Most applications take the last node (groups of one), some
+            // a recent one (larger groups).
+            let back = if x.is_multiple_of(10) {
+                (x >> 13) % 64
+            } else {
+                0
+            };
+            let (a, b) = ((x >> 33) % n, n - 1 - back);
+            let (fun, arg) = if x & 1 == 0 { (a, b) } else { (b, a) };
+            if seen.insert((fun, arg)) {
+                nodes.push(ExprNode::App(ExprId(fun as u32), ExprId(arg as u32)));
+            }
+            if nodes.len().is_multiple_of(10_000) {
+                // A group to sort.
+                for i in 0..200 {
+                    if seen.insert((i, 30_000)) {
+                        nodes.push(ExprNode::App(ExprId(i as u32), ExprId(30_000)));
+                    }
+                }
+            }
+        }
+        let large = nodes
+            .iter()
+            .filter(|n| matches!(n, ExprNode::App(_, ExprId(30_000))));
+        assert!(large.count() > AppIndex::SCAN);
+        let serial = |nodes: &[ExprNode]| {
+            let (mut apps, _) = AppIndex::prepare(nodes).unwrap();
+            for (id, node) in (0u32..).zip(nodes) {
+                apps.scatter_or_keep(id, *node);
+            }
+            apps.finish().map(|()| apps)
+        };
+        let want = serial(&nodes).unwrap();
+        for parts in [1, 3, 8] {
+            let got = AppIndex::build(&nodes, parts).unwrap().unwrap();
+            assert_eq!(got.heads, want.heads);
+            assert_eq!(got.pairs, want.pairs);
+        }
+        let ExprNode::App(fun, arg) = nodes[40_000] else {
+            unreachable!()
+        };
+        nodes.push(ExprNode::App(fun, arg));
+        assert!(serial(&nodes).is_err());
+        assert!(AppIndex::build(&nodes, 3).unwrap().is_err());
     }
 
     #[test]
