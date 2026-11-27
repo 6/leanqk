@@ -21,6 +21,8 @@
 # 3. perf record on loads that missed L2, branch misses and completed page
 #    walks (those this machine counts), one sample every 20011, for
 #    nitrolean -j1 and -j4 and gruszka alone at 1 worker, by symbol.
+# 4. The same loads and mispredicted branches sampled precisely, by source
+#    line, for nitrolean -j1 and gruszka alone at 1 worker.
 #
 # OUT.md gets the tables; RAW_DIR the perf stat output and the reports.
 set -uo pipefail
@@ -120,6 +122,31 @@ if [ -n "$mevents" ]; then
   record "misses gruszka alone (1 worker)" "$gdir" "$mevents" "$mperiod" "'$gdir/target/release/gruszka' '$W/in.susz' 1"
 fi
 
+# Loads that missed L2 and mispredicted branches at their own instructions
+# (precise sampling, :pp), by source line: nitrolean is built with line
+# tables when profiling (CARGO_PROFILE_RELEASE_DEBUG), gruszka's release
+# profile has them. The data and the binaries go into RAW_DIR as well, for
+# a closer look (perf annotate).
+pevents=mem_load_retired.l2_miss:upp,br_misp_retired.all_branches:upp
+by_line() {
+  local name=$1 dir=$2 bin=$3 cmd=$4 tag d e args=()
+  tag=$(echo "$name" | tr -c 'a-z0-9\n' '-')
+  d=$raw/perf-$tag.data
+  for e in ${pevents//,/ }; do args+=(-e "$e"); done
+  cat "$IN" "$W/in.susz" > /dev/null
+  if ! (cd "$dir" && perf record -q "${args[@]}" -c "$mperiod" -o "$d" -- sh -c "$cmd" > /dev/null 2>&1); then
+    echo "$name: perf record of $pevents failed" >> "$raw/record-notes.txt"
+    rm -f "$d"
+    return
+  fi
+  timeout 2400 perf report -i "$d" --stdio --no-children -n --sort srcline 2>/dev/null > "$raw/report-$tag.txt" ||
+    echo "$name: perf report by source line did not finish" >> "$raw/record-notes.txt"
+  timeout 1200 perf report -i "$d" --stdio --no-children -n --sort symbol,srcline --percent-limit 0.05 2>/dev/null > "$raw/report-sym-$tag.txt" || true
+  cp "$bin" "$raw/bin-$tag"
+}
+by_line "lines nitrolean -j1" "$W" "$NL" "'$NL' check -j 1 '$IN'"
+by_line "lines gruszka alone (1 worker)" "$gdir" "$gdir/target/release/gruszka" "'$gdir/target/release/gruszka' '$W/in.susz' 1"
+
 # The symbols of a report, by the samples of each of its events (perf
 # report gives one section per event, "# Samples: N of event 'E'", then
 # lines "pct samples [.] symbol"): a table of the top $2 by the first
@@ -200,6 +227,16 @@ by_symbol() {
     echo "| symbol | ${mevents//,/ | } |"
     echo "|---|$(echo "$mevents" | sed 's/[^,]*/--:/g; s/,/|/g')|"
     by_symbol "$raw/report-$tag.txt" 40 "$mperiod"
+    echo
+  done
+  for name in "lines nitrolean -j1" "lines gruszka alone (1 worker)"; do
+    tag=$(echo "$name" | tr -c 'a-z0-9\n' '-')
+    [ -s "$raw/report-$tag.txt" ] || continue
+    echo "### $name by source line (top 50 by the first event; billions of: $pevents)"
+    echo
+    echo "| source line | ${pevents//,/ | } |"
+    echo "|---|--:|--:|"
+    by_symbol "$raw/report-$tag.txt" 50 "$mperiod"
     echo
   done
   if [ -f "$raw/record-notes.txt" ]; then cat "$raw/record-notes.txt"; fi

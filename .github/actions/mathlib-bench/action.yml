@@ -95,8 +95,12 @@ runs:
 
     # Profile-guided, trained on the exports in the repository, as for the
     # arena (bench/arena/nitrolean.yaml).
+    # With profile, with line tables (no change to the code), for the
+    # profile by source line.
     - name: Build nitrolean
       shell: bash
+      env:
+        CARGO_PROFILE_RELEASE_DEBUG: ${{ inputs.profile == 'true' && 'line-tables-only' || '0' }}
       run: |
         cargo xtask pgo --repo --rustflags "$FLAGS"
         target/release/nitrolean --version
