@@ -8,6 +8,7 @@
 //! computation-heavy proofs this costs 5 to 15% of the time.
 
 use std::alloc::{GlobalAlloc, Layout};
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 use libmimalloc_sys as mi;
 
@@ -20,7 +21,44 @@ unsafe extern "C" {
     fn mi_option_get(option: std::ffi::c_int) -> std::ffi::c_long;
     fn mi_option_set_default(option: std::ffi::c_int, value: std::ffi::c_long);
     fn mi_option_set(option: std::ffi::c_int, value: std::ffi::c_long);
+    fn mi_reserve_os_memory_ex(
+        size: usize,
+        commit: bool,
+        allow_large: bool,
+        exclusive: bool,
+        arena_id: *mut *mut std::ffi::c_void,
+    ) -> std::ffi::c_int;
+    fn mi_arena_area(arena_id: *mut std::ffi::c_void, size: *mut usize) -> *mut std::ffi::c_void;
+    fn mi_heap_new_in_arena(arena_id: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    fn mi_heap_malloc(heap: *mut std::ffi::c_void, size: usize) -> *mut std::ffi::c_void;
+    fn mi_heap_zalloc(heap: *mut std::ffi::c_void, size: usize) -> *mut std::ffi::c_void;
+    fn mi_heap_realloc(
+        heap: *mut std::ffi::c_void,
+        p: *mut std::ffi::c_void,
+        newsize: usize,
+    ) -> *mut std::ffi::c_void;
 }
+
+/// Allocations of at least this many bytes go to [`BIG_HEAP`] once it is
+/// set: the checkers' tables and arrays (direct-mapped caches of 64 to 512
+/// KiB, hash tables, value arrays), read at random.
+const BIG: usize = 64 << 10;
+
+/// Measurement only: the largest allocation routed there (the fixed caches,
+/// up to 512 KiB each, and small hash tables).
+const BIG_MAX: usize = 576 << 10;
+
+/// Address space reserved for [`BIG_HEAP`]: committed (readable and
+/// writable) from the start, as mimalloc's own arenas are where the system
+/// overcommits, so that its 2 MiB ranges can be huge pages (memory committed
+/// in pieces is mapped in pieces, too small for them). Pages are only
+/// backed as they are touched.
+const BIG_ARENA: usize = 4 << 30;
+
+/// A heap in an arena of its own that keeps transparent huge pages, for
+/// large allocations while checking on several threads (see
+/// [`small_heap_pages`]); null until then, or if it could not be made.
+static BIG_HEAP: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Return freed memory to the system at once rather than after mimalloc
 /// v3's default second: the checker's workers free a declaration's terms
@@ -49,6 +87,12 @@ pub fn configure() {
 /// took some 10% longer on Mathlib. The slabs ask for their own huge pages
 /// (`slab.rs`). Not done if `MIMALLOC_ALLOW_THP` is set (as `0`, it turns
 /// huge pages off for the whole process, the slabs' too).
+///
+/// Large allocations (at least [`BIG`] bytes) keep huge pages, in a heap
+/// of their own ([`BIG_HEAP`]): they are few and mostly filled, so their
+/// 2 MiB pages hold little unused memory, and on small pages their random
+/// reads missed the TLB on most hops (at 4 jobs on Mathlib, page walks took
+/// some 9% of the cycles on x86_64).
 pub fn small_heap_pages() {
     // SAFETY: plain option calls; mimalloc reads the option at each new
     // mapping.
@@ -83,6 +127,40 @@ pub fn small_heap_pages() {
             unsafe { libc::madvise(lo as *mut libc::c_void, hi - lo, libc::MADV_NOHUGEPAGE) };
         }
     }
+    big_heap();
+}
+
+/// Makes [`BIG_HEAP`]: an exclusive arena, advised to use huge pages, and
+/// a heap that allocates only in it (and fails when it is full: then the
+/// default heap serves).
+fn big_heap() {
+    // SAFETY: mimalloc calls; the arena's area is a mapping of its own,
+    // which the advice only concerns.
+    unsafe {
+        let mut id = std::ptr::null_mut();
+        if mi_reserve_os_memory_ex(BIG_ARENA, true, false, true, &mut id) != 0 {
+            return;
+        }
+        let mut size = 0;
+        let area = mi_arena_area(id, &mut size);
+        if !area.is_null() {
+            libc::madvise(area, size, libc::MADV_HUGEPAGE);
+        }
+        let heap = mi_heap_new_in_arena(id);
+        BIG_HEAP.store(heap, Ordering::Release);
+    }
+}
+
+/// [`BIG_HEAP`] for an allocation of `size` bytes, if it goes there.
+#[inline(always)]
+fn big(size: usize) -> Option<*mut std::ffi::c_void> {
+    if (BIG..=BIG_MAX).contains(&size) {
+        let h = BIG_HEAP.load(Ordering::Acquire);
+        if !h.is_null() {
+            return Some(h);
+        }
+    }
+    None
 }
 
 /// What `mi_malloc` guarantees (`MI_MAX_ALIGN_SIZE`).
@@ -95,6 +173,12 @@ unsafe impl GlobalAlloc for Mi {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
         unsafe {
             if l.align() <= MIN_ALIGN {
+                if let Some(h) = big(l.size()) {
+                    let p = mi_heap_malloc(h, l.size());
+                    if !p.is_null() {
+                        return p as *mut u8;
+                    }
+                }
                 mi::mi_malloc(l.size()) as *mut u8
             } else {
                 mi::mi_malloc_aligned(l.size(), l.align()) as *mut u8
@@ -106,6 +190,12 @@ unsafe impl GlobalAlloc for Mi {
     unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
         unsafe {
             if l.align() <= MIN_ALIGN {
+                if let Some(h) = big(l.size()) {
+                    let p = mi_heap_zalloc(h, l.size());
+                    if !p.is_null() {
+                        return p as *mut u8;
+                    }
+                }
                 mi::mi_zalloc(l.size()) as *mut u8
             } else {
                 mi::mi_zalloc_aligned(l.size(), l.align()) as *mut u8
@@ -122,6 +212,12 @@ unsafe impl GlobalAlloc for Mi {
     unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
         unsafe {
             if l.align() <= MIN_ALIGN {
+                if let Some(h) = big(n) {
+                    let q = mi_heap_realloc(h, p.cast(), n);
+                    if !q.is_null() {
+                        return q as *mut u8;
+                    }
+                }
                 mi::mi_realloc(p.cast(), n) as *mut u8
             } else {
                 mi::mi_realloc_aligned(p.cast(), n, l.align()) as *mut u8
