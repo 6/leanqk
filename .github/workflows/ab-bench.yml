@@ -10,7 +10,7 @@ name: A/B benchmark
 #   (bench/mathlib/rep25s/) are in the Actions cache. It builds one only on a
 #   cache miss (the first run on a branch whose caches cannot see main's);
 #   the measuring jobs only restore it.
-# - build-x86 and build-arm build each ref once per architecture as the
+# - build-x86 and build-arm build each distinct commit once per architecture as the
 #   Mathlib benchmark builds nitrolean: profile-guided, trained on the
 #   repository's exports (`cargo xtask pgo --repo`), with the Rust
 #   toolchain that ref's mise.toml names. The Mathlib benchmark builds for
@@ -249,13 +249,14 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
-        side: [A, B]
+        side: ${{ fromJSON(needs.setup.outputs.base_sha == needs.setup.outputs.candidate_sha && '["A"]' || '["A","B"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/ab-build
         with:
           sha: ${{ matrix.side == 'A' && needs.setup.outputs.base_sha || needs.setup.outputs.candidate_sha }}
           side: ${{ matrix.side }}
+          both_sides: ${{ needs.setup.outputs.base_sha == needs.setup.outputs.candidate_sha }}
           target_cpu: ${{ inputs.x86_cpu }}
 
   build-arm:
@@ -265,13 +266,14 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
-        side: [A, B]
+        side: ${{ fromJSON(needs.setup.outputs.base_sha == needs.setup.outputs.candidate_sha && '["A"]' || '["A","B"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/ab-build
         with:
           sha: ${{ matrix.side == 'A' && needs.setup.outputs.base_sha || needs.setup.outputs.candidate_sha }}
           side: ${{ matrix.side }}
+          both_sides: ${{ needs.setup.outputs.base_sha == needs.setup.outputs.candidate_sha }}
 
   measure-x86:
     needs: [setup, export, build-x86]

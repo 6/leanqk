@@ -11,6 +11,9 @@ inputs:
   side:
     description: A (base) or B (candidate)
     required: true
+  both_sides:
+    description: Also upload the base binary as the candidate when both commits match
+    default: "false"
   target_cpu:
     description: rustc's -C target-cpu (empty for the default)
     default: ""
@@ -54,6 +57,14 @@ runs:
     - uses: actions/upload-artifact@v7
       with:
         name: nitrolean-${{ runner.arch }}-${{ inputs.side }}
+        path: ${{ runner.temp }}/bin/nitrolean
+        retention-days: 7
+        if-no-files-found: error
+
+    - uses: actions/upload-artifact@v7
+      if: ${{ inputs.both_sides == 'true' }}
+      with:
+        name: nitrolean-${{ runner.arch }}-B
         path: ${{ runner.temp }}/bin/nitrolean
         retention-days: 7
         if-no-files-found: error
