@@ -1,6 +1,6 @@
 #!/bin/bash
-# Runs base (A) and candidate (B) of nitrolean in interleaved A/B/B/A
-# quadruples on this machine and appends one row per run to OUT.tsv:
+# Runs base (A) and candidate (B) of nitrolean in interleaved A/B/B/A or
+# B/A/A/B quadruples on this machine and appends one row per run to OUT.tsv:
 #
 #   run.sh OUT.tsv
 #
@@ -9,7 +9,8 @@
 #   A_FLAGS, B_FLAGS extra `nitrolean check` flags for each (may be empty)
 #   SLICES           export names, space-separated; each is $EXPORTS/NAME.ndjson
 #   THREADS          thread counts, space-separated (passed as -j)
-#   REPS             A/B/B/A quadruples per slice and thread count
+#   REPS             quadruples per slice and thread count
+#   ORDER            ABBA (the default) or BAAB: the order of each quadruple
 #   META             the file bench/ab/probe.sh wrote (CPU, EVENTS, ...)
 #   JOB              this job's index, for the rows
 #
@@ -21,13 +22,19 @@
 # output is its exit status, standard output and standard error; the row
 # holds its SHA-256, which must be the same for A and B.
 set -uo pipefail
+ORDER=${ORDER:-ABBA}
+case $ORDER in
+  ABBA) sides="A B B A" ;;
+  BAAB) sides="B A A B" ;;
+  *) echo "ORDER must be ABBA or BAAB, not $ORDER" >&2; exit 1 ;;
+esac
 out=${1:?usage: run.sh OUT.tsv}
 # shellcheck disable=SC1090
 . "$META"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-[ -s "$out" ] || printf 'job\tarch\tcpu\tcounters\tslice\tthreads\trep\tpos\tside\tstatus\twall_s\tuser_s\tsys_s\tcpu_s\trss_kib\tinstr_u\tinstr_all\tcounted_pct\tout_sha\n' >"$out"
+[ -s "$out" ] || printf 'job\tarch\tcpu\tcounters\tslice\tthreads\trep\tpos\tside\tstatus\twall_s\tuser_s\tsys_s\tcpu_s\trss_kib\tinstr_u\tinstr_all\tcounted_pct\tout_sha\torder\n' >"$out"
 
 one() { # SIDE BIN FLAGS EXPORT THREADS -> one row
   local side=$1 bin=$2 flags=$3 in=$4 t=$5
@@ -69,9 +76,9 @@ one() { # SIDE BIN FLAGS EXPORT THREADS -> one row
   sha=$({ echo "status $status"; echo "-- stdout"; cat "$tmp/stdout"; echo "-- stderr"; cat "$tmp/stderr"; } | sha256sum | cut -c1-16)
   local cpu_s
   cpu_s=$(awk -v u="$user" -v s="$sys" 'BEGIN {printf "%.2f", u + s}')
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$JOB" "$ARCH" "$CPU" "$COUNTERS" "$slice" "$t" "$rep" "$pos" "$side" "$status" \
-    "$wall" "$user" "$sys" "$cpu_s" "$rss" "$iu" "$ia" "$pct" "$sha" >>"$out"
+    "$wall" "$user" "$sys" "$cpu_s" "$rss" "$iu" "$ia" "$pct" "$sha" "$ORDER" >>"$out"
   echo "$slice -j$t rep $rep #$pos $side: status $status, wall ${wall}s, CPU ${cpu_s}s, RSS $((rss / 1024)) MiB, instructions:u ${iu:--}, output $sha$([ "$status" = 0 ] || echo " ($(tail -1 "$tmp/stderr" | cut -c1-200))")"
 }
 
@@ -81,7 +88,7 @@ for slice in $SLICES; do
   for t in $THREADS; do
     for rep in $(seq "$REPS"); do
       pos=0
-      for side in A B B A; do
+      for side in $sides; do
         pos=$((pos + 1))
         if [ "$side" = A ]; then one A "$A_BIN" "${A_FLAGS:-}" "$in" "$t"; else one B "$B_BIN" "${B_FLAGS:-}" "$in" "$t"; fi
       done

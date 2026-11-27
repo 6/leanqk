@@ -5,8 +5,10 @@
 //! describes the two builds (refs, commits, flags, binaries). For every
 //! slice, architecture and thread count, each machine (job) gives one paired
 //! ratio per metric: B over A, where A and B are the sums of the two A runs
-//! and the two B runs of an A/B/B/A quadruple (the geometric mean over the
-//! machine's quadruples, if more than one). The summary gives the median of
+//! and the two B runs of a quadruple, A/B/B/A or B/A/A/B (the geometric
+//! mean over the machine's quadruples, if more than one). Wall and CPU time
+//! are also given for the machines of each order, which shows a bias from
+//! the order. The summary gives the median of
 //! these per-machine ratios with a 95% interval from the sign test (order
 //! statistics of the ratios; distribution-free; needs 6 machines or more),
 //! and checks them against the bar:
@@ -168,6 +170,8 @@ fn worse(s: &Stat) -> bool {
 #[derive(Default)]
 struct Machine {
     cpu: String,
+    /// ABBA or BAAB (rows from before the order was recorded: ABBA).
+    order: String,
     ratios: BTreeMap<&'static str, Vec<f64>>,
     a: BTreeMap<&'static str, Vec<f64>>,
     shas: BTreeSet<String>,
@@ -206,6 +210,10 @@ fn per_job(rows: &[Row]) -> Groups {
             .entry(job)
             .or_insert_with(|| Machine {
                 cpu: get(q[0], "cpu").into(),
+                order: match get(q[0], "order") {
+                    "" => "ABBA".into(),
+                    o => o.into(),
+                },
                 complete: true,
                 ..Machine::default()
             });
@@ -284,7 +292,7 @@ pub fn summary(a: Args) -> Result<()> {
     }
     w!("- builds: {}", s(&build, "build_note"));
     w!(
-        "- slices: {}; threads: {}; A/B/B/A quadruples per machine and thread count: {}",
+        "- slices: {}; threads: {}; quadruples per machine and thread count: {}",
         s(&build, "slices"),
         s(&build, "threads"),
         s(&build, "reps")
@@ -344,6 +352,7 @@ pub fn summary(a: Args) -> Result<()> {
         );
         w!("|---|--:|--:|--:|---|---|");
         let mut stats: BTreeMap<String, Stat> = BTreeMap::new();
+        let mut by_order = serde_json::Map::new();
         for (m, label) in METRICS {
             let mut by_cpu: BTreeMap<&str, Vec<&Machine>> = BTreeMap::new();
             for j in jobs.values() {
@@ -407,6 +416,30 @@ pub fn summary(a: Args) -> Result<()> {
                         s2.lower,
                         s2.higher
                     );
+                }
+            }
+            // Wall and CPU time by quadruple order.
+            if m == "wall_s" || m == "cpu_s" {
+                for order in ["ABBA", "BAAB"] {
+                    let xs: Vec<f64> = js
+                        .iter()
+                        .filter(|j| j.order == order)
+                        .filter_map(|j| j.ratio(m))
+                        .collect();
+                    let Some(s2) = stat(&xs) else { continue };
+                    let (med2, ci2) = fmt_stat(&s2, 2);
+                    w!(
+                        "| &nbsp;&nbsp;{label}, order {order} | {} | | {med2} | {ci2} | {} / {} |",
+                        s2.n,
+                        s2.lower,
+                        s2.higher
+                    );
+                    by_order
+                        .entry(order)
+                        .or_insert_with(|| json!({}))
+                        .as_object_mut()
+                        .unwrap()
+                        .insert(m.into(), stat_json(&s2));
                 }
             }
             stats.insert(m.to_string(), st);
@@ -502,6 +535,8 @@ pub fn summary(a: Args) -> Result<()> {
                 "slice": sl, "arch": arch, "threads": t, "machines": jobs.len(),
                 "verdict": verdict, "problems": problems, "notes": notes,
                 "output_identical": mism.is_empty() && bad_status.is_empty(),
+                "orders": jobs.iter().map(|(jb, j)| (jb.to_string(), json!(j.order))).collect::<serde_json::Map<_, _>>(),
+                "by_order": by_order,
                 "stats": stats.iter().map(|(k, v)| (k.clone(), stat_json(v))).collect::<serde_json::Map<_, _>>(),
             }),
         );

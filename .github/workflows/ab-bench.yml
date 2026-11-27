@@ -25,7 +25,8 @@ name: A/B benchmark
 #   x86_64 about one machine in three is an AMD EPYC without instruction
 #   counters: it marks itself no-counters and still measures wall time, CPU
 #   time and peak RSS. For each slice and thread count it runs
-#   `reps` interleaved A/B/B/A quadruples (bench/ab/run.sh), each run
+#   `reps` interleaved quadruples (bench/ab/run.sh): A/B/B/A on
+#   odd-numbered machines, B/A/A/B on even-numbered ones. Each run is
 #   under GNU time and, where it can, perf stat; B gets `candidate_flags`
 #   after `check -j N`. Every run's output (exit status, standard output
 #   and standard error) is hashed; A's and B's must be the same.
@@ -34,9 +35,10 @@ name: A/B benchmark
 #   comparison is paired within one machine: each machine gives one ratio
 #   B/A per metric, and the summary gives, per slice, architecture and
 #   thread count, the median of these ratios over machines with a 95%
-#   interval from the sign test, the instruction change by CPU model
-#   (Intel's on x86_64, where AMD has no counters), peak RSS, the machines
-#   by CPU model, and a PASS or FAIL line against the bar:
+#   interval from the sign test, wall and CPU time also by quadruple
+#   order, the instruction change by CPU model (Intel's on x86_64, where
+#   AMD has no counters), peak RSS, the machines by CPU model, and a PASS
+#   or FAIL line against the bar:
 #     instructions:u: median change at most +0.1%;
 #     wall and CPU time: not worse (the 95% interval not wholly above 0);
 #     peak RSS: not higher (likewise);
@@ -83,7 +85,7 @@ on:
         description: Thread counts, space-separated
         default: "1 4"
       reps:
-        description: A/B/B/A quadruples per machine, slice and thread count
+        description: Quadruples (A/B/B/A or B/A/A/B) per machine, slice and thread count
         default: "1"
       x86_cpu:
         description: rustc target-cpu for the x86_64 builds (one binary for every machine)
