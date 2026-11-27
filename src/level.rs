@@ -81,6 +81,7 @@ impl LevelList {
     pub const EMPTY: LevelList = LevelList(0);
 }
 
+#[derive(Clone)]
 pub struct Levels {
     arena: Interner<LevelNode>,
     params: Vec<LevelParams>,

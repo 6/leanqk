@@ -271,7 +271,7 @@ enum Lazy<'a> {
 /// not fit go to a side map. About 8.5 MB for Mathlib's 4.3M names, against
 /// 17 MB flat, and a lookup is still one load of the entry (the bases are a
 /// few KB).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct NameIndex {
     v: Vec<u32>,
     small: Vec<u16>,

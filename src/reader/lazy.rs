@@ -28,7 +28,7 @@ use crate::env::{Env, LAZY_BASE, LazyValues, TermSink};
 use crate::expr::{BinderInfo, ExprId, ExprNode, LetBinder};
 use crate::idmap::IdMap;
 use crate::name::NameId;
-use crate::slab::{Bits, Zeroed};
+use crate::slab::{Bits, Slab, Zeroed};
 use crate::strings::Overflow;
 
 // A record: `DONE` and an arena id in the low 32 bits, or a tag (3 bits
@@ -194,8 +194,11 @@ fn add_node(env: &mut Env, append: bool, node: ExprNode) -> R<u32> {
 /// The reader's side of lazy proofs: a record per expression id.
 #[derive(Default)]
 pub(super) struct Builder {
-    recs: Vec<u64>,
-    side: Vec<u32>,
+    /// In memory that never moves, so that views of it can be read on other
+    /// threads while it grows (see [`Builder::view`]): a record is only
+    /// set again through [`Slab::store_shared`].
+    recs: Slab<u64>,
+    side: Slab<u32>,
     /// Records from here on came after the last declaration line.
     from: usize,
     /// Per lazy value, its root's export id, and the first record of its
@@ -217,8 +220,10 @@ pub(super) struct Builder {
     /// While runs are read ahead (see [`Builder::share_done`]): a bit per
     /// record marked done, set as they are.
     done: Option<std::sync::Arc<Bits>>,
-    /// Where [`Builder::exprs`] puts records before they join `recs`.
+    /// Where [`Builder::exprs`] puts records (and side records) before
+    /// they join `recs` (and `side`).
     fresh: Vec<u64>,
+    fresh_side: Vec<u32>,
 }
 
 /// If `c` (a child of a record from `from` on) is a record of an earlier
@@ -237,12 +242,11 @@ fn note_old(recs: &[u64], from: usize, c: u64, cands: &mut Vec<u32>) {
 impl Builder {
     /// A builder for an export of about `size` bytes.
     pub(super) fn with_capacity(size: u64) -> Self {
-        let mut b = Builder::default();
+        let b = Builder::default();
         // About one expression per 56 bytes of a real export, and a side
         // record (3 words) per 8 of them; the space is only reserved, so
         // a smaller file costs nothing.
-        b.recs.reserve((size / 56).min(MAX_IDS) as usize);
-        b.side.reserve((size / 120).min(u32::MAX as u64) as usize);
+        let _ = size;
         b
     }
 
@@ -326,7 +330,7 @@ impl Builder {
             sn: 0,
             o: self.side.len(),
             recs: &mut self.fresh,
-            side: &mut self.side,
+            side: &mut self.fresh_side,
             names: names.min(u32::MAX as u64),
             old: &self.recs[..from],
             cands: &mut self.cands,
@@ -337,6 +341,8 @@ impl Builder {
         let res = super::run::all_exprs(s, e, &mut self.ids, &mut out);
         self.recs.extend_from_slice(&self.fresh);
         self.fresh.clear();
+        self.side.extend_from_slice(&self.fresh_side);
+        self.fresh_side.clear();
         res
     }
 
@@ -581,15 +587,15 @@ impl Builder {
     fn promote_recent(&mut self, env: &mut Env, append: bool, i: usize) -> R<ExprId> {
         let from = self.from;
         let recs = &mut self.recs;
-        recs[i] |= NEEDED;
+        recs.store_shared(i, recs[i] | NEEDED);
         // Records marked and not yet passed.
         let mut left = 1usize;
         // Mark record `c` if it is recent and not yet marked or done:
         // how many it marked.
-        let mark = |recs: &mut [u64], c: u32| -> usize {
+        let mark = |recs: &mut Slab<u64>, c: u32| -> usize {
             let c = c as usize;
             if c >= from && recs[c] & (DONE | NEEDED) == 0 {
-                recs[c] |= NEEDED;
+                recs.store_shared(c, recs[c] | NEEDED);
                 1
             } else {
                 0
@@ -608,7 +614,7 @@ impl Builder {
                     T_ALIAS => {
                         left += mark(recs, (r & ID_MASK) as u32);
                         // Not interned itself: the pass up skips it.
-                        recs[j] = r & !NEEDED;
+                        recs.store_shared(j, r & !NEEDED);
                     }
                     T_LAM | T_PI => {
                         let [_, ty, body] = binder_side(&self.side, r);
@@ -666,7 +672,7 @@ impl Builder {
                     add(env, append, n, ids)?
                 }
             };
-            self.recs[x] = DONE | id as u64;
+            self.recs.store_shared(x, DONE | id as u64);
             self.mark(x);
         }
         Ok(ExprId(self.recs[i] as u32))
@@ -751,7 +757,7 @@ impl Builder {
                     }
                     _ => add(env, append, decode(&self.side, r), ids)?,
                 };
-                self.recs[top as usize] = DONE | id as u64;
+                self.recs.store_shared(top as usize, DONE | id as u64);
                 self.mark(top as usize);
                 stack.pop();
             }
@@ -797,7 +803,7 @@ impl Builder {
                 continue;
             }
             if tag(r) == T_ALIAS {
-                self.recs[x] = self.recs[(r & ID_MASK) as usize];
+                self.recs.store_shared(x, self.recs[(r & ID_MASK) as usize]);
                 continue;
             }
             let n = decode(&self.side, r);
@@ -806,7 +812,8 @@ impl Builder {
             for (&c, id) in kids[..k].iter().zip(&mut ids) {
                 *id = self.recs[c as usize] as u32;
             }
-            self.recs[x] = DONE | add(env, append, n, ids)? as u64;
+            let id = add(env, append, n, ids)?;
+            self.recs.store_shared(x, DONE | id as u64);
         }
         let ids: Vec<u32> = self.recs.iter().map(|&r| r as u32).collect();
         let roots = self.roots.iter().map(|&i| ids[i as usize]).collect();
@@ -848,6 +855,7 @@ impl Builder {
             return Ok(None);
         }
         self.promote_shared(env, append)?;
+        crate::trace::phase("promote_shared");
         #[cfg(test)]
         let wide_test = tests::WIDE.get();
         #[cfg(not(test))]
@@ -889,12 +897,12 @@ impl Builder {
         let threads = threads.clamp(1, n.div_ceil(MIN_RANGE).max(1));
         let (out, out_side, fwd) = if threads == 1 {
             if wide {
-                into_stored_here::<true>(&mut recs, &mut side)
+                into_stored_here::<true>(recs.as_mut_slice(), side.as_mut_slice())
             } else {
-                into_stored_here::<false>(&mut recs, &mut side)
+                into_stored_here::<false>(recs.as_mut_slice(), side.as_mut_slice())
             }
         } else {
-            into_stored_par(&mut recs, &mut side, threads, wide)
+            into_stored_par(recs.as_mut_slice(), side.as_mut_slice(), threads, wide)
         };
         drop((recs, side));
         // An alias's target (see `into_stored_par`; it is not an alias).

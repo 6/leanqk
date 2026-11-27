@@ -23,6 +23,7 @@ pub trait Node: Copy + Eq {
     }
 }
 
+#[derive(Clone)]
 pub struct Interner<T> {
     nodes: Vec<T>,
     table: HashTable<u32>,
@@ -328,6 +329,19 @@ impl IdTable {
     pub fn heap_bytes(&self) -> usize {
         self.slots.len() * 8
     }
+
+    /// A copy of the table (another thread may not insert meanwhile).
+    pub fn copy(&self) -> IdTable {
+        IdTable {
+            slots: self
+                .slots
+                .iter()
+                .map(|s| AtomicU64::new(s.load(Ordering::Relaxed)))
+                .collect(),
+            lines: self.lines,
+            len: AtomicUsize::new(self.len()),
+        }
+    }
 }
 
 /// The arena of the environment's big kinds (expressions, names): like
@@ -376,6 +390,23 @@ impl<T: Node> Big<T> {
 
     pub fn nodes(&self) -> &Slab<T> {
         &self.nodes
+    }
+
+    /// Whether the nodes are in the full reservation of a slab, which
+    /// never moves (see [`Big::view`]).
+    pub(crate) fn is_fixed(&self) -> bool {
+        self.nodes.is_fixed()
+    }
+
+    /// The first `len` nodes, looked up in `table`, for other threads to
+    /// read while this arena goes on growing (see [`Slab::alias`]);
+    /// `table` must index only nodes among them (or none).
+    pub(crate) fn view(&mut self, len: usize, table: IdTable) -> Big<T> {
+        Big {
+            nodes: self.nodes.alias(len),
+            table,
+            what: self.what,
+        }
     }
 
     /// The id of `node`, if present.
