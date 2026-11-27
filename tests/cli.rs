@@ -306,3 +306,133 @@ fn nlean_is_the_same_program() {
     assert_eq!(out.status.code(), Some(0));
     assert!(text(&out.stdout).contains("Usage: nlean"));
 }
+
+/// The Init prefix of an export (several of the reader's chunks, so that
+/// `--stream` makes views of it), unpacked to a fresh file with `extra`
+/// lines at the end; `None` if `xz` cannot unpack it.
+fn init_prefix_with(name: &str, extra: &str) -> Option<PathBuf> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let out = Command::new("xz")
+        .arg("-dc")
+        .arg(root.join("bench/arena/pgo/init-prefix.ndjson.xz"))
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let p = temp_file(name, "");
+    let mut f = std::fs::File::create(&p).unwrap();
+    f.write_all(&out.stdout).unwrap();
+    f.write_all(extra.as_bytes()).unwrap();
+    Some(p)
+}
+
+/// `nitrolean check -j4 [--stream] [--stats] FILE`, read in chunks of 256
+/// KiB, with views at 30%, 60% and the end of the file and two threads
+/// checking them in full.
+fn run_stream(path: &std::path::Path, stream: bool, stats: bool) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_nitrolean"));
+    command.args(["check", "-j4"]);
+    if stream {
+        command.arg("--stream");
+    }
+    if stats {
+        command.arg("--stats");
+    }
+    command
+        .arg(path)
+        .env("NITROLEAN_VIEW_MARKS", "300,600,1000")
+        .env("NITROLEAN_STREAM_THREADS", "2")
+        .env("NITROLEAN_READ_AHEAD_BYTES", "262144")
+        .env("NITROLEAN_STREAM_FULL", "1")
+        .env_remove("NITROLEAN_LAZY_PROOFS")
+        .env_remove("NITROLEAN_DECL_TIMES")
+        .env_remove("NITROLEAN_READ_PROFILE")
+        .output()
+        .expect("run nitrolean")
+}
+
+/// Same exit status and output with and without `--stream`.
+fn assert_stream_same(path: &std::path::Path) -> Output {
+    let ordinary = run_stream(path, false, false);
+    let stream = run_stream(path, true, false);
+    assert_eq!(stream.status, ordinary.status, "{}", text(&stream.stderr));
+    assert_eq!(text(&stream.stdout), text(&ordinary.stdout));
+    assert_eq!(text(&stream.stderr), text(&ordinary.stderr));
+    stream
+}
+
+#[test]
+fn stream_accepts_early_and_says_the_same() {
+    let Some(path) = init_prefix_with("stream-init", "") else {
+        eprintln!("xz cannot unpack the Init prefix: skipped");
+        return;
+    };
+    let out = assert_stream_same(&path);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stats = text(&run_stream(&path, true, true).stdout);
+    std::fs::remove_file(path).unwrap();
+    let early = stats
+        .lines()
+        .find(|l| l.starts_with("early "))
+        .unwrap_or_else(|| panic!("{stats}"));
+    assert!(
+        early.ends_with("(used)") && !early.starts_with("early         0 "),
+        "{early}"
+    );
+}
+
+/// `def zzBad : Prop := Prop` after the Init prefix (ids far above its
+/// own: they need not be dense).
+const LATE_BAD: &str = r#"{"in":90000001,"str":{"pre":0,"str":"zzBad"}}
+{"ie":90000001,"sort":0}
+{"def":{"name":90000001,"levelParams":[],"type":90000001,"value":90000001,"hints":"opaque","safety":"safe","all":[90000001]}}
+"#;
+
+#[test]
+fn stream_reports_a_late_failure_as_without() {
+    let Some(path) = init_prefix_with("stream-late-bad", LATE_BAD) else {
+        return;
+    };
+    let out = assert_stream_same(&path);
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("'zzBad'"),
+        "{}",
+        text(&out.stderr)
+    );
+}
+
+#[test]
+fn stream_reports_late_malformed_input_as_without() {
+    for (name, extra) in [
+        ("stream-late-json", "{\"in\":90000001,\n"),
+        ("stream-late-dup-id", "{\"ie\":1,\"sort\":0}\n"),
+    ] {
+        let Some(path) = init_prefix_with(name, extra) else {
+            return;
+        };
+        let out = assert_stream_same(&path);
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(out.status.code(), Some(1), "{name}");
+    }
+}
+
+#[test]
+fn stream_after_a_reread_says_the_same() {
+    // A second name `Nat`: the read finds two equal names at the end and
+    // reads the file again, and the views are not used.
+    let extra = r#"{"in":90000001,"str":{"pre":0,"str":"Nat"}}
+"#;
+    let Some(path) = init_prefix_with("stream-reread", extra) else {
+        return;
+    };
+    assert_stream_same(&path);
+    let stats = text(&run_stream(&path, true, true).stdout);
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        stats
+            .lines()
+            .any(|l| l.starts_with("early ") && !l.ends_with("(used)")),
+        "{stats}"
+    );
+}

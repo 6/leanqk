@@ -110,17 +110,23 @@ impl View {
             // (and then its checks are in vain), unless the view before
             // found as much.
             let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
-            let complete = ext.nat_ops_complete
-                && names.iter().all(Option::is_some)
+            let complete = names.iter().all(Option::is_some)
                 && (Ext::kernel_names().all(|s| env.names.find_dotted(s).is_some())
                     || last.as_ref().is_some_and(|l| l.agrees_but_eval(&ext)));
             *last = Some(ext.clone());
             drop(last);
             if std::env::var_os("NITROLEAN_STREAM_DEBUG").is_some() {
                 eprintln!(
-                    "view of {} blocks prepared in {:?}: complete {complete}",
+                    "view of {} blocks prepared in {:?}: complete {complete} (nat ops {}, lacks {:?})",
                     env.blocks.len(),
-                    t.elapsed()
+                    t.elapsed(),
+                    ext.nat_ops_complete,
+                    LOOKED_UP
+                        .iter()
+                        .copied()
+                        .chain(Ext::kernel_names())
+                        .filter(|s| env.names.find_dotted(s).is_none())
+                        .collect::<Vec<_>>()
                 );
             }
             Ready {
@@ -394,6 +400,13 @@ impl Views for Stream {
     }
 
     fn drain(&self) {
+        // For tests: every view checked in full first.
+        if std::env::var_os("NITROLEAN_STREAM_FULL").is_some() {
+            let mut st = self.state.lock().unwrap();
+            while !st.views.is_empty() {
+                st = self.cv.wait(st).unwrap();
+            }
+        }
         self.stop.store(true, Ordering::Relaxed);
         let views = {
             let mut st = self.state.lock().unwrap();

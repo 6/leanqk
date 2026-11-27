@@ -850,11 +850,21 @@ fn map_lines(st: &mut State, m: &crate::olean::Mapped) -> Result<ReadStats, Read
     st.end_lines(lines)
 }
 
-/// Bytes of a mapped file each reading-ahead thread takes at a time.
-const AHEAD: usize = 4 << 20;
+/// Bytes of a mapped file each reading-ahead thread takes at a time
+/// (`NITROLEAN_READ_AHEAD_BYTES`, at least 64 KiB, for tests on small
+/// files).
+fn ahead() -> usize {
+    static AHEAD: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *AHEAD.get_or_init(|| {
+        std::env::var("NITROLEAN_READ_AHEAD_BYTES")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .map_or(4 << 20, |n| n.max(64 << 10))
+    })
+}
 
 /// A mapped file with lazy proofs, on `threads` threads: the others read
-/// the runs of application and binder lines ahead, a chunk of [`AHEAD`]
+/// the runs of application and binder lines ahead, a chunk of [`ahead`]
 /// bytes at a time, into tables of their own (where they guess each
 /// run's first id from its first line); this one applies the chunks in
 /// order, adding each run read ahead if it starts at the next id (and
@@ -867,7 +877,8 @@ fn map_lines_par(
     views: Option<&dyn Views>,
 ) -> Result<ReadStats, ReadError> {
     let b = m.bytes();
-    let chunks = b.len().div_ceil(AHEAD).max(1);
+    let ahead = ahead();
+    let chunks = b.len().div_ceil(ahead).max(1);
     let readers = (threads - 1).clamp(1, chunks);
     // The records marked done, for the readers to leave out of their
     // candidates (one bit per 16 bytes of the file: a line is longer).
@@ -899,8 +910,8 @@ fn map_lines_par(
                     }
                     let a = read_ahead(
                         b,
-                        c * AHEAD,
-                        (c + 1) * AHEAD,
+                        c * ahead,
+                        (c + 1) * ahead,
                         bits,
                         reuse.unwrap_or_default(),
                     );
