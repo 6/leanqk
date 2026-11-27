@@ -220,6 +220,14 @@ enum Source {
 }
 
 fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: usize) -> u8 {
+    crate::trace::phase("start");
+    let code = check_traced(file, src, show_stats, parse_only, jobs);
+    crate::trace::phase("end");
+    crate::trace::write();
+    code
+}
+
+fn check_traced(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: usize) -> u8 {
     let start = Instant::now();
     let mut prefix = None;
     let (mut env, rs, os) = match src {
@@ -261,6 +269,7 @@ fn check(file: &Path, src: &Source, show_stats: bool, parse_only: bool, jobs: us
         }
     };
     env.finish_loading();
+    crate::trace::phase("loaded");
     let elapsed = start.elapsed();
     let c = env.counts();
     let mut out = String::new();

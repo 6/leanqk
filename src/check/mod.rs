@@ -501,11 +501,13 @@ fn worker(
         sh.enter(jobs, &mut polls);
         let first = decls.first().map(|d| d.name);
         let t0 = std::time::Instant::now();
+        let traced = crate::trace::now();
         let mut corrections = Vec::new();
         let res = catch_unwind(AssertUnwindSafe(|| {
             check_block(&mut tc, &mut nb, b, decls, &mut corrections)
         }));
         sh.busy.fetch_sub(1, SeqCst);
+        crate::trace::check(i, worker, traced, prefix_block(b, decls));
         if let (Some(w), Some(n)) = (sh.times.as_ref(), first) {
             use std::io::Write;
             let _ = writeln!(

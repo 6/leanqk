@@ -35,3 +35,4 @@ pub mod reader;
 mod slab;
 pub mod stats;
 pub mod strings;
+pub mod trace;

@@ -652,6 +652,7 @@ fn finish(
     read: impl FnOnce(&mut State) -> Result<ReadStats, ReadError>,
 ) -> Result<Done, ReadError> {
     let res = read(&mut st);
+    crate::trace::phase("lines");
     let id_map_bytes =
         st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
     // The id maps are done with: free them before the lazy values are
@@ -668,6 +669,7 @@ fn finish(
                 class: e.class,
                 msg: e.msg,
             })?;
+        crate::trace::phase("lazy");
     }
     stats.shared_exprs = st.shared_exprs;
     stats.id_map_bytes = id_map_bytes;
@@ -694,6 +696,7 @@ fn finish(
                 Ok(()) => st.env.exprs.index(threads).err().map(|(a, b)| (a.0, b.0)),
             }
         };
+        crate::trace::phase("index");
         INDEX_NS.store(
             t.elapsed().as_nanos() as u64,
             std::sync::atomic::Ordering::Relaxed,
@@ -2347,6 +2350,7 @@ impl State {
             start,
             kind: BlockKind::Single,
         });
+        crate::trace::arrive(self.env.blocks.len() - 1);
         if let Some(b) = self.lazy.as_deref_mut() {
             b.decl_done();
         }
@@ -2508,6 +2512,7 @@ impl State {
             start,
             kind: BlockKind::Single,
         });
+        crate::trace::arrive(self.env.blocks.len() - 1);
         Ok(())
     }
 
@@ -2682,6 +2687,7 @@ impl State {
                 recs: n(recs),
             },
         });
+        crate::trace::arrive(self.env.blocks.len() - 1);
         Ok(())
     }
 }
