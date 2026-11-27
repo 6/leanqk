@@ -10,7 +10,7 @@ name: A/B benchmark
 #   (bench/mathlib/rep25s/) are in the Actions cache. It builds one only on a
 #   cache miss (the first run on a branch whose caches cannot see main's);
 #   the measuring jobs only restore it.
-# - build-x86 and build-arm build each ref once per architecture as the
+# - build-x86 and build-arm build each distinct commit once per architecture as the
 #   Mathlib benchmark builds nitrolean: profile-guided, trained on the
 #   repository's exports (`cargo xtask pgo --repo`), with the Rust
 #   toolchain that ref's mise.toml names. The Mathlib benchmark builds for
@@ -102,6 +102,10 @@ permissions:
   actions: read
 
 env:
+  # elan for the export job's Lean (cargo xtask install-elan), as in
+  # mathlib-bench.yml.
+  ELAN_VERSION: v4.4.0
+  ELAN_SHA256: 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2
   LEAN_TOOLCHAIN: leanprover/lean4:v4.36.0
   # The exports' SHA-256 name their cache entries.
   FULL_KEY: ab-mathlib-v4.36.0-full-f749dfd084fc0727d107c7aaded7d492cebfc0b517cfaa7337d8a7578a6c0dec
@@ -209,13 +213,15 @@ jobs:
           df -h / | tail -1; free -g
       - uses: jdx/mise-action@v5
         if: steps.need.outputs.full == 'true' || steps.need.outputs.rep25s == 'true'
+      - name: Install elan and Lean
+        if: steps.need.outputs.full == 'true' || steps.need.outputs.rep25s == 'true'
+        run: cargo xtask install-elan --toolchain "$LEAN_TOOLCHAIN"
       - name: Build the exports
         if: steps.need.outputs.full == 'true' || steps.need.outputs.rep25s == 'true'
         env:
           FULL: ${{ steps.need.outputs.full }}
           REP: ${{ steps.need.outputs.rep25s }}
         run: |
-          cargo xtask install-elan --toolchain "$LEAN_TOOLCHAIN"
           if [ "$FULL" = true ]; then
             mkdir -p ~/ab-export
             time cargo xtask mathlib fetch ~/ab-export/full.ndjson --work ~/mathlib4
@@ -243,13 +249,14 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
-        side: [A, B]
+        side: ${{ fromJSON(needs.setup.outputs.base_sha == needs.setup.outputs.candidate_sha && '["A"]' || '["A","B"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/ab-build
         with:
           sha: ${{ matrix.side == 'A' && needs.setup.outputs.base_sha || needs.setup.outputs.candidate_sha }}
           side: ${{ matrix.side }}
+          both_sides: ${{ needs.setup.outputs.base_sha == needs.setup.outputs.candidate_sha }}
           target_cpu: ${{ inputs.x86_cpu }}
 
   build-arm:
@@ -259,13 +266,14 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
-        side: [A, B]
+        side: ${{ fromJSON(needs.setup.outputs.base_sha == needs.setup.outputs.candidate_sha && '["A"]' || '["A","B"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/ab-build
         with:
           sha: ${{ matrix.side == 'A' && needs.setup.outputs.base_sha || needs.setup.outputs.candidate_sha }}
           side: ${{ matrix.side }}
+          both_sides: ${{ needs.setup.outputs.base_sha == needs.setup.outputs.candidate_sha }}
 
   measure-x86:
     needs: [setup, export, build-x86]
@@ -344,6 +352,13 @@ jobs:
           ls rows/*.tsv > /dev/null || { echo "::error::no rows"; exit 1; }
           created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
           secs=$(( $(date +%s) - $(date -d "$created" +%s) ))
+          # How many measuring jobs ran at once, at most: +1 at each start,
+          # -1 at each end, in time order.
+          peak=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name | startswith("measure-x86 (") or startswith("measure-arm (")) |
+                  select(.started_at != null) |
+                  [.started_at, 1], [(.completed_at // "9999"), -1] | @tsv' |
+            sort | awk -F'\t' '{ n += $2; if (n > m) m = n } END { print m + 0 }')
           bins=$(for f in bins/*/nitrolean; do
             printf '{"key":"%s","value":"%s"}\n' "$(basename "$(dirname "$f")")" "$(sha256sum "$f" | cut -d' ' -f1)"
           done | jq -s from_entries)
@@ -353,7 +368,7 @@ jobs:
             --arg candidate_flags "$FLAGS" --arg slices "$SLICES" --arg threads "$THREADS" \
             --arg reps "$REPS" --arg jobs_requested "$jr" \
             --arg time_to_result "$((secs / 60)) min $((secs % 60)) s" \
-            --arg build_note "cargo xtask pgo --repo; x86_64 target-cpu $X86_CPU, aarch64 default; measuring jobs: $MEASURE" \
+            --arg build_note "cargo xtask pgo --repo; x86_64 target-cpu $X86_CPU, aarch64 default; measuring jobs: $MEASURE; at most $peak measuring jobs ran at once" \
             --argjson binaries "$bins" '$ARGS.named' > out/build.json
           cargo xtask ab-summary out/build.json out/summary.md out/results.json rows/*.tsv > /dev/null
           awk 'FNR > 1 || NR == 1' rows/*.tsv > out/rows.tsv
