@@ -80,8 +80,12 @@ struct Ready {
 }
 
 impl View {
-    fn ready(&self) -> &Ready {
+    /// Prepared (by the first thread to ask). `last` is what the view
+    /// before found (views are prepared in order), and becomes what this
+    /// one found.
+    fn ready(&self, last: &Mutex<Option<Ext>>) -> &Ready {
         self.ready.get_or_init(|| {
+            let t = std::time::Instant::now();
             let mut env = self
                 .raw
                 .lock()
@@ -95,7 +99,23 @@ impl View {
             }
             let ext = Ext::with_decls(&env, &env.decls);
             let names: Vec<_> = LOOKED_UP.iter().map(|s| env.names.find_dotted(s)).collect();
-            let complete = ext.nat_ops_complete && names.iter().all(Option::is_some);
+            // A view that lacks something `Ext` looks up is likely to
+            // find less than the whole environment (and then its checks
+            // are in vain), unless the view before found as much.
+            let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
+            let complete = ext.nat_ops_complete
+                && names.iter().all(Option::is_some)
+                && (Ext::names().all(|s| env.names.find_dotted(s).is_some())
+                    || last.as_ref().is_some_and(|l| l.agrees(&ext)));
+            *last = Some(ext.clone());
+            drop(last);
+            if std::env::var_os("NITROLEAN_STREAM_DEBUG").is_some() {
+                eprintln!(
+                    "view of {} blocks prepared in {:?}: complete {complete}",
+                    env.blocks.len(),
+                    t.elapsed()
+                );
+            }
             Ready {
                 env,
                 ext,
@@ -153,6 +173,8 @@ pub(crate) struct Stream {
     gone: Condvar,
     stop: AtomicBool,
     found: Arc<Mutex<Vec<Found>>>,
+    /// What the last view prepared found.
+    last_ext: Mutex<Option<Ext>>,
 }
 
 impl Stream {
@@ -168,6 +190,7 @@ impl Stream {
             gone: Condvar::new(),
             stop: AtomicBool::new(false),
             found: Arc::default(),
+            last_ext: Mutex::new(None),
         }
     }
 
@@ -212,7 +235,7 @@ impl Stream {
     fn check_view(&self, v: &View) {
         let Ready {
             env, ext, complete, ..
-        } = v.ready();
+        } = v.ready(&self.last_ext);
         if !complete {
             return;
         }
@@ -266,7 +289,18 @@ impl Stream {
                     Ok(Ok(())) if corrections.is_empty() => {
                         v.accepted[i - v.from].store(true, Ordering::Relaxed);
                     }
-                    Ok(_) => {}
+                    Ok(r) => {
+                        if std::env::var_os("NITROLEAN_STREAM_DEBUG2").is_some() {
+                            eprintln!(
+                                "block {i}: {:?} corrections {}",
+                                r.err().map(|e| format!("{e:?}")
+                                    .chars()
+                                    .take(150)
+                                    .collect::<String>()),
+                                corrections.len()
+                            );
+                        }
+                    }
                     Err(_) => {
                         tc = Tc::new(store(), ext, 0);
                         nb = Nbe::for_worker(store(), ext, jobs, share);
@@ -384,6 +418,9 @@ fn quiet_panics() {
 
 /// Run `read` (which reads the export, handing its views to the stream)
 /// while `jobs` threads check the views' blocks; then what they found.
+/// About how many cores a read keeps busy.
+const READER_CORES: usize = 3;
+
 pub(crate) fn read_checking<R: Send>(
     jobs: usize,
     marks: Vec<u64>,
@@ -392,8 +429,15 @@ pub(crate) fn read_checking<R: Send>(
     quiet_panics();
     let (jobs, stack) = thread_plan(jobs);
     let stream = Stream::new(jobs, marks);
+    // The read keeps about `READER_CORES` busy: the threads take what is
+    // left (a reader slowed down slows down everything after it).
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let threads = std::env::var("NITROLEAN_STREAM_THREADS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| jobs.min(cores.saturating_sub(READER_CORES)).max(1));
     std::thread::scope(|s| {
-        for i in 0..jobs {
+        for i in 0..threads {
             let stream = &stream;
             // Without the threads, the read goes on alone.
             let _ = std::thread::Builder::new()
@@ -430,7 +474,11 @@ pub(crate) fn finish(
     for (from, acc, (e, n)) in &early.found {
         let agrees = e.agrees(&ext) && *n == names;
         if std::env::var_os("NITROLEAN_STREAM_DEBUG").is_some() {
-            eprintln!("view from block {from}: agrees {agrees}");
+            eprintln!(
+                "view from block {from}: agrees {agrees} (Ext differs in {:?}, names {})",
+                e.differs(&ext),
+                *n == names
+            );
         }
         if !agrees || from + acc.len() > accepted.len() {
             continue;

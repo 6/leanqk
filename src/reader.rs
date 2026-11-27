@@ -706,6 +706,9 @@ fn finish_viewed(
     if let Some(v) = views {
         v.drain();
         crate::trace::phase("drained");
+        if let Some(b) = st.lazy.as_deref_mut() {
+            b.end_views();
+        }
     }
     let id_map_bytes =
         st.name_ids.heap_bytes() + st.level_ids.heap_bytes() + st.expr_ids.heap_bytes();
@@ -909,11 +912,19 @@ fn map_lines_par(
                 }
                 st.lines_in(&mut lines, &b[p.bytes.start..], p.bytes.len())?;
             }
-            if let Some(v) = views
-                && v.wanted(a.end as u64, b.len() as u64)
-                && let Some(env) = st.view(b.len() as u64)
-            {
-                v.publish(env);
+            if let Some(v) = views {
+                if let Some(l) = st.lazy.as_deref_mut() {
+                    l.hand_over_undo();
+                }
+                if v.wanted(a.end as u64, b.len() as u64) {
+                    let t = std::time::Instant::now();
+                    if let Some(env) = st.view(b.len() as u64) {
+                        if std::env::var_os("NITROLEAN_STREAM_DEBUG").is_some() {
+                            eprintln!("view made in {:?}", t.elapsed());
+                        }
+                        v.publish(env);
+                    }
+                }
             }
             let mut a = a;
             a.done = Some((done, a.end));

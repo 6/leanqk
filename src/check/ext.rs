@@ -286,7 +286,7 @@ pub struct QuotNames {
     pub ind: NameId,
 }
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct Ext {
     pub nat: Option<NameId>,
     pub nat_zero: Option<NameId>,
@@ -313,6 +313,11 @@ impl Ext {
     /// Whether the two give a checker the same extensions (the notes on
     /// those that are off aside).
     pub(super) fn agrees(&self, o: &Ext) -> bool {
+        self.differs(o).is_empty()
+    }
+
+    /// The fields in which `self` and `o` differ (all but the notes).
+    pub(super) fn differs(&self, o: &Ext) -> Vec<&'static str> {
         let Ext {
             nat,
             nat_zero,
@@ -333,23 +338,59 @@ impl Ext {
             eq,
             notes: _,
         } = self;
-        *nat == o.nat
-            && *nat_zero == o.nat_zero
-            && *nat_succ == o.nat_succ
-            && *bool_true == o.bool_true
-            && *bool_false == o.bool_false
-            && *ops == o.ops
-            && *nat_ops_complete == o.nat_ops_complete
-            && *array_ops == o.array_ops
-            && *list_ops == o.list_ops
-            && *dec_eq_ops == o.dec_eq_ops
-            && *fast == o.fast
-            && *beq_prod == o.beq_prod
-            && *int_ops == o.int_ops
-            && *strings == o.strings
-            && *eager_reduce == o.eager_reduce
-            && *quot == o.quot
-            && *eq == o.eq
+        let mut d = Vec::new();
+        if *nat != o.nat {
+            d.push("nat");
+        }
+        if *nat_zero != o.nat_zero {
+            d.push("nat_zero");
+        }
+        if *nat_succ != o.nat_succ {
+            d.push("nat_succ");
+        }
+        if *bool_true != o.bool_true {
+            d.push("bool_true");
+        }
+        if *bool_false != o.bool_false {
+            d.push("bool_false");
+        }
+        if *ops != o.ops {
+            d.push("ops");
+        }
+        if *nat_ops_complete != o.nat_ops_complete {
+            d.push("nat_ops_complete");
+        }
+        if *array_ops != o.array_ops {
+            d.push("array_ops");
+        }
+        if *list_ops != o.list_ops {
+            d.push("list_ops");
+        }
+        if *dec_eq_ops != o.dec_eq_ops {
+            d.push("dec_eq_ops");
+        }
+        if *fast != o.fast {
+            d.push("fast");
+        }
+        if *beq_prod != o.beq_prod {
+            d.push("beq_prod");
+        }
+        if *int_ops != o.int_ops {
+            d.push("int_ops");
+        }
+        if *strings != o.strings {
+            d.push("strings");
+        }
+        if *eager_reduce != o.eager_reduce {
+            d.push("eager_reduce");
+        }
+        if *quot != o.quot {
+            d.push("quot");
+        }
+        if *eq != o.eq {
+            d.push("eq");
+        }
+        d
     }
 
     pub fn string(&self) -> Option<&StrExt> {
@@ -362,6 +403,49 @@ impl Ext {
             return None;
         }
         self.ops.get(&n).copied()
+    }
+
+    /// Every name [`Ext::with_decls`] looks up. An environment holding
+    /// declarations of all of them gets the same `Ext` as any longer one
+    /// that extends it (what it finds depends only on those declarations
+    /// and the ones before them).
+    pub(super) fn names() -> impl Iterator<Item = &'static str> {
+        const OTHERS: [&str; 26] = [
+            "eagerReduce",
+            "Eq",
+            "Quot",
+            "Quot.mk",
+            "Quot.lift",
+            "Quot.ind",
+            "Nat",
+            "Nat.zero",
+            "Nat.succ",
+            "Bool",
+            "Bool.false",
+            "Bool.true",
+            "List",
+            "List.nil",
+            "List.cons",
+            "Prod",
+            "Subtype",
+            "Decidable",
+            "BEq",
+            "Int",
+            "Int.ofNat",
+            "Int.negSucc",
+            "Decidable.isTrue",
+            "Decidable.isFalse",
+            "Char",
+            "Char.ofNat",
+        ];
+        OTHERS
+            .into_iter()
+            .chain(["String", "String.ofList", BEQ_PROD])
+            .chain(NAT_OPS.iter().map(|o| o.0))
+            .chain(ARRAY_OPS.iter().map(|o| o.0))
+            .chain(LIST_OPS.iter().map(|o| o.0))
+            .chain(INT_OPS.iter().map(|o| o.0))
+            .chain(DEC_EQ_OPS.iter().map(|o| o.0))
     }
 
     pub fn new(env: &Env) -> Ext {

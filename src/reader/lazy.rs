@@ -224,7 +224,20 @@ pub(super) struct Builder {
     /// they join `recs` (and `side`).
     fresh: Vec<u64>,
     fresh_side: Vec<u32>,
+    /// Records below this are seen by views (see [`Builder::view`]).
+    viewed: usize,
+    /// What those records were before they were interned, for the views
+    /// (see [`Undo`]), and the ones not yet handed over.
+    undo: Option<std::sync::Arc<Undo>>,
+    undo_new: Vec<(u32, u64)>,
 }
+
+/// Records that views see and the reader interned after the view was
+/// made, as they were: a view's lazy values are built from them, not from
+/// the arena ids the view has not got. (Each record is interned once, so
+/// what is here never changes.)
+#[derive(Default)]
+pub(crate) struct Undo(std::sync::RwLock<HashMap<u32, u64>>);
 
 /// If `c` (a child of a record from `from` on) is a record of an earlier
 /// declaration, not interned: push it to `cands` (an alias too; what it
@@ -757,6 +770,9 @@ impl Builder {
                     }
                     _ => add(env, append, decode(&self.side, r), ids)?,
                 };
+                if (top as usize) < self.viewed {
+                    self.undo_new.push((top, r));
+                }
                 self.recs.store_shared(top as usize, DONE | id as u64);
                 self.mark(top as usize);
                 stack.pop();
@@ -1626,6 +1642,7 @@ pub(crate) struct Live {
     starts: Vec<u32>,
     /// The view's expressions: arena ids below this.
     exprs: u32,
+    undo: std::sync::Arc<Undo>,
 }
 
 /// Why [`Live`] did not build a value.
@@ -1640,13 +1657,36 @@ impl Builder {
     /// build while the read goes on; arena ids below `exprs` are theirs.
     pub(super) fn view(&mut self, exprs: u32) -> Live {
         let n = self.from;
+        self.viewed = n;
+        self.hand_over_undo();
         Live {
             recs: self.recs.atomic_alias(n),
             side: self.side.alias(self.side.len()),
             roots: self.roots.clone(),
             starts: self.starts.clone(),
             exprs,
+            undo: self.undo.get_or_insert_with(Default::default).clone(),
         }
+    }
+
+    /// Hand the records interned since the last call to the views (every
+    /// so often while they are made: until then, the views cannot build
+    /// values that need them).
+    pub(super) fn hand_over_undo(&mut self) {
+        if let Some(u) = &self.undo
+            && !self.undo_new.is_empty()
+        {
+            u.0.write()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend(self.undo_new.drain(..));
+        }
+    }
+
+    /// No more views (they are gone): stop keeping records for them.
+    pub(super) fn end_views(&mut self) {
+        self.viewed = 0;
+        self.undo = None;
+        self.undo_new = Vec::new();
     }
 }
 
@@ -1674,14 +1714,24 @@ impl LazyValues for Live {
 }
 
 impl Live {
-    /// Record `x`, if the view has it.
+    /// Record `x`, if the view has it: as it was if the reader has since
+    /// interned it as a term the view has not got.
     #[inline(always)]
     fn rec(&self, x: u32) -> Result<u64, String> {
-        if (x as usize) < self.recs.len() {
-            Ok(self.recs.load(x as usize))
-        } else {
-            Err("internal: a record past the view".into())
+        if (x as usize) >= self.recs.len() {
+            return Err("internal: a record past the view".into());
         }
+        let r = self.recs.load(x as usize);
+        if r & DONE == 0 || (r as u32) < self.exprs {
+            return Ok(r);
+        }
+        self.undo
+            .0
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&x)
+            .copied()
+            .ok_or_else(|| LIVE_LATER.into())
     }
 
     /// The arena id of done record `r`, if the view has it.
