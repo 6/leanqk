@@ -94,16 +94,16 @@ env:
   ELAN_SHA256_AARCH64: 45cde3006f82f98804c94cf2ca4949d117060a5f3cc8afa62f523759947ee21f
   LEAN_TOOLCHAIN: leanprover/lean4:v4.36.0
   # nano-lean as the arena's checkers/nano-lean.yaml builds and runs it
-  # (arena commit 1453c10ef00ec6bc7863269ad1b695267ada1488).
+  # (arena commit bc9df997826c3868b90b6f486e72e7d855b97130).
   NANO_LEAN_URL: https://github.com/sdiehl/nano-lean
   NANO_LEAN_TAG: v0.4.2
   NANO_LEAN_REV: 5cd4a25de7cdd8a5fadde3fec53e41a6a8693138
   # gruszka as the arena's checkers/gruszka.yaml builds it (arena commit
-  # 8a7d0dceea76dfe6fd7bd7f3a6ea216f6347c6aa).
+  # bc9df997826c3868b90b6f486e72e7d855b97130).
   GRUSZKA_URL: https://github.com/jasisz/gruszka
-  GRUSZKA_TAG: v0.2.0
-  GRUSZKA_REV: 39d03331823f084a39323998fb1ee73de374182e
-  SUSZ_VERSION: 0.4.0
+  GRUSZKA_TAG: v0.2.4
+  GRUSZKA_REV: ef1dbf34d045a24d7cb37d0a9362f5c12dfb95e9
+  SUSZ_VERSION: 0.5.0
   INIT_SUSZ_URL: https://huggingface.co/datasets/jasisz/susz/resolve/108beeec4e2524eeee237330ec6dd99ee2e50216/susz-0.1/init.susz
   INIT_SUSZ_SHA256: b775c241147ff359c4b50aceef2f47282dad9123ecb9f39e28b3c4db21d638d4
 
