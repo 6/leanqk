@@ -20,10 +20,13 @@ name: Mathlib benchmark
 # worker, and four), one invocation per group (all runs of a command, then
 # the next). Its numbers go into the summary after the rounds'.
 #
-# With `profile` true, one more nitrolean -j1 run, untimed, goes under
-# `perf record -e instructions:u`, and the 60 symbols with the most user-space
-# instructions go into the summary and the artifact (profile.txt). It needs
-# hardware counters; without them the step says so and passes.
+# With `profile` true, extra untimed runs of nitrolean and gruszka go under
+# `perf stat` (cycles, instructions, cache, branch and TLB misses, and the
+# CPU's own stall events where perf knows them) and `perf record` on cycles
+# and instructions (bench/mathlib-ci/profile.sh): the counters and the 60
+# symbols with the most user-space cycles, with their IPC, go into the
+# summary and the artifact (profile.txt, profile/). It needs hardware
+# counters; without them the step says so and passes.
 #
 # Each job reports which instruction counters its machine offers. GitHub's hosted runners are VMs of
 # several kinds: some expose hardware counters (an Intel Xeon 6975P-C on
@@ -69,7 +72,7 @@ on:
         description: Runs of each command for hyperfine (0 to skip it)
         default: "3"
       profile:
-        description: Also profile nitrolean -j1 by symbol with perf record (needs hardware counters)
+        description: Also profile nitrolean and gruszka with perf stat and perf record (needs hardware counters)
         type: choice
         options: ["false", "true"]
         default: "false"

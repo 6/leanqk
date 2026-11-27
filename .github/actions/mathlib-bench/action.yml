@@ -24,7 +24,7 @@ inputs:
     description: Runs of each command for hyperfine (0 to skip it)
     default: "3"
   profile:
-    description: Also profile nitrolean -j1 with perf record (true or false)
+    description: Also profile nitrolean and gruszka with perf stat and perf record (true or false)
     default: "false"
 
 runs:
@@ -203,10 +203,11 @@ runs:
           warm; $m "gruszka alone (4 workers)" "$out" "'$W/gruszka/target/release/gruszka' '$W/in.susz' 4"
         done
 
-    # Where nitrolean -j1 spends its user-space instructions, by symbol:
-    # one extra, untimed run under perf record, after the rounds. It needs
-    # hardware counters (the perf or perf-u counter).
-    - name: Profile nitrolean
+    # Where the cycles go, for nitrolean and gruszka: hardware counters per
+    # run and per-symbol cycles and instructions (bench/mathlib-ci/profile.sh),
+    # in extra, untimed runs after the rounds. It needs hardware counters
+    # (the perf or perf-u counter).
+    - name: Profile
       if: ${{ inputs.profile == 'true' }}
       shell: bash
       run: |
@@ -215,18 +216,7 @@ runs:
           echo "No profile: this runner has no instruction counters (counter: $COUNTER)." | tee "$p"
           exit 0
         fi
-        if ! perf record -q -e instructions:u -c 1000003 -o "$W/perf.data" -- \
-          target/release/nitrolean check -j 1 "$IN" > /dev/null; then
-          echo "No profile: perf record failed." | tee "$p"
-          exit 0
-        fi
-        # To a file first: a pipe cut short would fail the step (pipefail).
-        perf report -i "$W/perf.data" --stdio --no-children --sort symbol 2>/dev/null > "$W/report.txt"
-        {
-          echo "nitrolean \`$(git rev-parse --short HEAD)\` -j1, perf record -e instructions:u, by symbol (top 60):"
-          echo
-          awk '!/^#/ && NF { print; if (++n == 60) exit }' "$W/report.txt"
-        } > "$p"
+        NL=$PWD/target/release/nitrolean bench/mathlib-ci/profile.sh "$p" "$RUNNER_TEMP/profile"
         cat "$p"
 
     # Timing only, after the rounds.
@@ -297,9 +287,7 @@ runs:
           if [ -f "$RUNNER_TEMP/profile.txt" ]; then
             echo "### Profile"
             echo
-            echo '```'
             cat "$RUNNER_TEMP/profile.txt"
-            echo '```'
             echo
           fi
           cat "$RUNNER_TEMP/probe.md"
@@ -323,4 +311,5 @@ runs:
           ${{ runner.temp }}/input.md
           ${{ runner.temp }}/counter-notes.md
           ${{ runner.temp }}/profile.txt
+          ${{ runner.temp }}/profile/
         if-no-files-found: ignore
