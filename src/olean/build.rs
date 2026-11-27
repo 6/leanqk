@@ -446,7 +446,7 @@ impl<'p> Assembler<'p> {
             _ => return Err(Fail::malformed("too many declarations")),
         };
         let d = self.moved(m, i, module)?;
-        if let Some(prev) = self.env.by_name.get(&d.name) {
+        if let Some(&prev) = self.env.by_name.get(&d.name) {
             let p = self.env.decls[prev as usize];
             if may_merge && self.subsumes(&p, &d) {
                 // Lean keeps the later copy of a theorem. Its proof may
