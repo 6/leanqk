@@ -77,7 +77,7 @@ fn train(root: &Path, dir: &Path, a: &Args) -> Result<PathBuf> {
     for e in &exports {
         log(T, &format!("training on {}", e.display()));
         let st = Command::new(&bin)
-            .args(["check", "--threads", "1"])
+            .args(["check", "--threads", "1", "--jobs", "1"])
             .arg(absolute(e))
             .stdout(std::process::Stdio::null())
             .status()
