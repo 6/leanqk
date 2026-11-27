@@ -165,6 +165,7 @@ impl Nbe<'_> {
     }
 
     /// `e` in `env`, unevaluated unless that is as cheap as a thunk.
+    #[inline(always)]
     pub fn thunk(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         if let ExprNode::BVar(i) = self.st.node(e)
             && let Some(v) = self.a.lookup(env, i)

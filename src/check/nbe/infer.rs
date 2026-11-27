@@ -906,7 +906,7 @@ impl Nbe<'_> {
 
     /// Extend a binder environment for its body. A closed body needs no
     /// environment; a body that only uses older entries needs a placeholder.
-    #[inline]
+    #[inline(always)]
     fn bind_arg(&mut self, body: ExprId, binder_env: Env, arg: ExprId, env: Env, ls: Ls) -> Env {
         let data = self.st.data(body);
         if !data.has_loose_bvars() {
