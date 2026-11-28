@@ -23,7 +23,7 @@ const EMPTY_TUPLE: u32 = val::NONE - 1;
 /// The bit of a tuple id that is an environment's id (`read_tuple`).
 const WHOLE_ENV: u32 = 1 << 31;
 
-/// Slots of `Nbe::tuple_slots`.
+/// Slots of `fixed::Tables::tuple_slots`.
 pub(super) const TUPLE_SLOTS: usize = 1 << 14;
 
 /// Interned tuples store the range, two hole words, and the values read.
@@ -255,12 +255,12 @@ impl Nbe<'_> {
         }
         let si = (crate::hash::hash_front(env.0 as u64 | (n as u64) << 32, holes) >> 50) as usize
             & (TUPLE_SLOTS - 1);
-        let s = self.tuple_slots[si];
+        let s = self.f.tuple_slots[si];
         if s[0] == env.0 && s[1] == n && s[2] == holes as u32 && s[3] == (holes >> 32) as u32 {
             return s[4];
         }
         let t = self.read_tuple_in_place(env, n, holes);
-        self.tuple_slots[si] = [env.0, n, holes as u32, (holes >> 32) as u32, t];
+        self.f.tuple_slots[si] = [env.0, n, holes as u32, (holes >> 32) as u32, t];
         t
     }
 

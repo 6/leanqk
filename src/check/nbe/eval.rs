@@ -27,7 +27,7 @@ const EAGER_MEMO: bool = true;
 const THUNK_EAGER_FRONT: bool = true;
 
 /// Whether `eager` remembers in a direct-mapped table only
-/// (`Nbe::eager_direct`), not a growing one.
+/// (`fixed::Tables::eager_direct`), not a growing one.
 const EAGER_DIRECT: bool = true;
 
 /// Past this many environment entries in range, `eager` goes through a
@@ -114,12 +114,12 @@ impl Nbe<'_> {
         let si = (crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64) >> 50)
             as usize
             & (super::BINDER_SLOTS - 1);
-        let s = self.binder_slots[si];
+        let s = self.f.binder_slots[si];
         if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
             return V(s[3]);
         }
         let v = self.eval_binder_new(e, env, ls);
-        self.binder_slots[si] = [e.0, env.0, ls.0, v.0];
+        self.f.binder_slots[si] = [e.0, env.0, ls.0, v.0];
         v
     }
 
@@ -246,7 +246,7 @@ impl Nbe<'_> {
     fn eager(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let sh = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
-        let s = self.eager_slots[si];
+        let s = self.f.eager_slots[si];
         if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
             return V(s[3]);
         }
@@ -259,12 +259,12 @@ impl Nbe<'_> {
     pub(super) fn eval_slot(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
         let sh = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
-        let s = self.eager_slots[si];
+        let s = self.f.eager_slots[si];
         if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
             return V(s[3]);
         }
         let v = self.eval(e, env, ls);
-        self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+        self.f.eager_slots[si] = [e.0, env.0, ls.0, v.0];
         v
     }
 
@@ -292,17 +292,17 @@ impl Nbe<'_> {
             // A lossy table: a value lost is made again, the same.
             key.drop_in(&mut self.vargs);
             let di = h as usize & (super::EAGER_DIRECT_SLOTS - 1);
-            let s = self.eager_direct[di];
+            let s = self.f.eager_direct[di];
             let v = if s[0] == ke && s[1] == kls && s[2] == kt {
                 V(s[3])
             } else {
                 self.eager_depth += 1;
                 let v = self.eval(e, env, ls);
                 self.eager_depth -= 1;
-                self.eager_direct[di] = [ke, kls, kt, v.0];
+                self.f.eager_direct[di] = [ke, kls, kt, v.0];
                 v
             };
-            self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+            self.f.eager_slots[si] = [e.0, env.0, ls.0, v.0];
             return v;
         }
         let (i, found) = Self::memo_find_or_add(
@@ -321,7 +321,7 @@ impl Nbe<'_> {
             self.eager_memo.set(i, 0, v.0);
             v
         };
-        self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+        self.f.eager_slots[si] = [e.0, env.0, ls.0, v.0];
         v
     }
 
