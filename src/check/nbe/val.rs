@@ -157,10 +157,12 @@ struct EnvNode {
     v: V,
 }
 
-/// An environment cell with its length and `HAS_FVAR_BIT`, and a jump
-/// to an outer cell: the skew-binary jump pointers of Myers, "An
-/// applicative random-access stack" (1983), which find the variable at
-/// depth `i` in O(log i) steps.
+/// An environment cell with its length, `HAS_FVAR_BIT` and the span of
+/// its jump, and a jump to an outer cell: the skew-binary jump pointers
+/// of Myers, "An applicative random-access stack" (1983), which find the
+/// variable at depth `i` in O(log i) steps. A jump spans `2^k - 1`
+/// cells, with `k` in the bits at `ENV_SPAN`: a new cell's jump then
+/// needs its parent and the parent's jump target, and not the target's.
 #[derive(Clone, Copy)]
 struct EnvRec {
     node: EnvNode,
@@ -169,6 +171,11 @@ struct EnvRec {
 }
 
 const HAS_FVAR_BIT: u32 = 1 << 31;
+/// The length bits of `EnvRec::len`, and the shift of the span exponent
+/// in the bits above them.
+const ENV_LEN: u32 = (1 << ENV_SPAN) - 1;
+const ENV_SPAN: u32 = 24;
+const _: () = assert!(LIMIT <= ENV_LEN && ENV_SPAN + 5 < 31);
 const HAS_PROJ_BIT: u32 = 1 << 30;
 const PROJ_WORD: u32 = 1 << 31;
 const LEN_BITS: u32 = HAS_PROJ_BIT - 1;
@@ -1034,7 +1041,7 @@ impl Arena {
 
     #[inline]
     pub fn env_len(&self, e: Env) -> u32 {
-        at(&self.envs, e.0 as usize).len & LEN_BITS
+        at(&self.envs, e.0 as usize).len & ENV_LEN
     }
 
     #[inline]
@@ -1082,11 +1089,21 @@ impl Arena {
         }
         let p = *at(envs, env.0 as usize);
         let fv = p.len & HAS_FVAR_BIT != 0 || at(recs, v.0 as usize).flags & HAS_FVAR != 0;
-        let len = ((p.len & LEN_BITS) + 1) | if fv { HAS_FVAR_BIT } else { 0 };
+        // The jump spans as many as the parent's and its target's
+        // together, if they span the same, else just the parent.
         let j = *at(envs, p.jump.0 as usize);
-        let (lp, lj) = (p.len & LEN_BITS, j.len & LEN_BITS);
-        let ljj = at(envs, j.jump.0 as usize).len & LEN_BITS;
-        let jump = if lp - lj == lj - ljj { j.jump } else { env };
+        let kp = p.len >> ENV_SPAN & 31;
+        let (jump, k) = if kp == j.len >> ENV_SPAN & 31 {
+            (j.jump, kp + 1)
+        } else {
+            (env, 1)
+        };
+        debug_assert!({
+            let (lp, lj) = (p.len & ENV_LEN, j.len & ENV_LEN);
+            let ljj = at(envs, j.jump.0 as usize).len & ENV_LEN;
+            jump == if lp - lj == lj - ljj { j.jump } else { env }
+        });
+        let len = ((p.len & ENV_LEN) + 1) | k << ENV_SPAN | if fv { HAS_FVAR_BIT } else { 0 };
         envs.push(EnvRec { node, len, jump });
         env_first.push(0);
         match slot {
@@ -1113,7 +1130,7 @@ impl Arena {
     #[inline]
     pub fn lookup(&self, env: Env, i: u32) -> Option<V> {
         let mut r = *at(&self.envs, env.0 as usize);
-        let len = r.len & LEN_BITS;
+        let len = r.len & ENV_LEN;
         if i >= len {
             return None;
         }
@@ -1129,9 +1146,9 @@ impl Arena {
         if f[0] == env.0 && f[1] == i {
             return Some(V(f[2]));
         }
-        while r.len & LEN_BITS != target {
+        while r.len & ENV_LEN != target {
             let j = *at(&self.envs, r.jump.0 as usize);
-            r = if j.len & LEN_BITS >= target {
+            r = if j.len & ENV_LEN >= target {
                 j
             } else {
                 *at(&self.envs, r.node.prev.0 as usize)
