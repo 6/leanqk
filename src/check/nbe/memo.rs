@@ -23,6 +23,14 @@ const EMPTY_TUPLE: u32 = val::NONE - 1;
 /// The bit of a tuple id that is an environment's id (`read_tuple`).
 const WHOLE_ENV: u32 = 1 << 31;
 
+/// Where the count of entries starts in a word of `Nbe::tuple_slots`,
+/// above the environment's id (environment ids are below `val::LIMIT`);
+/// only counts up to `MAX_TUPLE_N` go through the slots, so that no word
+/// is `val::NONE` (an empty slot).
+const TUPLE_N_SHIFT: u32 = val::LIMIT.ilog2();
+const MAX_TUPLE_N: u32 = 64;
+const _: () = assert!(MAX_TUPLE_N < (1 << (32 - TUPLE_N_SHIFT)) - 1);
+
 /// Slots of `Nbe::tuple_slots`.
 pub(super) const TUPLE_SLOTS: usize = 1 << 14;
 
@@ -253,14 +261,20 @@ impl Nbe<'_> {
         if n < 64 && holes & ((1u64 << n) - 1) == 0 && n == self.a.env_len(env) {
             return env.0 | WHOLE_ENV;
         }
+        if n > MAX_TUPLE_N {
+            return self.read_tuple_in_place(env, n, holes);
+        }
         let si = (crate::hash::hash_front(env.0 as u64 | (n as u64) << 32, holes) >> 50) as usize
             & (TUPLE_SLOTS - 1);
+        // The environment and the count share a word, so that a slot is
+        // 16 bytes and never spans two cache lines.
+        let en = env.0 | n << TUPLE_N_SHIFT;
         let s = self.tuple_slots[si];
-        if s[0] == env.0 && s[1] == n && s[2] == holes as u32 && s[3] == (holes >> 32) as u32 {
-            return s[4];
+        if s[0] == en && s[1] == holes as u32 && s[2] == (holes >> 32) as u32 {
+            return s[3];
         }
         let t = self.read_tuple_in_place(env, n, holes);
-        self.tuple_slots[si] = [env.0, n, holes as u32, (holes >> 32) as u32, t];
+        self.tuple_slots[si] = [en, holes as u32, (holes >> 32) as u32, t];
         t
     }
 

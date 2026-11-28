@@ -126,7 +126,7 @@ pub struct Nbe<'e> {
     tuples: memo::TupleMemo,
     /// A direct-mapped front of `tuples`: (environment, range, holes (two
     /// words), id).
-    pub(super) tuple_slots: Box<[[u32; 5]; memo::TUPLE_SLOTS]>,
+    pub(super) tuple_slots: Box<[[u32; 4]; memo::TUPLE_SLOTS]>,
     /// Types of terms (`infer_term`): the type, and whether checked.
     infer_memo: memo::InferMemo,
     /// A direct-mapped front of `infer_memo`: (term, environment,
