@@ -1109,6 +1109,13 @@ impl Arena {
         at(&self.envs, e.0 as usize).node.prev
     }
 
+    /// The head and the tail of `e`, from one read of its record.
+    #[inline]
+    pub fn env_step(&self, e: Env) -> (V, Env) {
+        let node = at(&self.envs, e.0 as usize).node;
+        (node.v, node.prev)
+    }
+
     /// The value of bound variable `i` (0 is the innermost).
     #[inline]
     pub fn lookup(&self, env: Env, i: u32) -> Option<V> {

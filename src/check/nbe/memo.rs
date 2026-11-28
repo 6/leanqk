@@ -23,6 +23,10 @@ const EMPTY_TUPLE: u32 = val::NONE - 1;
 /// The bit of a tuple id that is an environment's id (`read_tuple`).
 const WHOLE_ENV: u32 = 1 << 31;
 
+/// Ranges of tuples read in one pass (`read_tuple_in_place`); keys range
+/// over at most this many entries.
+const SHORT_TUPLE: u32 = 32;
+
 /// Slots of `Nbe::tuple_slots`.
 pub(super) const TUPLE_SLOTS: usize = 1 << 13;
 
@@ -275,6 +279,38 @@ impl Nbe<'_> {
         let mut cur = env;
         let mut mask = holes;
         let mut h = hash_front(n as u64, holes);
+        if n <= SHORT_TUPLE {
+            // One pass up to the last entry read, with no branch on the
+            // holes: every entry is written, and the next write goes one
+            // further only past an entry read.
+            let kept = !holes & ((1u64 << n) - 1);
+            let last = 64 - kept.leading_zeros();
+            words.reserve(3 + last as usize);
+            let spare = words.spare_capacity_mut();
+            for (w, x) in spare.iter_mut().zip(head) {
+                w.write(x);
+            }
+            let mut len = 3usize;
+            let a = &self.a;
+            for j in 0..last {
+                let (v, tail) = a.env_step(cur);
+                cur = tail;
+                let read = kept >> j & 1;
+                // SAFETY: `len` is at most `3 + j`, below the `3 + last`
+                // words reserved.
+                #[allow(unsafe_code)]
+                unsafe { spare.get_unchecked_mut(len) }.write(v.0);
+                let mixed = (h.rotate_left(5) ^ v.0 as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+                h = std::hint::select_unpredictable(read != 0, mixed, h);
+                len += read as usize;
+            }
+            // SAFETY: the `len` words past the end were written above.
+            #[allow(unsafe_code)]
+            unsafe {
+                words.set_len(base + len)
+            };
+            return Self::tuple_find_or_add(table, words, base, h);
+        }
         let skipped = if n >= 64 {
             holes.count_ones()
         } else {
@@ -293,6 +329,13 @@ impl Nbe<'_> {
             cur = a.env_tail(cur);
             v.0
         })));
+        Self::tuple_find_or_add(table, words, base, h)
+    }
+
+    /// The id of the tuple just written at `words[base..]` (hash `h`): an
+    /// equal one's, the new one dropped, or else the new one's.
+    #[inline(always)]
+    fn tuple_find_or_add(table: &mut Table, words: &mut Vec<u32>, base: usize, h: u64) -> u32 {
         let end = words.len();
         let len = end - base;
         let h = fold32(h);
