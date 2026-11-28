@@ -224,8 +224,11 @@ pub struct Nbe<'e> {
     case_shapes: cases::CaseShapes,
     /// Terms the store holds for values read from `.olean` files.
     read_exprs: usize,
-    /// The loose bound variables each term uses (`used_bvars`).
+    /// The loose bound variables each term uses (`used_bvars`): of the
+    /// environment's terms, and of the store's own (`bvar_use_local`), which
+    /// go with them.
     bvar_use: IdMap<ExprId, u64>,
+    bvar_use_local: IdMap<ExprId, u64>,
     /// `key_env` of an environment, by the variables used.
     key_envs: IdMap<(val::Env, u64), val::Env>,
     /// Lazy delta steps in this declaration.
@@ -364,6 +367,7 @@ impl<'e> Nbe<'e> {
             case_shapes: Default::default(),
             read_exprs: 0,
             bvar_use: IdMap::default(),
+            bvar_use_local: IdMap::default(),
             cache_share: usize::MAX,
             key_envs: IdMap::default(),
             decl_steps: 0,
@@ -387,6 +391,7 @@ impl<'e> Nbe<'e> {
             + self.infer_memo.heap_bytes()
             + self.eager_memo.heap_bytes()
             + map(&self.bvar_use)
+            + map(&self.bvar_use_local)
             + self.checked_closed.capacity() * size_of::<u64>()
             + map(&self.ctxs)
     }
@@ -601,10 +606,7 @@ impl<'e> Nbe<'e> {
             shrink(&mut self.lazy_values);
             self.case_shapes.forget_terms();
             // Local terms go: forget what was found about them.
-            {
-                let st = &self.st;
-                self.bvar_use.retain(|e, _| !st.is_local_expr(*e));
-            }
+            shrink(&mut self.bvar_use_local);
         }
         shrink(&mut self.bigs);
         shrink(&mut self.big_table);
@@ -627,6 +629,7 @@ impl<'e> Nbe<'e> {
             self.eager_memo = Default::default();
             if self.kept_bytes() > self.cache_share {
                 self.bvar_use = IdMap::default();
+                self.bvar_use_local = IdMap::default();
                 self.checked_closed = Default::default();
                 self.ctxs = IdMap::default();
                 self.lparams_ids = Default::default();
@@ -1042,7 +1045,13 @@ impl<'e> Nbe<'e> {
         if !d.has_loose_bvars() {
             return 0;
         }
-        if let Some(&m) = self.bvar_use.get(&e) {
+        let local = self.st.is_local_expr(e);
+        let memo = if local {
+            &self.bvar_use_local
+        } else {
+            &self.bvar_use
+        };
+        if let Some(&m) = memo.get(&e) {
             return m;
         }
         let m = match self.st.node(e) {
@@ -1077,7 +1086,11 @@ impl<'e> Nbe<'e> {
             ExprNode::Proj(_, _, x) => self.used_bvars(x),
             _ => 0,
         };
-        self.bvar_use.insert(e, m);
+        if local {
+            self.bvar_use_local.insert(e, m);
+        } else {
+            self.bvar_use.insert(e, m);
+        }
         m
     }
 
