@@ -335,7 +335,7 @@ const CONSES: usize = 1 << 14;
 const PROJS: usize = 1 << 12;
 
 /// Slots of `Arena::apps`.
-const APPS: usize = 1 << 14;
+const APPS: usize = 1 << 13;
 
 /// Slots of `Arena::const_apps` and of `Arena::const_seen`.
 const CONST_APPS: usize = 1 << 12;
@@ -345,7 +345,7 @@ const CONST_SEEN: usize = 1 << 12;
 const FARS: usize = 1 << 12;
 
 /// Slots of `Arena::thunks`.
-const THUNKS: usize = 1 << 14;
+const THUNKS: usize = 1 << 13;
 
 impl Default for Arena {
     fn default() -> Self {
