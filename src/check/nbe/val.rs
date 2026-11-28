@@ -170,6 +170,7 @@ struct EnvRec {
 
 const HAS_FVAR_BIT: u32 = 1 << 31;
 const HAS_PROJ_BIT: u32 = 1 << 30;
+const PROJ_WORD: u32 = 1 << 31;
 const LEN_BITS: u32 = HAS_PROJ_BIT - 1;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -244,6 +245,7 @@ const _: () = assert!(LIMIT <= u32::MAX >> FLAG_BITS);
 
 /// The most words the spines of one declaration may take.
 const SP_WORDS: usize = 8 << 23;
+const _: () = assert!(SP_WORDS < PROJ_WORD as usize && LIMIT < PROJ_WORD);
 
 /// The payload of the unwind when an arena is full.
 pub struct OutOfRoom;
@@ -262,11 +264,16 @@ pub struct Arena {
     recs: Vec<Rec>,
     vtable: Table,
 
-    /// Spines, each a header (its length and `HAS_FVAR_BIT`,
-    /// `HAS_PROJ_BIT`) and then two words per elimination (an argument's
-    /// id and `NONE`, or a projection's structure and field). A spine is
-    /// the offset of its header; `Sp::NIL` is the empty one at 0.
+    /// Spines, each a header followed by one word per elimination.
+    /// An elimination is a value ID or a tagged ID of a projection pair.
+    /// A spine is the offset of its header, with the empty spine at zero.
     sps: Vec<u32>,
+    /// Full projection pairs, interned independently of their spine.
+    projection_pairs: Vec<(NameId, u32)>,
+    projection_table: Table,
+    /// The number of words at the existing logical resource limit. Every
+    /// elimination counts as two words, including a compact argument.
+    logical_sp_words: usize,
     /// Spines by content.
     sptable: Table,
     /// Scratch words for building a spine.
@@ -341,6 +348,9 @@ impl Arena {
             recs: Vec::new(),
             vtable: Table::new(),
             sps: vec![0],
+            projection_pairs: Vec::new(),
+            projection_table: Table::new(),
+            logical_sp_words: 1,
             sptable: Table::new(),
             sp_buf: Vec::new(),
             env_first: vec![0],
@@ -384,6 +394,7 @@ impl Arena {
     pub fn clear(&mut self) {
         if self.vtable.capacity() > 1 << 18
             || self.sptable.capacity() > 1 << 18
+            || self.projection_table.capacity() > 1 << 18
             || self.envtable.capacity() > 1 << 18
             || self.nutable.capacity() > 1 << 18
         {
@@ -394,6 +405,9 @@ impl Arena {
         self.recs.clear();
         self.vtable.clear();
         self.sps.truncate(1);
+        self.projection_pairs.clear();
+        self.projection_table.clear();
+        self.logical_sp_words = 1;
         self.sp_buf.clear();
         self.sptable.clear();
         self.envs.truncate(1);
@@ -423,6 +437,8 @@ impl Arena {
             + self.recs.capacity() * size_of::<Rec>()
             + self.vtable.capacity() * 8
             + self.sps.capacity() * 4
+            + self.projection_pairs.capacity() * size_of::<(NameId, u32)>()
+            + self.projection_table.capacity() * 8
             + self.sptable.capacity() * 8
             + self.envs.capacity() * 17
             + self.env_first.capacity() * 4
@@ -516,7 +532,7 @@ impl Arena {
         {
             let k = sp.0 as usize + 1;
             let n = self.sp_len(sp) as usize;
-            return self.neutral_in(val, k, n, &[], Some(sp));
+            return self.neutral_in::<false>(val, k, n, &[], Some(sp));
         }
         let h = val.hash();
         let Self { vals, vtable, .. } = self;
@@ -578,31 +594,30 @@ impl Arena {
             return len;
         }
         let start = sp.0 as usize + 1;
-        at_slice(&self.sps, start, start + 2 * len as usize)
-            .as_chunks::<2>()
-            .0
+        at_slice(&self.sps, start, start + len as usize)
             .iter()
-            .position(|&[_, tag]| tag != NONE)
+            .position(|&word| word & PROJ_WORD != 0)
             .expect("spine has a projection") as u32
     }
 
     /// Elimination `i` of `sp`, from the first.
     #[inline]
     pub fn sp_elim(&self, sp: Sp, i: u32) -> Elim {
-        let k = sp.0 as usize + 1 + 2 * i as usize;
-        let (a, b) = (*at(&self.sps, k), *at(&self.sps, k + 1));
-        if b == NONE {
-            Elim::Arg(V(a))
+        let k = sp.0 as usize + 1 + i as usize;
+        let word = *at(&self.sps, k);
+        if word & PROJ_WORD == 0 {
+            Elim::Arg(V(word))
         } else {
-            Elim::Proj(NameId(a), b)
+            let (structure, field) = *at(&self.projection_pairs, (word & !PROJ_WORD) as usize);
+            Elim::Proj(structure, field)
         }
     }
 
     /// Argument `i` of a spine, at a position known to be an application.
     #[inline]
     pub(super) fn sp_arg(&self, sp: Sp, i: u32) -> V {
-        let k = sp.0 as usize + 1 + 2 * i as usize;
-        debug_assert!(i < self.sp_len(sp) && self.sps[k + 1] == NONE);
+        let k = sp.0 as usize + 1 + i as usize;
+        debug_assert!(i < self.sp_len(sp) && self.sps[k] & PROJ_WORD == 0);
         V(*at(&self.sps, k))
     }
 
@@ -610,10 +625,10 @@ impl Arena {
     pub(super) fn extend_sp_args(&self, sp: Sp, start: u32, end: u32, out: &mut Vec<V>) {
         debug_assert!(start <= end && end <= self.sp_len(sp));
         let k = sp.0 as usize + 1;
-        let words = at_slice(&self.sps, k + 2 * start as usize, k + 2 * end as usize);
-        out.extend(words.as_chunks::<2>().0.iter().map(|&[a, tag]| {
-            debug_assert_eq!(tag, NONE);
-            V(a)
+        let words = at_slice(&self.sps, k + start as usize, k + end as usize);
+        out.extend(words.iter().map(|&word| {
+            debug_assert_eq!(word & PROJ_WORD, 0);
+            V(word)
         }));
     }
 
@@ -631,7 +646,7 @@ impl Arena {
         let mut buf = std::mem::take(&mut self.sp_buf);
         buf.clear();
         let k = sp.0 as usize + 1;
-        buf.extend_from_slice(at_slice(&self.sps, k, k + 2 * n as usize));
+        buf.extend_from_slice(at_slice(&self.sps, k, k + n as usize));
         let r = self.intern_sp(&buf);
         self.sp_buf = buf;
         r
@@ -646,16 +661,40 @@ impl Arena {
     }
 
     pub fn snoc(&mut self, sp: Sp, e: Elim) -> Sp {
-        let (a, b) = match e {
-            Elim::Arg(v) => (v.0, NONE),
-            Elim::Proj(n, i) => (n.0, i),
+        let word = match e {
+            Elim::Arg(v) => v.0,
+            Elim::Proj(n, i) => self.projection_word(n, i),
         };
         let mut buf = self.sp_words(sp);
-        buf.push(a);
-        buf.push(b);
+        buf.push(word);
         let r = self.intern_sp(&buf);
         self.sp_buf = buf;
+        debug_assert!(
+            self.sp_len(r) == self.sp_len(sp) + 1 && self.sp_elim(r, self.sp_len(sp)) == e
+        );
         r
+    }
+
+    #[inline(never)]
+    fn projection_word(&mut self, structure: NameId, field: u32) -> u32 {
+        let h = h32(crate::hash::hash_front(structure.0 as u64, field as u64));
+        let pair = (structure, field);
+        let Self {
+            projection_pairs,
+            projection_table,
+            ..
+        } = self;
+        if let Some(id) = projection_table.find(h, |id| *at(projection_pairs, id as usize) == pair)
+        {
+            return id | PROJ_WORD;
+        }
+        if projection_pairs.len() >= SP_WORDS {
+            out_of_room();
+        }
+        let id = projection_pairs.len() as u32;
+        projection_pairs.push(pair);
+        projection_table.insert_new(h, id);
+        id | PROJ_WORD
     }
 
     /// `neutral` of `f`'s value `head`, by a direct-mapped front for one
@@ -704,22 +743,38 @@ impl Arena {
         if xs.is_empty() {
             return self.mk(head);
         }
+        if base == Sp::NIL {
+            return self.neutral_in::<true>(head, 1, 0, xs, None);
+        }
         let k = base.0 as usize + 1;
         let n = self.sp_len(base) as usize;
-        self.neutral_in(head, k, n, xs, None)
+        self.neutral_in::<false>(head, k, n, xs, None)
     }
 
     /// The neutral with `head`'s head and the spine of the `n` eliminations
     /// at `sps[k..]` followed by the arguments `xs`: found by its contents,
     /// else made, with `sp` as its spine if given (else a copy). Applied
     /// neutrals are made here only, so that one probe finds them.
-    fn neutral_in(&mut self, head: Val, k: usize, n: usize, xs: &[V], sp: Option<Sp>) -> V {
-        let h = Self::neutral_hash(head, at_slice(&self.sps, k, k + 2 * n), xs);
+    fn neutral_in<const EMPTY_PREFIX: bool>(
+        &mut self,
+        head: Val,
+        k: usize,
+        n: usize,
+        xs: &[V],
+        sp: Option<Sp>,
+    ) -> V {
+        let prefix = if EMPTY_PREFIX {
+            &[]
+        } else {
+            at_slice(&self.sps, k, k + n)
+        };
+        let h = Self::neutral_hash(head, prefix, xs);
         let Self {
             vals,
             sps,
             nutable,
             recs,
+            logical_sp_words,
             ..
         } = self;
         let slot = match nutable.find_or_slot(h, |id| {
@@ -736,13 +791,8 @@ impl Arena {
                     same && (*at(sps, i) & LEN_BITS) as usize == n + xs.len()
                         // Word by word: spines are short, and a call to
                         // compare memory costs more than the loop.
-                        && (0..2 * n).all(|j| *at(sps, i + 1 + j) == *at(sps, k + j))
-                        // Both words: an argument's second is `NONE`, a
-                        // projection's is its index.
-                        && xs.iter().enumerate().all(|(j, x)| {
-                            let w = i + 1 + 2 * (n + j);
-                            *at(sps, w) == x.0 && *at(sps, w + 1) == NONE
-                        })
+                        && (EMPTY_PREFIX || (0..n).all(|j| *at(sps, i + 1 + j) == *at(sps, k + j)))
+                        && xs.iter().enumerate().all(|(j, x)| *at(sps, i + 1 + n + j) == x.0)
                 }
             }
         }) {
@@ -753,19 +803,27 @@ impl Arena {
             Some(sp) => sp,
             None => {
                 let id = sps.len();
-                if id + 1 + 2 * (n + xs.len()) >= SP_WORDS {
+                let words = *logical_sp_words + 1 + 2 * (n + xs.len());
+                if words >= SP_WORDS {
                     out_of_room();
                 }
-                let base = sps[k - 1] & (HAS_FVAR_BIT | HAS_PROJ_BIT);
+                *logical_sp_words = words;
+                let base = if EMPTY_PREFIX {
+                    0
+                } else {
+                    sps[k - 1] & (HAS_FVAR_BIT | HAS_PROJ_BIT)
+                };
                 let fv = xs.iter().any(|&x| recs[x.0 as usize].flags & HAS_FVAR != 0);
                 sps.push((n + xs.len()) as u32 | base | if fv { HAS_FVAR_BIT } else { 0 });
                 // Word by word: spines are short, and a call to copy
                 // memory costs more than the loop.
-                for j in k..k + 2 * n {
-                    let w = *at(sps, j);
-                    sps.push(w);
+                if !EMPTY_PREFIX {
+                    for j in k..k + n {
+                        let w = *at(sps, j);
+                        sps.push(w);
+                    }
                 }
-                sps.extend(xs.iter().flat_map(|x| [x.0, NONE]));
+                sps.extend(xs.iter().map(|x| x.0));
                 Sp(id as u32)
             }
         };
@@ -786,7 +844,7 @@ impl Arena {
             };
             let k = sp.0 as usize;
             let n = (*at(sps, k) & LEN_BITS) as usize;
-            Self::neutral_hash(head, at_slice(sps, k + 1, k + 1 + 2 * n), &[])
+            Self::neutral_hash(head, at_slice(sps, k + 1, k + 1 + n), &[])
         });
         let fv = matches!(head, Val::FVar(..)) || sps[sp.0 as usize] & HAS_FVAR_BIT != 0;
         recs.push(Rec {
@@ -812,14 +870,30 @@ impl Arena {
             _ => unreachable!(),
         };
         let mut h = crate::hash::hash_front(tag | (a as u64) << 32, b as u64);
-        // One step per elimination (its two words).
-        for w in spine.as_chunks::<2>().0 {
-            let x = w[0] as u64 | (w[1] as u64) << 32;
-            h = (h.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
+        #[inline]
+        fn mix(h: u64, lo: u32, hi: u32) -> u64 {
+            let lane = u64::from(lo) | u64::from(hi) << 32;
+            (h.rotate_left(5) ^ lane).wrapping_mul(0x517c_c1b7_2722_0a95)
         }
-        for x in xs {
-            let x = x.0 as u64 | (NONE as u64) << 32;
-            h = (h.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
+        let (sp_pairs, sp_rest) = spine.as_chunks::<2>();
+        for &[lo, hi] in sp_pairs {
+            h = mix(h, lo, hi);
+        }
+        let mut xs = xs;
+        if let [lo] = sp_rest {
+            if let Some((hi, rest)) = xs.split_first() {
+                h = mix(h, *lo, hi.0);
+                xs = rest;
+            } else {
+                h = mix(h, *lo, NONE);
+            }
+        }
+        let (xs_pairs, xs_rest) = xs.as_chunks::<2>();
+        for &[lo, hi] in xs_pairs {
+            h = mix(h, lo.0, hi.0);
+        }
+        if let [lo] = xs_rest {
+            h = mix(h, lo.0, NONE);
         }
         h32(h)
     }
@@ -830,10 +904,7 @@ impl Arena {
             return sp;
         }
         let mut buf = self.sp_words(sp);
-        for x in xs {
-            buf.push(x.0);
-            buf.push(NONE);
-        }
+        buf.extend(xs.iter().map(|x| x.0));
         let r = self.intern_sp(&buf);
         self.sp_buf = buf;
         r
@@ -845,7 +916,7 @@ impl Arena {
         buf.clear();
         let k = sp.0 as usize + 1;
         let n = self.sp_len(sp) as usize;
-        buf.extend_from_slice(at_slice(&self.sps, k, k + 2 * n));
+        buf.extend_from_slice(at_slice(&self.sps, k, k + n));
         buf
     }
 
@@ -862,27 +933,27 @@ impl Arena {
         let Self { sps, sptable, .. } = self;
         if let Some(id) = sptable.find(h, |id| {
             let i = id as usize;
-            *at(sps, i) & LEN_BITS == (w.len() / 2) as u32
+            *at(sps, i) & LEN_BITS == w.len() as u32
                 && w.iter().enumerate().all(|(j, &x)| *at(sps, i + 1 + j) == x)
         }) {
             return Sp(id);
         }
         let id = sps.len() as u32;
-        if sps.len() + w.len() >= SP_WORDS {
+        if self.logical_sp_words + 2 * w.len() >= SP_WORDS {
             out_of_room();
         }
+        self.logical_sp_words += 1 + 2 * w.len();
         let mut fv = false;
         let mut pj = false;
-        for p in w.as_chunks::<2>().0 {
-            if p[1] == NONE {
-                fv = fv || self.has_fvar(V(p[0]));
+        for &word in w {
+            if word & PROJ_WORD == 0 {
+                fv = fv || self.has_fvar(V(word));
             } else {
                 pj = true;
             }
         }
-        let hdr = (w.len() / 2) as u32
-            | if fv { HAS_FVAR_BIT } else { 0 }
-            | if pj { HAS_PROJ_BIT } else { 0 };
+        let hdr =
+            w.len() as u32 | if fv { HAS_FVAR_BIT } else { 0 } | if pj { HAS_PROJ_BIT } else { 0 };
         self.sps.push(hdr);
         self.sps.extend_from_slice(w);
         self.sptable.insert_new(h, id);
@@ -905,12 +976,7 @@ impl Arena {
         }
         let k = sp.0 as usize + 1;
         let n = self.sp_len(sp) as usize;
-        out.extend(
-            at_slice(&self.sps, k, k + 2 * n)
-                .iter()
-                .step_by(2)
-                .map(|&a| V(a)),
-        );
+        out.extend(at_slice(&self.sps, k, k + n).iter().map(|&word| V(word)));
         true
     }
 
@@ -1116,6 +1182,31 @@ mod tests {
         assert!(a.nutable.capacity() > capacity);
         for (k, v) in values.into_iter().enumerate() {
             assert_eq!(a.mk(Val::FVar(k as u32, complete)), v);
+        }
+    }
+
+    #[test]
+    fn neutral_key_matches_each_prefix_and_append_split() {
+        for collide in [false, true] {
+            COLLIDE.set(collide);
+            let mut a = Arena::new();
+            let projection = Elim::Proj(NameId(u32::MAX), u32::MAX);
+            let base = a.snoc(Sp::NIL, projection);
+            assert_eq!(a.sp_elim(base, 0), projection);
+            let args = (0..9).map(|i| a.sort(LevelId(i))).collect::<Vec<_>>();
+            for base in [Sp::NIL, base] {
+                for len in 0..=args.len() {
+                    let args = &args[..len];
+                    let complete = a.snoc_args(base, args);
+                    let expected = a.mk(Val::FVar(12, complete));
+                    for split in 0..=len {
+                        let prefix = a.snoc_args(base, &args[..split]);
+                        let actual = a.neutral(Val::FVar(12, prefix), &args[split..]);
+                        assert_eq!(actual, expected, "length {len}, split {split}");
+                    }
+                }
+            }
+            COLLIDE.set(false);
         }
     }
 }
