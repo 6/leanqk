@@ -301,6 +301,14 @@ pub struct Arena {
     conses: Box<[[u32; 3]; CONSES]>,
     /// Neutrals applied to one or two arguments (`neutral_of`).
     apps: Box<[[u32; 4]; APPS]>,
+    /// Applications of a constant to one or two arguments by the head's
+    /// term (`neutral_const_expr`): (term, arguments, result).
+    const_apps: Box<[[u32; 4]; CONST_APPS]>,
+    /// Constants applied directly, by name and levels, so that each counts
+    /// once in `len` as the value of the constant the general path makes.
+    const_seen: Box<[[u32; 2]; CONST_SEEN]>,
+    /// Constants counted so (no value is made for them).
+    const_counted: usize,
     /// Neutrals projected (`neutral_proj`): (neutral, structure, field,
     /// result).
     projs: Box<[[u32; 4]; PROJS]>,
@@ -328,6 +336,10 @@ const PROJS: usize = 1 << 12;
 
 /// Slots of `Arena::apps`.
 const APPS: usize = 1 << 14;
+
+/// Slots of `Arena::const_apps` and of `Arena::const_seen`.
+const CONST_APPS: usize = 1 << 12;
+const CONST_SEEN: usize = 1 << 12;
 
 /// Slots of `Arena::fars`.
 const FARS: usize = 1 << 12;
@@ -376,6 +388,9 @@ impl Arena {
             nutable: Table32::new(),
             conses: table(NONE),
             apps: table(NONE),
+            const_apps: table(NONE),
+            const_seen: table(NONE),
+            const_counted: 0,
             projs: table(NONE),
             fars: (0..FARS)
                 .map(|_| std::cell::Cell::new([NONE; 3]))
@@ -385,8 +400,10 @@ impl Arena {
         }
     }
 
+    /// Values made, and constants applied directly with none made (see
+    /// `const_seen`): what a checker counts to know when to start afresh.
     pub fn len(&self) -> usize {
-        self.vals.len()
+        self.vals.len() + self.const_counted
     }
 
     /// Empty the arena, keeping its storage: refilling it then costs no
@@ -421,6 +438,9 @@ impl Arena {
         self.nutable.clear();
         self.conses.as_flattened_mut().fill(NONE);
         self.apps.as_flattened_mut().fill(NONE);
+        self.const_apps.as_flattened_mut().fill(NONE);
+        self.const_seen.as_flattened_mut().fill(NONE);
+        self.const_counted = 0;
         self.projs.as_flattened_mut().fill(NONE);
         for f in self.fars.iter() {
             f.set([NONE; 3]);
@@ -445,6 +465,8 @@ impl Arena {
             + self.thunks.len() * 16
             + self.nutable.capacity() * size_of::<u32>()
             + self.conses.len() * 12
+            + self.const_apps.len() * 16
+            + self.const_seen.len() * 8
             + self.envtable.capacity() * size_of::<u32>()
     }
 
@@ -713,6 +735,34 @@ impl Arena {
         }
         let r = self.neutral(head, xs);
         self.apps[i] = [f.0, x0, x1, r.0];
+        r
+    }
+
+    /// Apply a constant head to a nonempty argument slice. With one or
+    /// two arguments the caller supplies an identity universe substitution,
+    /// so the head expression determines the name and levels: its id keys
+    /// `const_apps`.
+    pub fn neutral_const_expr(&mut self, f: ExprId, n: NameId, lv: LevelList, xs: &[V]) -> V {
+        let head = Val::Const(n, lv, Sp::NIL);
+        let j =
+            (crate::hash::hash_front(n.0 as u64, lv.0 as u64) >> 52) as usize & (CONST_SEEN - 1);
+        if self.const_seen[j] != [n.0, lv.0] {
+            self.const_seen[j] = [n.0, lv.0];
+            self.const_counted += 1;
+        }
+        if xs.len() > 2 {
+            return self.neutral_in::<true>(head, 1, 0, xs, None);
+        }
+        let x0 = xs[0].0;
+        let x1 = xs.get(1).map_or(NONE, |x| x.0);
+        let i = (crate::hash::hash_front(f.0 as u64 | (x1 as u64) << 32, x0 as u64) >> 52) as usize
+            & (CONST_APPS - 1);
+        let s = self.const_apps[i];
+        if s[0] == f.0 && s[1] == x0 && s[2] == x1 {
+            return V(s[3]);
+        }
+        let r = self.neutral_in::<true>(head, 1, 0, xs, None);
+        self.const_apps[i] = [f.0, x0, x1, r.0];
         r
     }
 
