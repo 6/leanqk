@@ -19,8 +19,9 @@ name: A/B benchmark
 #   are the same commit. The Mathlib benchmark builds for
 #   its own machine (target-cpu=native); here one binary runs on every
 #   machine, so x86_64 builds for `x86_cpu` (x86-64-v3 by default, which
-#   both the Intel and the AMD runners have) and aarch64 for the default
-#   target.
+#   both the Intel and the AMD runners have) and aarch64 for `arm_cpu`
+#   (the default target unless asked; neoverse-n2 is what the aarch64
+#   runners have).
 # - measure-x86 and measure-arm: `jobs` machines per architecture (a
 #   matrix; GitHub queues what exceeds the account's concurrent jobs). Each
 #   records its CPU model and which of `perf stat -e instructions:u` and
@@ -99,6 +100,11 @@ on:
         type: choice
         options: [x86-64-v3, x86-64-v4, x86-64-v2]
         default: x86-64-v3
+      arm_cpu:
+        description: rustc target-cpu for the aarch64 builds (one binary for every machine; default is rustc's own target)
+        type: choice
+        options: [default, neoverse-n2]
+        default: default
 
 run-name: "A/B: ${{ inputs.base }} vs ${{ inputs.candidate }}${{ inputs.candidate_bolt && ' +BOLT' || '' }} ${{ inputs.candidate_flags }} (${{ inputs.slice }}, ${{ inputs.arch }}, ${{ inputs.jobs }} jobs)"
 
@@ -291,6 +297,7 @@ jobs:
           side: ${{ matrix.side }}
           both_sides: ${{ needs.setup.outputs.same }}
           bolt: ${{ matrix.side == 'B' && inputs.candidate_bolt }}
+          target_cpu: ${{ inputs.arm_cpu != 'default' && inputs.arm_cpu || '' }}
 
   measure-x86:
     needs: [setup, export, build-x86]
@@ -363,6 +370,7 @@ jobs:
           JOBS: ${{ inputs.jobs }}
           ARCH: ${{ inputs.arch }}
           X86_CPU: ${{ inputs.x86_cpu }}
+          ARM_CPU: ${{ inputs.arm_cpu }}
           BOLT: ${{ inputs.candidate_bolt }}
           MEASURE: "x86: ${{ needs.measure-x86.result }}, arm: ${{ needs.measure-arm.result }}"
         run: |
@@ -386,7 +394,7 @@ jobs:
             --arg candidate_flags "$FLAGS" --arg slices "$SLICES" --arg threads "$THREADS" \
             --arg reps "$REPS" --arg jobs_requested "$jr" \
             --arg time_to_result "$((secs / 60)) min $((secs % 60)) s" \
-            --arg build_note "cargo xtask pgo --repo$([ "$BOLT" = true ] && echo ', candidate with --bolt'); x86_64 target-cpu $X86_CPU, aarch64 default; measuring jobs: $MEASURE; at most $peak measuring jobs ran at once" \
+            --arg build_note "cargo xtask pgo --repo$([ "$BOLT" = true ] && echo ', candidate with --bolt'); x86_64 target-cpu $X86_CPU, aarch64 $([ "$ARM_CPU" = default ] && echo default || echo "target-cpu $ARM_CPU"); measuring jobs: $MEASURE; at most $peak measuring jobs ran at once" \
             --argjson binaries "$bins" '$ARGS.named' > out/build.json
           cargo xtask ab-summary out/build.json out/summary.md out/results.json rows/*.tsv > /dev/null
           awk 'FNR > 1 || NR == 1' rows/*.tsv > out/rows.tsv
