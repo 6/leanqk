@@ -677,6 +677,30 @@ impl Arena {
         r
     }
 
+    /// Apply a constant head to a nonempty argument slice. With one or
+    /// two arguments the caller supplies an identity universe substitution,
+    /// so the head expression determines the name and levels. Use its id
+    /// in the short application table and tag the last argument word.
+    pub fn neutral_const_expr(&mut self, f: ExprId, n: NameId, lv: LevelList, xs: &[V]) -> V {
+        let head = Val::Const(n, lv, Sp::NIL);
+        if xs.len() > 2 {
+            return self.neutral_in(head, 1, 0, xs, None);
+        }
+        const EXPR_KEY: u32 = 1 << 31;
+        const ONE_ARG: u32 = EXPR_KEY | LIMIT;
+        let x0 = xs[0].0;
+        let x1 = xs.get(1).map_or(ONE_ARG, |x| x.0 | EXPR_KEY);
+        let i = (crate::hash::hash_front(f.0 as u64 | (x1 as u64) << 32, x0 as u64) >> 50) as usize
+            & (APPS - 1);
+        let s = self.apps[i];
+        if s[0] == f.0 && s[1] == x0 && s[2] == x1 {
+            return V(s[3]);
+        }
+        let r = self.neutral_in(head, 1, 0, xs, None);
+        self.apps[i] = [f.0, x0, x1, r.0];
+        r
+    }
+
     /// The neutral `v` (of value `head`, a `Const` or `FVar`) projected
     /// to field `i` of `s`, by a direct-mapped front.
     pub fn neutral_proj(&mut self, v: V, head: Val, s: NameId, i: u32) -> V {

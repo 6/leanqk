@@ -1,7 +1,7 @@
 //! Evaluation of terms to values, application and projection.
 
 use crate::env::DeclKind;
-use crate::expr::{ExprId, ExprNode};
+use crate::expr::{ExprData, ExprId, ExprNode};
 use crate::level::LevelList;
 use crate::name::NameId;
 
@@ -40,18 +40,26 @@ impl Nbe<'_> {
     /// form (never a thunk): β-redexes at the head are reduced, constants
     /// are not unfolded.
     pub fn eval(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
-        let d = self.st.data(e);
-        let ls = if d.has_level_param() { ls } else { Ls::ID };
-        // A small frame here: each kind of term is evaluated out of line.
-        match self.st.node(e) {
+        let ls = if ls != Ls::ID && self.st.data(e).has_level_param() {
+            ls
+        } else {
+            Ls::ID
+        };
+        self.eval_node(e, self.st.node(e), env, ls)
+    }
+
+    #[inline]
+    pub(super) fn eval_node(&mut self, e: ExprId, node: ExprNode, env: Env, ls: Ls) -> V {
+        // The caller has normalized the universe substitution, if any.
+        match node {
             ExprNode::BVar(i) => match self.a.lookup(env, i) {
                 Some(v) => self.force(v),
                 None => self.bottom(Sp::NIL),
             },
-            ExprNode::App(..) => self.eval_app(e, env, ls),
+            ExprNode::App(f, a) => self.eval_app(f, a, env, ls),
             ExprNode::Lam(..) | ExprNode::Pi(..) => self.eval_binder(e, env, ls),
             ExprNode::Const(n, lv) => self.eval_const(n, lv, ls),
-            _ => self.eval_other(e, env, ls),
+            _ => self.eval_other(node, env, ls),
         }
     }
 
@@ -67,10 +75,10 @@ impl Nbe<'_> {
     }
 
     #[inline(never)]
-    fn eval_app(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+    fn eval_app(&mut self, mut f: ExprId, a: ExprId, env: Env, ls: Ls) -> V {
         self.ticks += 1;
         let base = self.terms.len();
-        let mut f = e;
+        self.terms.push(a);
         let head = loop {
             match self.st.node(f) {
                 ExprNode::App(g, a) => {
@@ -80,6 +88,22 @@ impl Nbe<'_> {
                 n => break n,
             }
         };
+        let argc = self.terms.len() - base;
+        if let ExprNode::Const(n, lv) = head {
+            let head_ls = if ls != Ls::ID && self.st.data(f).has_level_param() {
+                ls
+            } else {
+                Ls::ID
+            };
+            if argc > 2 || head_ls == Ls::ID {
+                let lv = if head_ls == Ls::ID {
+                    lv
+                } else {
+                    self.inst_param_list(lv, head_ls)
+                };
+                return self.eval_const_app(f, n, lv, base, env, ls);
+            }
+        }
         // The head as `eval` would, from its node read already.
         let h = match head {
             ExprNode::BVar(i) => match self.a.lookup(env, i) {
@@ -87,7 +111,7 @@ impl Nbe<'_> {
                 None => self.bottom(Sp::NIL),
             },
             ExprNode::Const(n, lv) => {
-                let ls = if self.st.data(f).has_level_param() {
+                let ls = if ls != Ls::ID && self.st.data(f).has_level_param() {
                     ls
                 } else {
                     Ls::ID
@@ -106,6 +130,64 @@ impl Nbe<'_> {
         let r = self.apply_n(h, vbase);
         self.vargs.truncate(vbase);
         r
+    }
+
+    /// A syntactic constant head is already a neutral. Build its applied
+    /// value directly; evaluate the arguments in the same order as eval_app.
+    #[inline]
+    fn eval_const_app(
+        &mut self,
+        f: ExprId,
+        n: NameId,
+        lv: LevelList,
+        base: usize,
+        env: Env,
+        ls: Ls,
+    ) -> V {
+        let argc = self.terms.len() - base;
+        // The constant's value, as the general path makes it: values are
+        // numbered as they are made, and what is found later depends on it.
+        let _ = self.a.cnst(n, lv);
+        if argc <= 8 {
+            let mut args = [V(0); 8];
+            let args = &mut args[..argc];
+            for (j, out) in args.iter_mut().enumerate() {
+                let a = *super::val::at(&self.terms, base + argc - j - 1);
+                *out = self.thunk(a, env, ls);
+            }
+            self.terms.truncate(base);
+            let r = self.a.neutral_const_expr(f, n, lv, args);
+            self.debug_check_const_app(n, lv, args, r);
+            return r;
+        }
+
+        let vbase = self.vargs.len();
+        for k in (base..self.terms.len()).rev() {
+            let a = *super::val::at(&self.terms, k);
+            let av = self.thunk(a, env, ls);
+            self.vargs.push(av);
+        }
+        self.terms.truncate(base);
+        let result = self.a.neutral_const_expr(f, n, lv, &self.vargs[vbase..]);
+        if cfg!(debug_assertions) {
+            let args = self.vargs[vbase..].to_vec();
+            self.debug_check_const_app(n, lv, &args, result);
+        }
+        self.vargs.truncate(vbase);
+        result
+    }
+
+    /// In debug builds: `r` is what the general path (`eval_const`, then
+    /// `apply_n`) gives for `n.{lv}` applied to `args`.
+    fn debug_check_const_app(&mut self, n: NameId, lv: LevelList, args: &[V], r: V) {
+        if cfg!(debug_assertions) {
+            let h = self.a.cnst(n, lv);
+            let vbase = self.vargs.len();
+            self.vargs.extend_from_slice(args);
+            let g = self.apply_n(h, vbase);
+            self.vargs.truncate(vbase);
+            debug_assert_eq!(r, g, "direct constant application differs from apply_n");
+        }
     }
 
     #[inline(never)]
@@ -133,8 +215,8 @@ impl Nbe<'_> {
     }
 
     #[inline(never)]
-    fn eval_other(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
-        match self.st.node(e) {
+    fn eval_other(&mut self, node: ExprNode, env: Env, ls: Ls) -> V {
+        match node {
             ExprNode::Sort(l) => {
                 let l = if ls == Ls::ID {
                     l
@@ -166,7 +248,8 @@ impl Nbe<'_> {
 
     /// `e` in `env`, unevaluated unless that is as cheap as a thunk.
     pub fn thunk(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
-        if let ExprNode::BVar(i) = self.st.node(e)
+        let node = self.st.node(e);
+        if let ExprNode::BVar(i) = node
             && let Some(v) = self.a.lookup(env, i)
         {
             return v;
@@ -174,24 +257,23 @@ impl Nbe<'_> {
         if THUNK_EAGER_FRONT
             && EAGER_MEMO
             && matches!(
-                self.st.node(e),
+                node,
                 ExprNode::App(..) | ExprNode::Let(..) | ExprNode::Proj(..)
             )
             && self.eager_depth < EAGER_DEPTH
         {
-            return self.eager(e, env, ls);
+            return self.eager(e, node, env, ls);
         }
-        self.thunk_other(e, env, ls)
+        self.thunk_other(e, node, env, ls)
     }
 
-    /// `thunk` but of a variable found: out of line, so that a variable
-    /// costs no frame for the rest.
+    /// Slow thunk creation. The caller has already loaded the node.
     #[inline(never)]
-    fn thunk_other(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
-        match self.st.node(e) {
+    fn thunk_other(&mut self, e: ExprId, node: ExprNode, env: Env, ls: Ls) -> V {
+        match node {
             ExprNode::BVar(_) => self.bottom(Sp::NIL),
             ExprNode::Const(n, lv) => {
-                let ls = if self.st.data(e).has_level_param() {
+                let ls = if ls != Ls::ID && self.st.data(e).has_level_param() {
                     ls
                 } else {
                     Ls::ID
@@ -199,7 +281,7 @@ impl Nbe<'_> {
                 self.eval_const(n, lv, ls)
             }
             ExprNode::Lam(..) | ExprNode::Pi(..) => {
-                let ls = if self.st.data(e).has_level_param() {
+                let ls = if ls != Ls::ID && self.st.data(e).has_level_param() {
                     ls
                 } else {
                     Ls::ID
@@ -214,7 +296,7 @@ impl Nbe<'_> {
             // Evaluated now (see `EAGER_ALL`); a first-order application
             // evaluates to a neutral without reducing anything, so that the
             // same term reached in different environments is the same value.
-            _ if EAGER_MEMO && self.eager_depth < EAGER_DEPTH => self.eager(e, env, ls),
+            _ if EAGER_MEMO && self.eager_depth < EAGER_DEPTH => self.eager(e, node, env, ls),
             _ => {
                 let t = self.thunk_value(e, env, ls);
                 let f = self.a.r(t).forced;
@@ -222,9 +304,7 @@ impl Nbe<'_> {
                     return V(f);
                 }
                 if self.eager_depth < EAGER_DEPTH
-                    && (EAGER_ALL
-                        || matches!(self.st.node(e), ExprNode::App(..))
-                            && self.neutral_head(e, env))
+                    && (EAGER_ALL || matches!(node, ExprNode::App(..)) && self.neutral_head(e, env))
                 {
                     // Memoized through the thunk: terms are DAGs. Only so
                     // deep, so that a long first-order term rebuilt in many
@@ -243,14 +323,14 @@ impl Nbe<'_> {
     /// the entries of `env` that `e` reads (no thunk is made, and no
     /// environment is cut).
     #[inline]
-    fn eager(&mut self, e: ExprId, env: Env, ls: Ls) -> V {
+    fn eager(&mut self, e: ExprId, node: ExprNode, env: Env, ls: Ls) -> V {
         let sh = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
         let s = self.eager_slots[si];
         if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
             return V(s[3]);
         }
-        self.eager_miss(e, env, ls, si)
+        self.eager_miss(e, node, env, ls, si)
     }
 
     /// `eval`, remembered by the exact term, environment and levels in
@@ -270,7 +350,7 @@ impl Nbe<'_> {
 
     /// `eager` past its front (slot `si`): out of line, as it evaluates.
     #[inline(never)]
-    fn eager_miss(&mut self, e: ExprId, env: Env, ls: Ls, si: usize) -> V {
+    fn eager_miss(&mut self, e: ExprId, node: ExprNode, env: Env, ls: Ls, si: usize) -> V {
         let d = self.st.data(e);
         let n = d.loose_bvar_range().min(self.a.env_len(env));
         if n > EAGER_MEMO_RANGE {
@@ -297,7 +377,7 @@ impl Nbe<'_> {
                 V(s[3])
             } else {
                 self.eager_depth += 1;
-                let v = self.eval(e, env, ls);
+                let v = self.eval_eager_node(e, node, d, env, ls);
                 self.eager_depth -= 1;
                 self.eager_direct[di] = [ke, kls, kt, v.0];
                 v
@@ -316,13 +396,19 @@ impl Nbe<'_> {
             V(known)
         } else {
             self.eager_depth += 1;
-            let v = self.eval(e, env, ls);
+            let v = self.eval_eager_node(e, node, d, env, ls);
             self.eager_depth -= 1;
             self.eager_memo.set(i, 0, v.0);
             v
         };
         self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
         v
+    }
+
+    #[inline]
+    fn eval_eager_node(&mut self, e: ExprId, node: ExprNode, d: ExprData, env: Env, ls: Ls) -> V {
+        let ls = if d.has_level_param() { ls } else { Ls::ID };
+        self.eval_node(e, node, env, ls)
     }
 
     /// The thunk of `e` in `env` (trimmed to what `e` may use) under `ls`.
