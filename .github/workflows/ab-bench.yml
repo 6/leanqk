@@ -21,7 +21,9 @@ name: A/B benchmark
 #   machine, so x86_64 builds for `x86_cpu` (x86-64-v3 by default, which
 #   both the Intel and the AMD runners have) and aarch64 for `arm_cpu`
 #   (the default target unless asked; neoverse-n2 is what the aarch64
-#   runners have).
+#   runners have). `candidate_x86_cpu` and `candidate_arm_cpu`, when set,
+#   build B for another target-cpu than A, so that one commit can be
+#   measured against itself built two ways.
 # - measure-x86 and measure-arm: `jobs` machines per architecture (a
 #   matrix; GitHub queues what exceeds the account's concurrent jobs). Each
 #   records its CPU model and which of `perf stat -e instructions:u` and
@@ -105,6 +107,12 @@ on:
         type: choice
         options: [default, neoverse-n2]
         default: default
+      candidate_x86_cpu:
+        description: rustc target-cpu for B's x86_64 build only (e.g. x86-64, x86-64-v2); empty for x86_cpu
+        default: ""
+      candidate_arm_cpu:
+        description: rustc target-cpu for B's aarch64 build only (default, or e.g. neoverse-n2); empty for arm_cpu
+        default: ""
 
 run-name: "A/B: ${{ inputs.base }} vs ${{ inputs.candidate }}${{ inputs.candidate_bolt && ' +BOLT' || '' }} ${{ inputs.candidate_flags }} (${{ inputs.slice }}, ${{ inputs.arch }}, ${{ inputs.jobs }} jobs)"
 
@@ -133,6 +141,9 @@ jobs:
     outputs:
       # Whether one build serves both sides (same commit, same build).
       same: ${{ steps.s.outputs.same }}
+      # B's target-cpu per architecture (never empty; aarch64 may be default).
+      candidate_x86_cpu: ${{ steps.s.outputs.candidate_x86_cpu }}
+      candidate_arm_cpu: ${{ steps.s.outputs.candidate_arm_cpu }}
       base_sha: ${{ steps.s.outputs.base_sha }}
       candidate_sha: ${{ steps.s.outputs.candidate_sha }}
       jobs: ${{ steps.s.outputs.jobs }}
@@ -154,6 +165,10 @@ jobs:
           JOBS: ${{ inputs.jobs }}
           THREADS: ${{ inputs.threads }}
           REPS: ${{ inputs.reps }}
+          X86_CPU: ${{ inputs.x86_cpu }}
+          ARM_CPU: ${{ inputs.arm_cpu }}
+          CAND_X86_CPU: ${{ inputs.candidate_x86_cpu }}
+          CAND_ARM_CPU: ${{ inputs.candidate_arm_cpu }}
         run: |
           resolve() {
             git rev-parse --verify -q "origin/$1^{commit}" || git rev-parse --verify -q "$1^{commit}" ||
@@ -174,10 +189,17 @@ jobs:
             esac
           done
           [ -n "$slices" ] || { echo "::error::no slice"; exit 1; }
+          cx86=$(echo $CAND_X86_CPU) carm=$(echo $CAND_ARM_CPU)
+          cx86=${cx86:-$X86_CPU} carm=${carm:-$ARM_CPU}
+          for c in "$cx86" "$carm"; do
+            [[ $c =~ ^[a-z0-9][a-z0-9._-]*$ ]] || { echo "::error::bad target-cpu $c"; exit 1; }
+          done
           same=false
-          [ "$base" = "$cand" ] && [ "$BOLT" != true ] && same=true
+          [ "$base" = "$cand" ] && [ "$BOLT" != true ] && [ "$cx86" = "$X86_CPU" ] && [ "$carm" = "$ARM_CPU" ] && same=true
           {
             echo "same=$same"
+            echo "candidate_x86_cpu=$cx86"
+            echo "candidate_arm_cpu=$carm"
             echo "base_sha=$base"
             echo "candidate_sha=$cand"
             echo "jobs=$(seq "$JOBS" | jq -cs .)"
@@ -279,7 +301,7 @@ jobs:
           side: ${{ matrix.side }}
           both_sides: ${{ needs.setup.outputs.same }}
           bolt: ${{ matrix.side == 'B' && inputs.candidate_bolt }}
-          target_cpu: ${{ inputs.x86_cpu }}
+          target_cpu: ${{ matrix.side == 'B' && needs.setup.outputs.candidate_x86_cpu || inputs.x86_cpu }}
 
   build-arm:
     needs: setup
@@ -297,7 +319,7 @@ jobs:
           side: ${{ matrix.side }}
           both_sides: ${{ needs.setup.outputs.same }}
           bolt: ${{ matrix.side == 'B' && inputs.candidate_bolt }}
-          target_cpu: ${{ inputs.arm_cpu != 'default' && inputs.arm_cpu || '' }}
+          target_cpu: ${{ matrix.side == 'B' && needs.setup.outputs.candidate_arm_cpu || inputs.arm_cpu }}
 
   measure-x86:
     needs: [setup, export, build-x86]
@@ -371,6 +393,8 @@ jobs:
           ARCH: ${{ inputs.arch }}
           X86_CPU: ${{ inputs.x86_cpu }}
           ARM_CPU: ${{ inputs.arm_cpu }}
+          CAND_X86_CPU: ${{ needs.setup.outputs.candidate_x86_cpu }}
+          CAND_ARM_CPU: ${{ needs.setup.outputs.candidate_arm_cpu }}
           BOLT: ${{ inputs.candidate_bolt }}
           MEASURE: "x86: ${{ needs.measure-x86.result }}, arm: ${{ needs.measure-arm.result }}"
         run: |
@@ -389,12 +413,16 @@ jobs:
             printf '{"key":"%s","value":"%s"}\n' "$(basename "$(dirname "$f")")" "$(sha256sum "$f" | cut -d' ' -f1)"
           done | jq -s from_entries)
           case $ARCH in x86) jr=$JOBS ;; arm) jr=$JOBS ;; *) jr="$JOBS per architecture" ;; esac
+          cpu() { [ "$1" = default ] && echo default || echo "target-cpu $1"; }
+          x86note="x86_64 $(cpu "$X86_CPU")" armnote="aarch64 $(cpu "$ARM_CPU")"
+          [ "$CAND_X86_CPU" != "$X86_CPU" ] && x86note="$x86note (B: $(cpu "$CAND_X86_CPU"))"
+          [ "$CAND_ARM_CPU" != "$ARM_CPU" ] && armnote="$armnote (B: $(cpu "$CAND_ARM_CPU"))"
           jq -n --arg base_ref "$BASE" --arg candidate_ref "$CANDIDATE" \
             --arg base_sha "$BASE_SHA" --arg candidate_sha "$CANDIDATE_SHA" \
             --arg candidate_flags "$FLAGS" --arg slices "$SLICES" --arg threads "$THREADS" \
             --arg reps "$REPS" --arg jobs_requested "$jr" \
             --arg time_to_result "$((secs / 60)) min $((secs % 60)) s" \
-            --arg build_note "cargo xtask pgo --repo$([ "$BOLT" = true ] && echo ', candidate with --bolt'); x86_64 target-cpu $X86_CPU, aarch64 $([ "$ARM_CPU" = default ] && echo default || echo "target-cpu $ARM_CPU"); measuring jobs: $MEASURE; at most $peak measuring jobs ran at once" \
+            --arg build_note "cargo xtask pgo --repo$([ "$BOLT" = true ] && echo ', candidate with --bolt'); $x86note, $armnote; measuring jobs: $MEASURE; at most $peak measuring jobs ran at once" \
             --argjson binaries "$bins" '$ARGS.named' > out/build.json
           cargo xtask ab-summary out/build.json out/summary.md out/results.json rows/*.tsv > /dev/null
           awk 'FNR > 1 || NR == 1' rows/*.tsv > out/rows.tsv

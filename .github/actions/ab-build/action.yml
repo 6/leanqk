@@ -16,7 +16,7 @@ inputs:
     description: Also upload the base binary as the candidate when both commits match
     default: "false"
   target_cpu:
-    description: rustc's -C target-cpu (empty for the default)
+    description: rustc's -C target-cpu (empty or default for the default)
     default: ""
   bolt:
     description: Also lay out the code with BOLT (cargo xtask pgo --bolt)
@@ -67,6 +67,7 @@ runs:
         BOLT: ${{ inputs.bolt }}
       run: |
         bolt=()
+        [ "$CPU" = default ] && CPU=
         [ "$BOLT" = true ] && bolt=(--bolt --bolt-dir /usr/lib/llvm-21/bin)
         cargo xtask pgo --repo "${bolt[@]}" --rustflags "${CPU:+-C target-cpu=$CPU}"
         mkdir -p "$RUNNER_TEMP/bin"
