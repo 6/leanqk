@@ -23,6 +23,7 @@ pub trait Node: Copy + Eq {
     }
 }
 
+#[derive(Clone)]
 pub struct Interner<T> {
     nodes: Vec<T>,
     table: HashTable<u32>,
@@ -376,6 +377,23 @@ impl<T: Node> Big<T> {
 
     pub fn nodes(&self) -> &Slab<T> {
         &self.nodes
+    }
+
+    /// Whether the nodes are in the full reservation of a slab, which
+    /// never moves (see [`Big::view`]).
+    pub(crate) fn is_fixed(&self) -> bool {
+        self.nodes.is_fixed()
+    }
+
+    /// The first `len` nodes, looked up in `table`, for other threads to
+    /// read while this arena goes on growing (see [`Slab::alias`]);
+    /// `table` must index only nodes among them (or none).
+    pub(crate) fn view(&mut self, len: usize, table: IdTable) -> Big<T> {
+        Big {
+            nodes: self.nodes.alias(len),
+            table,
+            what: self.what,
+        }
     }
 
     /// The id of `node`, if present.

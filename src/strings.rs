@@ -106,6 +106,17 @@ impl StrPool {
         &self.bytes[a..b]
     }
 
+    /// A copy of the strings (late ones are not copied, and the copy has
+    /// none).
+    pub fn copy(&self) -> StrPool {
+        StrPool {
+            bytes: self.bytes.clone(),
+            ends: self.ends.clone(),
+            table: self.table.clone(),
+            late: None,
+        }
+    }
+
     /// Empty, keeping the allocations (not for a pool with late strings).
     pub fn clear(&mut self) {
         self.bytes.clear();

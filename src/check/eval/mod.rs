@@ -112,6 +112,17 @@ static NANOS: AtomicU64 = AtomicU64::new(0);
 /// pairs.
 static FAST: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
 
+thread_local! {
+    static ENTRIES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this thread has asked the evaluator for anything: what
+/// it may answer depends on the evaluator's part of `Ext` (see
+/// `Ext::eval_only`), what a check that never asks does not.
+pub(crate) fn entries() -> u64 {
+    ENTRIES.get()
+}
+
 /// Giving up on a stuck term; `NITROLEAN_EVAL_DEBUG=1` says where.
 #[cold]
 fn stuck(at: u32) -> Bail {
@@ -315,6 +326,7 @@ struct Machine<'a, 'e> {
 /// The weak head normal form of the closed term `e`, if the machine
 /// computes one. `None`: the caller reduces `e` itself.
 pub fn whnf(tc: &mut Tc<'_>, e: ExprId) -> Option<ExprId> {
+    ENTRIES.set(ENTRIES.get() + 1);
     let mut s = tc.eval.take()?;
     let t0 = Instant::now();
     s.depth = 0;

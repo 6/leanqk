@@ -252,6 +252,33 @@ pub(crate) trait LazyValues: Send + Sync {
     fn heap_bytes(&self) -> usize;
 }
 
+/// Lazy values two environments share (a view and its reader's: see
+/// `reader::State::last_view`).
+pub(crate) struct SharedLazy(pub std::sync::Arc<dyn LazyValues>);
+
+impl LazyValues for SharedLazy {
+    fn decode(&self, env: &Env, k: u32, sink: &mut dyn TermSink) -> Result<ExprId, String> {
+        self.0.decode(env, k, sink)
+    }
+
+    fn decode_store(
+        &self,
+        env: &Env,
+        k: u32,
+        sink: &mut crate::check::store::Store<'_>,
+    ) -> Result<ExprId, String> {
+        self.0.decode_store(env, k, sink)
+    }
+
+    fn count(&self) -> usize {
+        self.0.count()
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.0.heap_bytes()
+    }
+}
+
 /// Where a declaration's value is (see [`Env::value_into`]).
 enum Lazy<'a> {
     /// Read at load time (or none).
@@ -271,7 +298,7 @@ enum Lazy<'a> {
 /// not fit go to a side map. About 8.5 MB for Mathlib's 4.3M names, against
 /// 17 MB flat, and a lookup is still one load of the entry (the bases are a
 /// few KB).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct NameIndex {
     v: Vec<u32>,
     small: Vec<u16>,
@@ -493,6 +520,40 @@ impl Env {
 
     /// Packs the name index once no more declarations are added (lookups
     /// answer as before; a later addition unpacks it).
+    /// Whether the arenas are in memory that never moves, so that
+    /// [`Env::view`] works.
+    pub(crate) fn can_view(&self) -> bool {
+        self.names.is_fixed() && self.exprs.is_fixed()
+    }
+
+    /// The environment so far, for checkers on other threads while this
+    /// one goes on growing: its arenas are views of this one's (see
+    /// [`crate::slab::Slab::alias`]), the rest copies. Names are looked up
+    /// in `names` (an index of some of them), expressions in no index; the
+    /// values left unbuilt come from `lazy`. The checkers' stores take ids
+    /// from `above` on (more than the arena will hold).
+    pub(crate) fn view(
+        &mut self,
+        names: crate::intern::IdTable,
+        lazy: Option<Box<dyn LazyValues>>,
+        above: usize,
+    ) -> Env {
+        Env {
+            meta: self.meta.clone(),
+            names: self.names.view(names),
+            levels: self.levels.clone(),
+            exprs: self.exprs.view(above),
+            decls: self.decls.clone(),
+            blocks: self.blocks.clone(),
+            name_pool: self.name_pool.clone(),
+            rule_pool: self.rule_pool.clone(),
+            by_name: self.by_name.clone(),
+            lazy,
+            mdata_errors: self.mdata_errors.clone(),
+            mdata_types: self.mdata_types.clone(),
+        }
+    }
+
     pub fn finish_loading(&mut self) {
         self.by_name.freeze();
     }

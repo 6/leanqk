@@ -130,6 +130,36 @@ impl Names {
         Some(n)
     }
 
+    /// Whether the names are in memory that never moves (see
+    /// [`Names::view`]).
+    pub(crate) fn is_fixed(&self) -> bool {
+        self.arena.is_fixed()
+    }
+
+    /// The names so far, looked up in `table` (an index of some of them),
+    /// with a copy of the strings, for other threads to read while this
+    /// arena goes on growing (see [`crate::slab::Slab::alias`]).
+    pub(crate) fn view(&mut self, table: crate::intern::IdTable) -> Names {
+        let len = self.arena.len();
+        Names {
+            arena: self.arena.view(len, table),
+            strings: self.strings.copy(),
+        }
+    }
+
+    /// A new index of these names (of a view, say), leaving this one's
+    /// as it is; `None` if two of them are equal.
+    pub(crate) fn new_index(&self) -> Option<crate::intern::IdTable> {
+        self.arena
+            .build_index_here(self.arena.len(), |_, _| true)
+            .ok()
+    }
+
+    /// Look names up in `table` (from [`Names::new_index`]).
+    pub(crate) fn set_index(&mut self, table: crate::intern::IdTable) {
+        self.arena.replace_index(table);
+    }
+
     /// Display adaptor, e.g. `Nat.succ` or `_private.Foo.0.bar`.
     pub fn display(&self, n: NameId) -> DisplayName<'_> {
         DisplayName { names: self, n }

@@ -139,7 +139,34 @@ pub struct Slab<T: Copy> {
     id: u32,
     /// Whether a pool lends blocks of this slab.
     pooled: AtomicBool,
+    /// Once the slab has views (see [`Slab::alias`]): the mapping, which
+    /// the last of them, or the slab, unmaps.
+    shared: Option<std::sync::Arc<Mapping>>,
+    /// A view's own elements, or for a slab with views the most any view
+    /// has: only [`Slab::store_shared`] writes below it.
+    frozen: usize,
+    /// Whether this is a view.
+    view: bool,
     _t: PhantomData<T>,
+}
+
+/// A mapping that views share: unmapped when the last one goes.
+struct Mapping {
+    base: NonNull<u8>,
+    bytes: usize,
+}
+
+// SAFETY: the mapping is only unmapped, by the last owner.
+unsafe impl Send for Mapping {}
+// SAFETY: as above.
+unsafe impl Sync for Mapping {}
+
+impl Drop for Mapping {
+    fn drop(&mut self) {
+        // SAFETY: a mapping of this module's, which no slab or view refers
+        // to any more.
+        unsafe { libc::munmap(self.base.as_ptr().cast(), self.bytes) };
+    }
 }
 
 // SAFETY: a slab owns its elements like a `Vec`; shared access only reads
@@ -158,6 +185,9 @@ impl<T: Copy> Default for Slab<T> {
             cap: AtomicUsize::new(0),
             id: 0,
             pooled: AtomicBool::new(false),
+            shared: None,
+            frozen: 0,
+            view: false,
             _t: PhantomData,
         }
     }
@@ -166,7 +196,7 @@ impl<T: Copy> Default for Slab<T> {
 impl<T: Copy> Drop for Slab<T> {
     fn drop(&mut self) {
         let cap = *self.cap.get_mut();
-        if cap > 0 {
+        if cap > 0 && self.shared.is_none() {
             // SAFETY: the slab's own mapping, which nothing borrows now.
             unsafe { libc::munmap(self.base.as_ptr().cast(), cap * size_of::<T>()) };
         }
@@ -190,6 +220,7 @@ impl<T: Copy> Slab<T> {
     fn grow(&mut self, need: usize) {
         let () = Self::SIZED;
         assert!(need <= CAP, "slab full");
+        assert!(!self.view, "nothing is pushed onto a view");
         let size = size_of::<T>();
         let cap = *self.cap.get_mut();
         #[cfg(test)]
@@ -326,16 +357,17 @@ impl<T: Copy> Slab<T> {
         true
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn push(&mut self, v: T) {
-        if self.len >= self.room {
-            self.grow(self.len + 1);
+        let len = self.len;
+        if len >= self.room {
+            self.grow(len + 1);
         }
         // SAFETY: `len < room <= cap` is inside the mapping, and `&mut self`
         // excludes every other access (no block is lent while it is
         // borrowed mutably).
-        unsafe { self.base.as_ptr().add(self.len).write(v) };
-        self.len += 1;
+        unsafe { self.base.as_ptr().add(len).write(v) };
+        self.len = len + 1;
     }
 
     pub fn extend_from_slice(&mut self, vs: &[T]) {
@@ -347,14 +379,6 @@ impl<T: Copy> Slab<T> {
             std::ptr::copy_nonoverlapping(vs.as_ptr(), self.base.as_ptr().add(self.len), vs.len())
         };
         self.len += vs.len();
-    }
-
-    /// Set element `i`, which must be below `len`.
-    #[inline]
-    pub fn set(&mut self, i: u32, v: T) {
-        debug_assert!((i as usize) < self.len, "slab index {i} out of bounds");
-        // SAFETY: as in `get`, with `&mut self` exclusive.
-        unsafe { self.base.as_ptr().add((i & MASK) as usize).write(v) };
     }
 
     /// Push copies of `v` until there are `n` elements.
@@ -374,17 +398,179 @@ impl<T: Copy> Slab<T> {
         self.len = n;
     }
 
+    #[inline(always)]
     pub fn as_slice(&self) -> &[T] {
-        if self.len == 0 {
-            return &[];
-        }
-        // SAFETY: elements `0..len` are initialized and inside the mapping.
+        // SAFETY: elements `0..len` are initialized and inside the mapping
+        // (with none, `base` is still aligned and not null).
         unsafe { std::slice::from_raw_parts(self.base.as_ptr(), self.len) }
     }
 
-    /// Memory the elements take (the reservation costs none).
+    /// Memory the elements take (the reservation costs none; a view's are
+    /// its slab's).
     pub fn heap_bytes(&self) -> usize {
+        if self.view {
+            return 0;
+        }
         self.len * size_of::<T>()
+    }
+
+    /// Whether this slab has the full reservation, so that it never moves
+    /// (and may have views: see [`Slab::alias`]).
+    pub fn is_fixed(&self) -> bool {
+        self.cap.load(Ordering::Relaxed) == CAP
+    }
+
+    /// A view of the first `len` elements (at most all), for other
+    /// threads to read while this slab goes on growing. It has the same
+    /// elements at the same addresses, and the same identity (a pool lends
+    /// from either alike), and keeps the mapping alive. From now on those
+    /// elements are only written through [`Slab::store_shared`] (and
+    /// [`Slab::set`] refuses them), and nothing is pushed onto the view.
+    /// Panics unless the slab has the full reservation (it never moves).
+    pub fn alias(&mut self, len: usize) -> Slab<T> {
+        assert!(self.is_fixed() && !self.view, "a view of a fixed slab");
+        let len = len.min(self.len);
+        let shared = self.shared.get_or_insert_with(|| {
+            std::sync::Arc::new(Mapping {
+                base: self.base.cast(),
+                bytes: CAP * size_of::<T>(),
+            })
+        });
+        self.frozen = self.frozen.max(len);
+        Slab {
+            base: self.base,
+            len,
+            room: len,
+            cap: AtomicUsize::new(CAP),
+            id: self.id,
+            pooled: AtomicBool::new(false),
+            shared: Some(shared.clone()),
+            frozen: len,
+            view: true,
+            _t: PhantomData,
+        }
+    }
+
+    /// Whether some view of this slab is alive.
+    pub fn has_views(&self) -> bool {
+        self.shared
+            .as_ref()
+            .is_some_and(|m| std::sync::Arc::strong_count(m) > 1)
+    }
+
+    /// Push `f` of each element of `src` (making room for all at once).
+    #[inline]
+    pub fn extend_map(&mut self, src: &[T], mut f: impl FnMut(T) -> T) {
+        let (len, n) = (self.len, src.len());
+        if n > self.room - len {
+            self.grow(len.saturating_add(n));
+        }
+        let to = self.base.as_ptr();
+        for (k, &v) in src.iter().enumerate() {
+            // SAFETY: as in `push`: `len + k < len + n <= room`.
+            unsafe { to.add(len + k).write(f(v)) };
+        }
+        self.len = len + n;
+    }
+
+    /// Set each element `i` in `from..to` (and below `len`) for which
+    /// `f(self, i)` (which sees the slab as it is so far) gives a value.
+    /// Panics if a view sees element `from`.
+    #[inline]
+    pub fn fill_range(
+        &mut self,
+        from: usize,
+        to: usize,
+        mut f: impl FnMut(&Self, usize) -> Option<T>,
+    ) {
+        assert!(from >= self.frozen, "a slab's views see element {from}");
+        for i in from..to.min(self.len) {
+            if let Some(v) = f(self, i) {
+                // SAFETY: `i < len`, inside the mapping, past what views
+                // see; `&mut self` excludes every other access (`f` is done
+                // with its borrow).
+                unsafe { self.base.as_ptr().add(i).write(v) };
+            }
+        }
+    }
+
+    /// The elements, mutably. Panics while a view of the slab is alive.
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        assert!(!self.view && !self.has_views(), "a slab with views");
+        if self.len == 0 {
+            return &mut [];
+        }
+        // SAFETY: elements `0..len` are initialized and inside the mapping;
+        // `&mut self` excludes every other access, and there is no view.
+        unsafe { std::slice::from_raw_parts_mut(self.base.as_ptr(), self.len) }
+    }
+
+    /// A view of the first `len` elements (at most all) that reads them
+    /// atomically, as [`Slab::store_shared`] may set them at once. As
+    /// [`Slab::alias`] otherwise.
+    pub fn atomic_alias(&mut self, len: usize) -> AtomicView
+    where
+        T: Plain,
+    {
+        const _: () = assert!(size_of::<AtomicU64>() == size_of::<u64>());
+        assert!(size_of::<T>() == size_of::<u64>(), "a view of 64-bit words");
+        let v = self.alias(len);
+        AtomicView {
+            base: v.base.cast(),
+            len: v.len,
+            _shared: v.shared.clone(),
+        }
+    }
+}
+
+impl<T: Plain> Slab<T> {
+    /// Set element `i` (below `len`), which views on other threads may be
+    /// reading at once, atomically (see [`Slab::atomic_alias`]).
+    #[inline(always)]
+    pub fn store_shared(&mut self, i: usize, v: u64) {
+        assert!(size_of::<T>() == size_of::<u64>() && i < self.len);
+        // SAFETY: inside the mapping and aligned for a 64-bit atomic;
+        // `&mut self` excludes every plain access on this thread, and any
+        // view reads the words atomically.
+        unsafe { AtomicU64::from_ptr(self.base.as_ptr().cast::<u64>().add(i)) }
+            .store(v, Ordering::Relaxed);
+    }
+}
+
+impl<T: Copy> std::ops::Deref for Slab<T> {
+    type Target = [T];
+    #[inline(always)]
+    fn deref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+/// A view of a slab of 64-bit words that another thread may set at once
+/// (see [`Slab::atomic_alias`]): read atomically.
+pub struct AtomicView {
+    base: NonNull<u64>,
+    len: usize,
+    _shared: Option<std::sync::Arc<Mapping>>,
+}
+
+// SAFETY: it only reads its words, atomically, and keeps them mapped.
+unsafe impl Send for AtomicView {}
+// SAFETY: as above.
+unsafe impl Sync for AtomicView {}
+
+impl AtomicView {
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Word `i` (below `len`).
+    #[inline(always)]
+    pub fn load(&self, i: usize) -> u64 {
+        assert!(i < self.len, "view index {i} out of bounds");
+        // SAFETY: inside the mapping, which `_shared` keeps; the slab sets
+        // these words atomically only (see `Slab::alias`).
+        unsafe { AtomicU64::from_ptr(self.base.as_ptr().add(i)) }.load(Ordering::Relaxed)
     }
 }
 
@@ -441,6 +627,8 @@ impl<T: Copy> Reader<'_, T> {
 #[derive(Default)]
 pub struct Pool {
     state: Mutex<PoolState>,
+    /// The first block lent at the least (see [`Pool::lend_above`]).
+    floor: AtomicU32,
 }
 
 #[derive(Default)]
@@ -454,6 +642,14 @@ struct PoolState {
 }
 
 impl Pool {
+    /// Lend no block below index `i` from now on: for views of slabs that
+    /// are still growing (see [`Slab::alias`]), whose blocks must be above
+    /// anything the slabs will hold.
+    pub fn lend_above(&self, i: usize) {
+        let k = u32::try_from(i.div_ceil(BLOCK as usize)).unwrap_or(u32::MAX);
+        self.floor.fetch_max(k, Ordering::Relaxed);
+    }
+
     /// A block of [`BLOCK`] unused indices of `a` and `b`, if any are
     /// left. A pool lends from one pair of slabs only, and a slab is
     /// lent from by one pool only.
@@ -479,7 +675,8 @@ impl Pool {
         }
         // Blocks start above both slabs' elements. The slabs may have
         // grown since a block was given back (no block was out then).
-        let floor = a.len.max(b.len).div_ceil(BLOCK as usize) as u32;
+        let floor = (a.len.max(b.len).div_ceil(BLOCK as usize) as u32)
+            .max(self.floor.load(Ordering::Relaxed));
         st.free.retain(|&k| k >= floor);
         st.next = st.next.max(floor);
         let k = match st.free.pop() {

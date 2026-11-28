@@ -28,7 +28,7 @@ use crate::env::{Env, LAZY_BASE, LazyValues, TermSink};
 use crate::expr::{BinderInfo, ExprId, ExprNode, LetBinder};
 use crate::idmap::IdMap;
 use crate::name::NameId;
-use crate::slab::{Bits, Zeroed};
+use crate::slab::{Bits, Slab, Zeroed};
 use crate::strings::Overflow;
 
 // A record: `DONE` and an arena id in the low 32 bits, or a tag (3 bits
@@ -194,8 +194,11 @@ fn add_node(env: &mut Env, append: bool, node: ExprNode) -> R<u32> {
 /// The reader's side of lazy proofs: a record per expression id.
 #[derive(Default)]
 pub(super) struct Builder {
-    recs: Vec<u64>,
-    side: Vec<u32>,
+    /// In memory that never moves, so that views of it can be read on other
+    /// threads while it grows (see [`Builder::view`]): a record is only
+    /// set again through [`Slab::store_shared`].
+    recs: Slab<u64>,
+    side: Slab<u32>,
     /// Records from here on came after the last declaration line.
     from: usize,
     /// Per lazy value, its root's export id, and the first record of its
@@ -217,9 +220,27 @@ pub(super) struct Builder {
     /// While runs are read ahead (see [`Builder::share_done`]): a bit per
     /// record marked done, set as they are.
     done: Option<std::sync::Arc<Bits>>,
-    /// Where [`Builder::exprs`] puts records before they join `recs`.
+    /// Where [`Builder::exprs`] puts records (and side records) before
+    /// they join `recs` (and `side`).
     fresh: Vec<u64>,
+    fresh_side: Vec<u32>,
+    /// Records below this are seen by views (see [`Builder::view`]).
+    viewed: usize,
+    /// What those records were before they were interned, for the views
+    /// (see [`Undo`]), and the ones not yet handed over.
+    undo: Option<std::sync::Arc<Undo>>,
+    undo_new: Vec<(u32, u64)>,
 }
+
+/// Records that views see and the reader interned after the view was
+/// made, as they were: a view's lazy values are built from them, not from
+/// the arena ids the view has not got. (Each record is interned once, so
+/// what is here never changes.)
+/// How many records [`Builder::undo_new`] holds at most.
+const UNDO_BATCH: usize = 1 << 12;
+
+#[derive(Default)]
+pub(crate) struct Undo(std::sync::RwLock<HashMap<u32, u64>>);
 
 /// If `c` (a child of a record from `from` on) is a record of an earlier
 /// declaration, not interned: push it to `cands` (an alias too; what it
@@ -237,12 +258,11 @@ fn note_old(recs: &[u64], from: usize, c: u64, cands: &mut Vec<u32>) {
 impl Builder {
     /// A builder for an export of about `size` bytes.
     pub(super) fn with_capacity(size: u64) -> Self {
-        let mut b = Builder::default();
+        let b = Builder::default();
         // About one expression per 56 bytes of a real export, and a side
         // record (3 words) per 8 of them; the space is only reserved, so
         // a smaller file costs nothing.
-        b.recs.reserve((size / 56).min(MAX_IDS) as usize);
-        b.side.reserve((size / 120).min(u32::MAX as u64) as usize);
+        let _ = size;
         b
     }
 
@@ -326,7 +346,7 @@ impl Builder {
             sn: 0,
             o: self.side.len(),
             recs: &mut self.fresh,
-            side: &mut self.side,
+            side: &mut self.fresh_side,
             names: names.min(u32::MAX as u64),
             old: &self.recs[..from],
             cands: &mut self.cands,
@@ -337,6 +357,8 @@ impl Builder {
         let res = super::run::all_exprs(s, e, &mut self.ids, &mut out);
         self.recs.extend_from_slice(&self.fresh);
         self.fresh.clear();
+        self.side.extend_from_slice(&self.fresh_side);
+        self.fresh_side.clear();
         res
     }
 
@@ -370,14 +392,14 @@ impl Builder {
         // Side offsets move from the run's table to this one.
         // (The sum stays in the low 32 bits: see `fits`.)
         let shift = (self.side.len() as u64).wrapping_sub(side_from as u64);
-        self.recs.extend(recs.iter().map(|&r| {
+        self.recs.extend_map(recs, |r| {
             let t = tag(r);
             if t == T_LAM || t == T_PI {
                 r.wrapping_add(shift)
             } else {
                 r
             }
-        }));
+        });
         self.side.extend_from_slice(side);
         // As `note_old`, but for the bits (rather than the records, which
         // are much larger): a record not marked there yet may be done by
@@ -581,15 +603,15 @@ impl Builder {
     fn promote_recent(&mut self, env: &mut Env, append: bool, i: usize) -> R<ExprId> {
         let from = self.from;
         let recs = &mut self.recs;
-        recs[i] |= NEEDED;
+        recs.store_shared(i, recs[i] | NEEDED);
         // Records marked and not yet passed.
         let mut left = 1usize;
         // Mark record `c` if it is recent and not yet marked or done:
         // how many it marked.
-        let mark = |recs: &mut [u64], c: u32| -> usize {
+        let mark = |recs: &mut Slab<u64>, c: u32| -> usize {
             let c = c as usize;
             if c >= from && recs[c] & (DONE | NEEDED) == 0 {
-                recs[c] |= NEEDED;
+                recs.store_shared(c, recs[c] | NEEDED);
                 1
             } else {
                 0
@@ -608,7 +630,7 @@ impl Builder {
                     T_ALIAS => {
                         left += mark(recs, (r & ID_MASK) as u32);
                         // Not interned itself: the pass up skips it.
-                        recs[j] = r & !NEEDED;
+                        recs.store_shared(j, r & !NEEDED);
                     }
                     T_LAM | T_PI => {
                         let [_, ty, body] = binder_side(&self.side, r);
@@ -666,7 +688,7 @@ impl Builder {
                     add(env, append, n, ids)?
                 }
             };
-            self.recs[x] = DONE | id as u64;
+            self.recs.store_shared(x, DONE | id as u64);
             self.mark(x);
         }
         Ok(ExprId(self.recs[i] as u32))
@@ -751,7 +773,13 @@ impl Builder {
                     }
                     _ => add(env, append, decode(&self.side, r), ids)?,
                 };
-                self.recs[top as usize] = DONE | id as u64;
+                if (top as usize) < self.viewed {
+                    self.undo_new.push((top, r));
+                    if self.undo_new.len() >= UNDO_BATCH {
+                        self.hand_over_undo();
+                    }
+                }
+                self.recs.store_shared(top as usize, DONE | id as u64);
                 self.mark(top as usize);
                 stack.pop();
             }
@@ -797,7 +825,7 @@ impl Builder {
                 continue;
             }
             if tag(r) == T_ALIAS {
-                self.recs[x] = self.recs[(r & ID_MASK) as usize];
+                self.recs.store_shared(x, self.recs[(r & ID_MASK) as usize]);
                 continue;
             }
             let n = decode(&self.side, r);
@@ -806,7 +834,8 @@ impl Builder {
             for (&c, id) in kids[..k].iter().zip(&mut ids) {
                 *id = self.recs[c as usize] as u32;
             }
-            self.recs[x] = DONE | add(env, append, n, ids)? as u64;
+            let id = add(env, append, n, ids)?;
+            self.recs.store_shared(x, DONE | id as u64);
         }
         let ids: Vec<u32> = self.recs.iter().map(|&r| r as u32).collect();
         let roots = self.roots.iter().map(|&i| ids[i as usize]).collect();
@@ -817,6 +846,34 @@ impl Builder {
     /// the roots of values older than their declarations), so that each
     /// record left is used by its own declaration's value alone: built
     /// once here, not again for every value that uses it.
+    /// [`Builder::promote_shared`] for the candidates and old roots so far
+    /// (before a view: its values then find the terms they share with
+    /// others interned, as the lazy values put together do).
+    /// On an error, the candidates from the one that failed on are left
+    /// for `promote_shared`, which meets it again.
+    pub(super) fn promote_cands(&mut self, env: &mut Env, append: bool) -> R<()> {
+        let cands = std::mem::take(&mut self.cands);
+        for (k, &c) in cands.iter().enumerate() {
+            let c = self.real(c);
+            if self.recs[c as usize] & DONE == 0
+                && let Err(e) = self.promote_old(env, append, c)
+            {
+                self.cands = cands[k..].to_vec();
+                return Err(e);
+            }
+        }
+        let roots = std::mem::take(&mut self.old_roots);
+        for (k, &i) in roots.iter().enumerate() {
+            if self.recs[i as usize] & DONE == 0
+                && let Err(e) = self.promote_old(env, append, i)
+            {
+                self.old_roots = roots[k..].to_vec();
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
     fn promote_shared(&mut self, env: &mut Env, append: bool) -> R<()> {
         // Noted as the records were added, in order.
         for c in std::mem::take(&mut self.cands) {
@@ -844,10 +901,25 @@ impl Builder {
         append: bool,
         threads: usize,
     ) -> R<Option<Box<dyn LazyValues>>> {
+        self.finish_shared(env, append)?;
+        self.finish_stored(env, threads)
+    }
+
+    /// Intern the shared terms (see `promote_shared`): the first part of
+    /// [`Builder::finish`].
+    fn finish_shared(&mut self, env: &mut Env, append: bool) -> R<()> {
+        if !self.roots.is_empty() {
+            self.promote_shared(env, append)?;
+            self.hand_over_undo();
+        }
+        Ok(())
+    }
+
+    /// The rest of [`Builder::finish`] (once no view is alive).
+    fn finish_stored(self, env: &mut Env, threads: usize) -> R<Option<Box<dyn LazyValues>>> {
         if self.roots.is_empty() {
             return Ok(None);
         }
-        self.promote_shared(env, append)?;
         #[cfg(test)]
         let wide_test = tests::WIDE.get();
         #[cfg(not(test))]
@@ -889,12 +961,12 @@ impl Builder {
         let threads = threads.clamp(1, n.div_ceil(MIN_RANGE).max(1));
         let (out, out_side, fwd) = if threads == 1 {
             if wide {
-                into_stored_here::<true>(&mut recs, &mut side)
+                into_stored_here::<true>(recs.as_mut_slice(), side.as_mut_slice())
             } else {
-                into_stored_here::<false>(&mut recs, &mut side)
+                into_stored_here::<false>(recs.as_mut_slice(), side.as_mut_slice())
             }
         } else {
-            into_stored_par(&mut recs, &mut side, threads, wide)
+            into_stored_par(recs.as_mut_slice(), side.as_mut_slice(), threads, wide)
         };
         drop((recs, side));
         // An alias's target (see `into_stored_par`; it is not an alias).
@@ -1605,6 +1677,268 @@ impl Stored {
     }
 }
 
+/// Theorem values read from the records as they are while the read goes
+/// on (see [`Builder::view`]): those of the declarations read so far. A
+/// value is built as [`Stored`] builds it, but for the records the read
+/// interns after the view was made, which it builds too (as their terms,
+/// not as arena ids). A value that needs an arena id the view does not
+/// have (one interned after it was made) is not built: an error.
+pub(crate) struct Live {
+    recs: crate::slab::AtomicView,
+    side: Slab<u32>,
+    roots: Vec<u32>,
+    starts: Vec<u32>,
+    /// The view's expressions: arena ids below this.
+    exprs: u32,
+    undo: std::sync::Arc<Undo>,
+}
+
+/// Why [`Live`] did not build a value.
+pub(crate) const LIVE_LATER: &str = "the value needs terms read after the view";
+
+thread_local! {
+    static LIVE_SCRATCH: RefCell<Scratch> = RefCell::default();
+}
+
+impl Builder {
+    /// Whether [`Builder::view`] can be called: its records are in memory
+    /// that never moves. Reserves it if nothing is in it yet (no record
+    /// was read); not so where the full reservation failed.
+    pub(super) fn can_view(&mut self) -> bool {
+        if self.recs.is_empty() && !self.recs.is_fixed() {
+            self.recs = Slab::new();
+        }
+        if self.side.is_empty() && !self.side.is_fixed() {
+            self.side = Slab::new();
+        }
+        self.recs.is_fixed() && self.side.is_fixed()
+    }
+
+    /// The values of the declarations read so far, for other threads to
+    /// build while the read goes on; arena ids below `exprs` are theirs.
+    /// Panics unless [`Builder::can_view`].
+    pub(super) fn view(&mut self, exprs: u32) -> Live {
+        let n = self.from;
+        self.viewed = n;
+        // With no view left, what the views needed goes.
+        if let Some(u) = self.undo.as_mut()
+            && let Some(u) = std::sync::Arc::get_mut(u)
+        {
+            u.0.get_mut().unwrap_or_else(|e| e.into_inner()).clear();
+            self.undo_new.clear();
+        }
+        self.hand_over_undo();
+        Live {
+            recs: self.recs.atomic_alias(n),
+            side: self.side.alias(self.side.len()),
+            roots: self.roots.clone(),
+            starts: self.starts.clone(),
+            exprs,
+            undo: self.undo.get_or_insert_with(Default::default).clone(),
+        }
+    }
+
+    /// Hand the records interned since the last call to the views (every
+    /// so often while they are made: until then, the views cannot build
+    /// values that need them).
+    pub(super) fn hand_over_undo(&mut self) {
+        if let Some(u) = &self.undo
+            && !self.undo_new.is_empty()
+        {
+            u.0.write()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend(self.undo_new.drain(..));
+        }
+    }
+
+    /// No more views (they are gone): stop keeping records for them.
+    pub(super) fn end_views(&mut self) {
+        self.viewed = 0;
+        self.undo = None;
+        self.undo_new = Vec::new();
+    }
+}
+
+impl LazyValues for Live {
+    fn decode(&self, _env: &Env, k: u32, sink: &mut dyn TermSink) -> Result<ExprId, String> {
+        self.decode_in(k, sink)
+    }
+
+    fn decode_store(
+        &self,
+        _env: &Env,
+        k: u32,
+        sink: &mut crate::check::store::Store<'_>,
+    ) -> Result<ExprId, String> {
+        self.decode_in(k, sink)
+    }
+
+    fn count(&self) -> usize {
+        self.roots.len()
+    }
+
+    fn heap_bytes(&self) -> usize {
+        (self.roots.capacity() + self.starts.capacity()) * 4
+    }
+}
+
+impl Live {
+    /// Record `x`, if the view has it: as it was if the reader has since
+    /// interned it as a term the view has not got.
+    #[inline(always)]
+    fn rec(&self, x: u32) -> Result<u64, String> {
+        if (x as usize) >= self.recs.len() {
+            return Err("internal: a record past the view".into());
+        }
+        let r = self.recs.load(x as usize);
+        if r & DONE == 0 || (r as u32) < self.exprs {
+            return Ok(r);
+        }
+        self.undo
+            .0
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&x)
+            .copied()
+            .ok_or_else(|| LIVE_LATER.into())
+    }
+
+    /// The arena id of done record `r`, if the view has it.
+    #[inline(always)]
+    fn arena(&self, r: u64) -> Result<ExprId, String> {
+        let id = r as u32;
+        if id < self.exprs {
+            Ok(ExprId(id))
+        } else {
+            Err(LIVE_LATER.into())
+        }
+    }
+
+    fn decode_in<S: TermSink + ?Sized>(&self, k: u32, sink: &mut S) -> Result<ExprId, String> {
+        let (Some(&root), Some(&start)) = (self.roots.get(k as usize), self.starts.get(k as usize))
+        else {
+            return Err("internal: no such lazy value".into());
+        };
+        LIVE_SCRATCH.with(|s| {
+            let s = &mut *s.borrow_mut();
+            s.memo.clear();
+            s.stack.clear();
+            s.own.clear();
+            let keep = sink.keeps_shared();
+            // As in `Stored::build_own`: the records of the value's own
+            // declaration are taken as its own.
+            for x in start..=root {
+                let r = self.rec(x)?;
+                let id = if r & DONE != 0 {
+                    let a = self.arena(r)?;
+                    if keep { a } else { sink.shared_expr(a) }
+                } else if tag(r) == T_ALIAS {
+                    let t = (r & ID_MASK) as u32;
+                    if t >= start {
+                        ExprId(s.own[(t - start) as usize])
+                    } else {
+                        self.old(t, keep, sink, s)?
+                    }
+                } else {
+                    let n = decode(&self.side, r);
+                    let (kids, k) = n.kids();
+                    let mut ids = [ExprId(0); 3];
+                    for (&c, id) in kids[..k].iter().zip(&mut ids) {
+                        *id = if c >= start {
+                            ExprId(s.own[(c - start) as usize])
+                        } else {
+                            self.old(c, keep, sink, s)?
+                        };
+                    }
+                    make(sink, n, ids, true, keep)
+                };
+                s.own.push(id.0);
+            }
+            Ok(ExprId(*s.own.last().expect("the root")))
+        })
+    }
+
+    /// Record `c` of another declaration: its arena id if it is interned
+    /// (most are), else built by [`Live::build`].
+    #[inline(always)]
+    fn old<S: TermSink + ?Sized>(
+        &self,
+        c: u32,
+        keep: bool,
+        sink: &mut S,
+        s: &mut Scratch,
+    ) -> Result<ExprId, String> {
+        let r = self.rec(c)?;
+        if r & DONE != 0 {
+            let a = self.arena(r)?;
+            return Ok(if keep { a } else { sink.shared_expr(a) });
+        }
+        self.build(c, sink, &mut s.memo, &mut s.stack)
+    }
+
+    /// Record `root` (of another declaration) in `sink`, hash-consed, as
+    /// [`Stored::build`] does.
+    fn build<S: TermSink + ?Sized>(
+        &self,
+        root: u32,
+        sink: &mut S,
+        memo: &mut HashMap<u32, ExprId>,
+        stack: &mut Vec<u32>,
+    ) -> Result<ExprId, String> {
+        if let Some(&e) = memo.get(&root) {
+            return Ok(e);
+        }
+        stack.clear();
+        stack.push(root);
+        while let Some(&top) = stack.last() {
+            if memo.contains_key(&top) {
+                stack.pop();
+                continue;
+            }
+            let r = self.rec(top)?;
+            let id = if r & DONE != 0 {
+                let a = self.arena(r)?;
+                if sink.keeps_shared() {
+                    a
+                } else {
+                    sink.shared_expr(a)
+                }
+            } else if tag(r) == T_ALIAS {
+                let t = (r & ID_MASK) as u32;
+                match memo.get(&t) {
+                    Some(&e) => e,
+                    None => {
+                        stack.push(t);
+                        continue;
+                    }
+                }
+            } else {
+                let n = decode(&self.side, r);
+                let (kids, k) = n.kids();
+                let mut ready = true;
+                for &c in &kids[..k] {
+                    if !memo.contains_key(&c) {
+                        stack.push(c);
+                        ready = false;
+                    }
+                }
+                if !ready {
+                    continue;
+                }
+                let mut ids = [ExprId(0); 3];
+                for (&c, id) in kids[..k].iter().zip(&mut ids) {
+                    *id = memo[&c];
+                }
+                let keep = sink.keeps_shared();
+                make(sink, n, ids, false, keep)
+            };
+            memo.insert(top, id);
+            stack.pop();
+        }
+        Ok(memo[&root])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::reader::{Options, read_file_with};
@@ -1665,6 +1999,94 @@ mod tests {
         }
         let _ = std::fs::remove_file(&prefix);
         assert!(lazy_values > 0, "some values are lazy");
+    }
+
+    /// Views made while reading (see [`crate::reader::Views`]) hold the
+    /// declarations read so far as reading them eagerly does, values that
+    /// a view cannot build aside.
+    #[test]
+    fn views_match_eager() {
+        use crate::reader::{Views, read_file_viewed};
+        struct Collect<'a> {
+            eager: &'a crate::env::Env,
+            views: std::sync::Mutex<Vec<crate::env::Env>>,
+            checked: std::sync::atomic::AtomicUsize,
+        }
+        impl Views for Collect<'_> {
+            fn wanted(&self, _: u64, _: u64) -> bool {
+                true
+            }
+            fn publish(&self, env: crate::env::Env) {
+                self.views.lock().unwrap().push(env);
+            }
+            fn wanted_last(&self) -> bool {
+                true
+            }
+            fn drain(&self) {
+                for mut v in self.views.lock().unwrap().drain(..) {
+                    let t = v.names.new_index().expect("distinct names");
+                    v.names.set_index(t);
+                    v.exprs.index(1).expect("distinct expressions");
+                    // (`compare` builds the second one's lazy values.)
+                    // Values that need terms read after the view are
+                    // not compared (the view reports them as later).
+                    let mut later = std::collections::HashSet::new();
+                    for d in &v.decls {
+                        let mut st = crate::check::store::Store::new(&v);
+                        if let Err(e) = v.value_into_store(d, &mut st) {
+                            assert_eq!(e, super::LIVE_LATER);
+                            later.insert(v.names.display(d.name).to_string());
+                        }
+                    }
+                    let d = crate::compare::compare(self.eager, &v);
+                    let differ: Vec<_> = d
+                        .differ
+                        .iter()
+                        .filter(|(n, why)| !(*why == "value" && later.contains(n)))
+                        .collect();
+                    assert!(
+                        d.only_b.is_empty() && differ.is_empty() && d.common == v.decls.len(),
+                        "{} of {} declarations: {:?} {:?}",
+                        v.decls.len(),
+                        self.eager.decls.len(),
+                        &d.only_b[..d.only_b.len().min(5)],
+                        &differ[..differ.len().min(5)]
+                    );
+                    self.checked
+                        .fetch_add(d.common - later.len(), std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let prefix =
+            std::env::temp_dir().join(format!("init-prefix-views-{}.ndjson", std::process::id()));
+        let unpacked = std::fs::File::create(&prefix).ok().is_some_and(|f| {
+            std::process::Command::new("xz")
+                .arg("-dc")
+                .arg(root.join("bench/arena/pgo/init-prefix.ndjson.xz"))
+                .stdout(f)
+                .status()
+                .is_ok_and(|s| s.success())
+        });
+        if !unpacked {
+            eprintln!("xz cannot unpack the Init prefix: skipped");
+            return;
+        }
+        let (eager, _) = read_file_with(&prefix, &Options::default()).expect("reads");
+        let c = Collect {
+            eager: &eager,
+            views: Default::default(),
+            checked: Default::default(),
+        };
+        let opts = Options {
+            lazy_proofs: true,
+            threads: 4,
+        };
+        let (env, _, same) = read_file_viewed(&prefix, &opts, &c).expect("reads with views");
+        let _ = std::fs::remove_file(&prefix);
+        assert!(same);
+        assert_eq!(env.decls.len(), eager.decls.len());
+        assert!(c.checked.into_inner() > 0, "some views");
     }
 
     /// With `NITROLEAN_EXPORT` set to an export file: reading it with lazy

@@ -137,11 +137,9 @@ fn fill_data(
     nodes: &[ExprNode],
     from: usize,
 ) {
-    for (j, &node) in nodes.iter().enumerate().skip(from) {
-        if let Some(d) = compound_data(data, lets, node) {
-            data.set(j as u32, d);
-        }
-    }
+    data.fill_range(from, nodes.len(), |data, j| {
+        compound_data(data, lets, nodes[j])
+    });
 }
 
 /// The data of a compound node (else `None`), from its children's.
@@ -579,8 +577,9 @@ pub struct Exprs {
     app_index: Option<AppIndex>,
     data: Slab<ExprData>,
     /// Lends the checker's stores blocks of ids above the nodes, for their
-    /// own terms (see `crate::slab`).
-    pool: Pool,
+    /// own terms (see `crate::slab`); shared with the views of the arena
+    /// (see [`Exprs::view`]).
+    pool: std::sync::Arc<Pool>,
     /// Compound nodes appended without hash-consing ([`Exprs::append`])
     /// get their data at [`Exprs::index`]. Until then the data stops
     /// short of them, or (where a node with data came after them) holds
@@ -608,7 +607,7 @@ impl Exprs {
             arena: Big::new("too many expressions"),
             app_index: None,
             data: Slab::new(),
-            pool: Pool::default(),
+            pool: Default::default(),
             data_from: u32::MAX,
             lets: Interner::new("too many let binders"),
             bigs: Vec::new(),
@@ -635,7 +634,7 @@ impl Exprs {
             arena: Big::from_parts(nodes, table, "too many expressions"),
             app_index: None,
             data,
-            pool: Pool::default(),
+            pool: Default::default(),
             data_from: u32::MAX,
             lets,
             bigs,
@@ -750,7 +749,7 @@ impl Exprs {
     /// before their parents, so one pass in order does it (and, with
     /// little else in the loop, the processor can wait on several
     /// children's data at once).
-    fn finish_data(&mut self) {
+    pub(crate) fn finish_data(&mut self) {
         let from = self.data_start() as usize;
         if from >= self.arena.len() {
             return;
@@ -898,6 +897,34 @@ impl Exprs {
             self.data.push(d);
         }
         Ok((ExprId(id), fresh))
+    }
+
+    /// Whether the nodes and their data are in memory that never moves
+    /// (see [`Exprs::view`]).
+    pub(crate) fn is_fixed(&self) -> bool {
+        self.arena.is_fixed() && self.data.is_fixed()
+    }
+
+    /// The nodes so far, with their data (set now), the let binders and
+    /// big literals, unindexed: for checkers on other threads while this
+    /// arena goes on growing (see [`crate::slab::Slab::alias`]). Their
+    /// stores take blocks of ids from this arena's pool, which lends none
+    /// below `above` from now on: `above` must be more ids than the arena
+    /// will ever hold.
+    pub(crate) fn view(&mut self, above: usize) -> Exprs {
+        self.finish_data();
+        let len = self.arena.len();
+        self.pool.lend_above(above);
+        Exprs {
+            arena: self.arena.view(len, IdTable::default()),
+            app_index: None,
+            data: self.data.alias(len),
+            pool: self.pool.clone(),
+            data_from: u32::MAX,
+            lets: self.lets.clone(),
+            bigs: self.bigs.clone(),
+            big_table: self.big_table.clone(),
+        }
     }
 
     /// The id of `node`, if it is interned here.
