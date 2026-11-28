@@ -256,7 +256,7 @@ impl Nbe<'_> {
         let si = (crate::hash::hash_front(env.0 as u64 | (n as u64) << 32, holes) >> 50) as usize
             & (TUPLE_SLOTS - 1);
         let s = self.tuple_slots[si];
-        if s[0] == env.0 && s[1] == n && s[2] == holes as u32 && s[3] == (holes >> 32) as u32 {
+        if crate::hash::same_prefix(&s, [env.0, n, holes as u32, (holes >> 32) as u32]) {
             return s[4];
         }
         let t = self.read_tuple_in_place(env, n, holes);

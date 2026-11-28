@@ -194,7 +194,7 @@ impl Nbe<'_> {
             as usize
             & (super::BINDER_SLOTS - 1);
         let s = self.binder_slots[si];
-        if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
+        if crate::hash::same_prefix(&s, [e.0, env.0, ls.0]) {
             return V(s[3]);
         }
         let v = self.eval_binder_new(e, env, ls);
@@ -324,7 +324,7 @@ impl Nbe<'_> {
         let sh = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
         let s = self.eager_slots[si];
-        if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
+        if crate::hash::same_prefix(&s, [e.0, env.0, ls.0]) {
             return V(s[3]);
         }
         self.eager_miss(e, node, env, ls, si)
@@ -337,7 +337,7 @@ impl Nbe<'_> {
         let sh = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let si = (sh >> 50) as usize & (super::EAGER_SLOTS - 1);
         let s = self.eager_slots[si];
-        if s[0] == e.0 && s[1] == env.0 && s[2] == ls.0 {
+        if crate::hash::same_prefix(&s, [e.0, env.0, ls.0]) {
             return V(s[3]);
         }
         let v = self.eval(e, env, ls);
@@ -370,7 +370,7 @@ impl Nbe<'_> {
             key.drop_in(&mut self.vargs);
             let di = h as usize & (super::EAGER_DIRECT_SLOTS - 1);
             let s = self.eager_direct[di];
-            let v = if s[0] == ke && s[1] == kls && s[2] == kt {
+            let v = if crate::hash::same_prefix(&s, [ke, kls, kt]) {
                 V(s[3])
             } else {
                 self.eager_depth += 1;

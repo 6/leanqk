@@ -955,7 +955,7 @@ impl<'e> Nbe<'e> {
             as usize
             & (PRUNES - 1);
         let s = self.trim_holes_memo[i];
-        if s[0] == env.0 && s[1] == holes && s[2] == n {
+        if crate::hash::same_prefix(&s, [env.0, holes, n]) {
             return val::Env(s[3]);
         }
         let hole = self.hole();
@@ -984,7 +984,7 @@ impl<'e> Nbe<'e> {
     fn prune_holes(&mut self, env: val::Env, holes: u32) -> val::Env {
         let i = (crate::hash::hash_front(env.0 as u64, holes as u64) >> 52) as usize & (PRUNES - 1);
         let s = self.prunes[i];
-        if s[0] == env.0 && s[1] == holes {
+        if crate::hash::same_prefix(&s, [env.0, holes]) {
             return val::Env(s[2]);
         }
         let hole = self.hole();
@@ -1020,7 +1020,7 @@ impl<'e> Nbe<'e> {
     fn trim_long(&mut self, env: val::Env, n: u32) -> val::Env {
         let i = (crate::hash::hash_front(env.0 as u64, n as u64) >> 52) as usize & (PRUNES - 1);
         let s = self.trim_cache[i];
-        if s[0] == env.0 && s[1] == n {
+        if crate::hash::same_prefix(&s, [env.0, n]) {
             return val::Env(s[2]);
         }
         let base = self.vargs.len();

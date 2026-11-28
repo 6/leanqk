@@ -27,6 +27,16 @@ pub fn fold32(h: u64) -> u32 {
     (h >> 32) as u32 ^ h as u32
 }
 
+/// Whether the first words of the slot `s` are `key`, decided by one
+/// branch: a lookup compares its key words together, as one wide integer
+/// (arrays of integers compare by `raw_eq`), not one after another, so a key
+/// that matches in some words costs no more mispredictions than one that
+/// matches in none.
+#[inline(always)]
+pub fn same_prefix<const M: usize, const N: usize>(s: &[u32; M], key: [u32; N]) -> bool {
+    s.first_chunk::<N>() == Some(&key)
+}
+
 /// Hash two words with one multiply (the folded product of the two words,
 /// each offset by the same constant, the second rotated so that swapping
 /// the words changes the hash). One constant, as loading a 64-bit

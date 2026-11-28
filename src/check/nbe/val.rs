@@ -539,7 +539,7 @@ impl Arena {
         let h = crate::hash::hash_front(e.0 as u64 | (ls.0 as u64) << 32, env.0 as u64);
         let i = (h >> 50) as usize & (THUNKS - 1);
         let s = self.thunks[i];
-        let hit = s[0] == e.0 && s[1] == env.0 && s[2] == ls.0;
+        let hit = crate::hash::same_prefix(&s, [e.0, env.0, ls.0]);
         (i, hit.then_some(V(s[3])))
     }
 
@@ -730,7 +730,7 @@ impl Arena {
         let i = (crate::hash::hash_front(f.0 as u64 | (x1 as u64) << 32, x0 as u64) >> 50) as usize
             & (APPS - 1);
         let s = self.apps[i];
-        if s[0] == f.0 && s[1] == x0 && s[2] == x1 {
+        if crate::hash::same_prefix(&s, [f.0, x0, x1]) {
             return V(s[3]);
         }
         let r = self.neutral(head, xs);
@@ -758,7 +758,7 @@ impl Arena {
         let i = (crate::hash::hash_front(f.0 as u64 | (x1 as u64) << 32, x0 as u64) >> 52) as usize
             & (CONST_APPS - 1);
         let s = self.const_apps[i];
-        if s[0] == f.0 && s[1] == x0 && s[2] == x1 {
+        if crate::hash::same_prefix(&s, [f.0, x0, x1]) {
             return V(s[3]);
         }
         let r = self.neutral_in::<true>(head, 1, 0, xs, None);
@@ -1041,7 +1041,7 @@ impl Arena {
     pub fn cons(&mut self, env: Env, v: V) -> Env {
         let i = (env_hash(env, v) >> 50) as usize & (CONSES - 1);
         let s = self.conses[i];
-        if s[0] == env.0 && s[1] == v.0 {
+        if crate::hash::same_prefix(&s, [env.0, v.0]) {
             return Env(s[2]);
         }
         // The table's hash only past the front.
