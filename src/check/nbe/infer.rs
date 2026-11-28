@@ -481,7 +481,7 @@ impl Nbe<'_> {
         let key_ls = if has_level_param { ls } else { Ls::ID };
         let hash = crate::hash::hash2(e.0 as u64 | (key_ls.0 as u64) << 32, key_env.0 as u64);
         let slot = (hash >> 50) as usize & (INFER_SLOTS - 1);
-        let [expr, cached_env, cached_ls, entry] = self.infer_slots[slot];
+        let [expr, cached_env, cached_ls, entry] = self.f.infer_slots[slot];
         let mut memo = None;
         if expr == e.0 && cached_env == key_env.0 {
             if cached_ls == key_ls.0 {
@@ -490,7 +490,7 @@ impl Nbe<'_> {
                 let ty = words[0];
                 if ty != NONE && (infer_only || self.infer_memo_checked(words[1])) {
                     if !infer_only && !has_level_param {
-                        self.infer_slots[slot] = [e.0, key_env.0, NONE, ty];
+                        self.f.infer_slots[slot] = [e.0, key_env.0, NONE, ty];
                     }
                     return Ok(V(ty));
                 }
@@ -520,7 +520,7 @@ impl Nbe<'_> {
             let key_ls = if has_level_param { ls } else { Ls::ID };
             let key = self.infer_key(e, d, key_env, key_ls);
             if let IKey::Memo(i) = key {
-                self.infer_slots[slot] = [e.0, key_env.0, key_ls.0, i as u32];
+                self.f.infer_slots[slot] = [e.0, key_env.0, key_ls.0, i as u32];
             }
             key
         };
@@ -528,7 +528,7 @@ impl Nbe<'_> {
         if !infer_only && !has_level_param {
             // This check survives declaration changes. The tagged slot
             // can return the type directly on subsequent exact hits.
-            self.infer_slots[slot] = [e.0, key_env.0, NONE, ty.0];
+            self.f.infer_slots[slot] = [e.0, key_env.0, NONE, ty.0];
         }
         Ok(ty)
     }
@@ -609,7 +609,7 @@ impl Nbe<'_> {
     #[inline(always)]
     fn infer_closed(&mut self, e: ExprId, node: ExprNode, infer_only: bool) -> R<V> {
         let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - INFER_SLOTS.ilog2())) as usize;
-        let [expr, tag, checked, ty] = self.infer_slots[i];
+        let [expr, tag, checked, ty] = self.f.infer_slots[i];
         let cached = expr == e.0 && tag == NONE;
         if cached && (infer_only || checked != 0) {
             return Ok(V(ty));
@@ -636,7 +636,7 @@ impl Nbe<'_> {
         if shared && !checked_before {
             self.checked_closed.insert(e.0 as u64);
         }
-        self.infer_slots[i] = [e.0, NONE, u32::from(!infer_only), ty.0];
+        self.f.infer_slots[i] = [e.0, NONE, u32::from(!infer_only), ty.0];
         Ok(ty)
     }
 
@@ -751,7 +751,7 @@ impl Nbe<'_> {
         infer_only: bool,
     ) -> R<V> {
         let i = (e.0.wrapping_mul(0x9e37_79b9) >> (32 - INFER_SLOTS.ilog2())) as usize;
-        let [expr, limit, checked, ty] = self.infer_slots[i];
+        let [expr, limit, checked, ty] = self.f.infer_slots[i];
         let check_identity = ls == Ls::ID && !infer_only;
         if expr == e.0 {
             if limit == NONE {
@@ -780,7 +780,7 @@ impl Nbe<'_> {
     ) -> R<V> {
         if !self.st.list_has_param(levels) {
             let ty = self.infer_constant(n, levels, infer_only)?;
-            self.infer_slots[i] = [e.0, NONE, u32::from(!infer_only), ty.0];
+            self.f.infer_slots[i] = [e.0, NONE, u32::from(!infer_only), ty.0];
             return Ok(ty);
         }
         let levels = self.inst_list(levels, ls);
@@ -789,7 +789,7 @@ impl Nbe<'_> {
             && !infer_only
             && let Ok(params) = u32::try_from(self.lparams_key())
         {
-            self.infer_slots[i] = [e.0, self.limit, params, ty.0];
+            self.f.infer_slots[i] = [e.0, self.limit, params, ty.0];
         }
         Ok(ty)
     }
