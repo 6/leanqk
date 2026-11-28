@@ -676,6 +676,9 @@ impl Nbe<'_> {
                 // Where terms are inferred again and again, sharper.
                 !self.used_bvars(e)
             } & ((1u64 << n) - 1);
+            if let Some(key) = self.small_infer_key(e, ls, env, range, n, holes) {
+                return IKey::Memo(self.infer_memo.find_or_add_small(key));
+            }
             let tuple = self.memo_tuple(env, range, n, holes);
             return IKey::Memo(self.infer_memo.find_or_add(e, ls, tuple));
         }

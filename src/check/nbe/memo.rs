@@ -93,10 +93,27 @@ impl<const WORDS: usize> EnvMemo<WORDS> {
 }
 
 /// Inference keys use a tuple id and hold the inferred type and check scope.
+/// Keys that read at most two values hold those values instead (`small`),
+/// with no tuple looked up; their indices have `SMALL` set.
 #[derive(Default)]
 pub(super) struct InferMemo {
     table: Table,
     entries: Vec<InferEntry>,
+    small_table: Table,
+    small: Vec<SmallEntry>,
+}
+
+/// The bit of an index of `InferMemo::small`.
+const SMALL: usize = 1 << 31;
+
+/// A key of `InferMemo::small`: term, substitution, number of entries in
+/// range and of values read (`n | count << 8`), the hole mask (`n` is at
+/// most 32), and the values read, `NONE` past `count`.
+pub(super) type SmallKey = [u32; 6];
+
+struct SmallEntry {
+    key: SmallKey,
+    result: [u32; 2],
 }
 
 struct InferEntry {
@@ -109,7 +126,36 @@ struct InferEntry {
 impl InferMemo {
     /// Bytes held: the table's 8-byte slots and the entries.
     pub fn heap_bytes(&self) -> usize {
-        self.table.capacity() * size_of::<u64>() + self.entries.capacity() * size_of::<InferEntry>()
+        (self.table.capacity() + self.small_table.capacity()) * size_of::<u64>()
+            + self.entries.capacity() * size_of::<InferEntry>()
+            + self.small.capacity() * size_of::<SmallEntry>()
+    }
+
+    /// The index for `key`, added if new; every word of the key is compared.
+    #[inline]
+    pub(super) fn find_or_add_small(&mut self, key: SmallKey) -> usize {
+        let hash = fold32(hash_front(
+            key[0] as u64 | (key[1] as u64) << 32,
+            hash_front(
+                key[2] as u64 | (key[3] as u64) << 32,
+                key[4] as u64 | (key[5] as u64) << 32,
+            ),
+        ));
+        let slot = match self
+            .small_table
+            .find_or_slot(hash, |i| val::at(&self.small, i as usize).key == key)
+        {
+            Ok(i) => return i as usize | SMALL,
+            Err(slot) => slot,
+        };
+        let i = self.small.len();
+        assert!(i < SMALL, "nitrolean: resource limit: memo too large");
+        self.small.push(SmallEntry {
+            key,
+            result: [val::NONE, 0],
+        });
+        self.small_table.insert_at(slot, hash, i as u32);
+        i | SMALL
     }
 
     #[inline]
@@ -124,10 +170,7 @@ impl InferMemo {
             Err(slot) => slot,
         };
         let i = self.entries.len();
-        assert!(
-            i < val::NONE as usize,
-            "nitrolean: resource limit: memo too large"
-        );
+        assert!(i < SMALL, "nitrolean: resource limit: memo too large");
         self.entries.push(InferEntry {
             key,
             result: [val::NONE, 0],
@@ -138,20 +181,30 @@ impl InferMemo {
 
     #[inline]
     pub(super) fn get(&self, i: usize) -> &[u32; 2] {
-        &val::at(&self.entries, i).result
+        if i & SMALL != 0 {
+            &val::at(&self.small, i ^ SMALL).result
+        } else {
+            &val::at(&self.entries, i).result
+        }
     }
 
     #[inline]
     pub(super) fn set(&mut self, i: usize, w: usize, v: u32) {
-        self.entries[i].result[w] = v;
+        if i & SMALL != 0 {
+            self.small[i ^ SMALL].result[w] = v;
+        } else {
+            self.entries[i].result[w] = v;
+        }
     }
 
     pub(super) fn clear(&mut self) {
-        if self.table.capacity() > 1 << 17 {
+        if self.table.capacity() > 1 << 17 || self.small_table.capacity() > 1 << 17 {
             *self = Self::default();
         } else {
             self.table.clear();
             self.entries.clear();
+            self.small_table.clear();
+            self.small.clear();
         }
     }
 }
@@ -243,6 +296,51 @@ impl Nbe<'_> {
             return EMPTY_TUPLE;
         }
         self.read_tuple(env, n, holes)
+    }
+
+    /// The key of `InferMemo::small` for `e` under `ls` reading the first
+    /// `n` (at most 32) entries of `env` but those `holes` sets, with
+    /// `range` as in `memo_tuple`: `None` where `memo_tuple` takes no table
+    /// (no values, or a whole environment) or more than two values are
+    /// read.
+    #[inline]
+    pub(super) fn small_infer_key(
+        &mut self,
+        e: ExprId,
+        ls: Ls,
+        env: Env,
+        range: u32,
+        n: u32,
+        holes: u64,
+    ) -> Option<SmallKey> {
+        debug_assert!(n <= 32 && holes >> n == 0);
+        let count = n - holes.count_ones();
+        if count > 2
+            || FAST_KEYS && n == range && count == 0
+            || holes == 0 && n == self.a.env_len(env)
+        {
+            return None;
+        }
+        let mut vals = [val::NONE; 2];
+        let mut k = 0;
+        let mut cur = env;
+        for j in 0..n {
+            if holes >> j & 1 == 0 {
+                vals[k] = self.a.env_head(cur).0;
+                k += 1;
+            }
+            cur = self.a.env_tail(cur);
+        }
+        let key = [e.0, ls.0, n | count << 8, holes as u32, vals[0], vals[1]];
+        if cfg!(debug_assertions) {
+            // The tuple the key stands for holds the same values.
+            let t = self.read_tuple(env, n, holes);
+            debug_assert!(t & WHOLE_ENV == 0 && t != EMPTY_TUPLE);
+            let w = &self.tuples.words[t as usize..t as usize + 3 + count as usize];
+            debug_assert_eq!(w[..3], [n, holes as u32, 0]);
+            debug_assert_eq!(w[3..], vals[..count as usize]);
+        }
+        Some(key)
     }
 
     /// The id of the values of the first `n` entries of `env` but those
