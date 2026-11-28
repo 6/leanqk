@@ -467,6 +467,14 @@ impl Nbe<'_> {
         if sp == Sp::NIL {
             return f;
         }
+        if !self.a.sp_has_proj(sp) {
+            let base = self.vargs.len();
+            self.a
+                .extend_sp_args(sp, 0, self.a.sp_len(sp), &mut self.vargs);
+            let r = self.apply_n(f, base);
+            self.vargs.truncate(base);
+            return r;
+        }
         let mut es = self.take_elims();
         self.a.elims(sp, &mut es);
         let base = self.vargs.len();

@@ -1301,6 +1301,16 @@ impl Nbe<'_> {
         if a == b {
             return true;
         }
+        if !(self.a.sp_has_proj(a) || self.a.sp_has_proj(b)) {
+            for i in (0..n).rev() {
+                let x = self.a.sp_arg(a, i);
+                let y = self.a.sp_arg(b, i);
+                if !self.syn_eq_v(x, y, budget) {
+                    return false;
+                }
+            }
+            return true;
+        }
         for i in (0..n).rev() {
             let ea = self.a.sp_elim(a, i);
             let eb = self.a.sp_elim(b, i);
