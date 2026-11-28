@@ -121,6 +121,36 @@ pub fn table<const W: usize, const N: usize>(fill: u32) -> Box<[[u32; W]; N]> {
         .expect("N slots")
 }
 
+/// Which 64ths of a direct-mapped table of `N` slots were written since it
+/// was last cleared, one bit each: clearing then refills only those, as a
+/// declaration writes to few parts of most tables.
+#[derive(Default)]
+pub struct Dirty<const N: usize>(u64);
+
+impl<const N: usize> Dirty<N> {
+    const PART: usize = {
+        assert!(N.is_power_of_two() && N >= 64);
+        N / 64
+    };
+
+    /// Slot `i` (below `N`) is written.
+    #[inline(always)]
+    pub fn mark(&mut self, i: usize) {
+        self.0 |= 1 << (i / Self::PART);
+    }
+
+    /// Every slot of `t` `fill`, rewriting only the parts written.
+    pub fn clear<T: Copy + PartialEq>(&mut self, t: &mut [T; N], fill: T) {
+        let mut m = std::mem::take(&mut self.0);
+        while m != 0 {
+            let k = m.trailing_zeros() as usize;
+            t[k * Self::PART..(k + 1) * Self::PART].fill(fill);
+            m &= m - 1;
+        }
+        debug_assert!(t.iter().all(|s| *s == fill), "a write not marked");
+    }
+}
+
 impl Val {
     #[inline]
     fn hash(&self) -> u32 {
@@ -282,21 +312,26 @@ pub struct Arena {
     /// their name and levels (direct-mapped, in front of `vtable`): the
     /// value of a constant is made at every occurrence.
     heads: Box<[(u32, u32, V); HEADS]>,
+    heads_dirty: Dirty<HEADS>,
     /// The thunks of terms by their environment before it is trimmed
     /// (direct-mapped, in front of trimming and `vtable`): (term,
     /// environment, substitution, thunk).
     thunks: Box<[[u32; 4]; THUNKS]>,
+    thunks_dirty: Dirty<THUNKS>,
     /// Neutrals by head and spine contents, so that applying a neutral to
     /// arguments finds the result with one probe.
     nutable: Table32<{ LIMIT.ilog2() }>,
     /// Environments by their last entry and the rest (direct-mapped, in
     /// front of `envtable`): (rest, entry, environment).
     conses: Box<[[u32; 3]; CONSES]>,
+    conses_dirty: Dirty<CONSES>,
     /// Neutrals applied to one or two arguments (`neutral_of`).
     apps: Box<[[u32; 4]; APPS]>,
+    apps_dirty: Dirty<APPS>,
     /// Neutrals projected (`neutral_proj`): (neutral, structure, field,
     /// result).
     projs: Box<[[u32; 4]; PROJS]>,
+    projs_dirty: Dirty<PROJS>,
     /// Far variables found (`lookup`): (environment, index, value).
     fars: Box<[std::cell::Cell<[u32; 3]>; FARS]>,
 }
@@ -362,11 +397,16 @@ impl Arena {
                 .into_boxed_slice()
                 .try_into()
                 .expect("HEADS slots"),
+            heads_dirty: Default::default(),
             thunks: table(NONE),
+            thunks_dirty: Default::default(),
             nutable: Table32::new(),
             conses: table(NONE),
+            conses_dirty: Default::default(),
             apps: table(NONE),
+            apps_dirty: Default::default(),
             projs: table(NONE),
+            projs_dirty: Default::default(),
             fars: (0..FARS)
                 .map(|_| std::cell::Cell::new([NONE; 3]))
                 .collect::<Box<[_]>>()
@@ -402,12 +442,13 @@ impl Arena {
         self.envtable.clear();
         self.lss.truncate(1);
         self.lstable.clear();
-        self.heads.fill((NONE, NONE, V(NONE)));
-        self.thunks.as_flattened_mut().fill(NONE);
+        self.heads_dirty
+            .clear(&mut self.heads, (NONE, NONE, V(NONE)));
+        self.thunks_dirty.clear(&mut self.thunks, [NONE; 4]);
         self.nutable.clear();
-        self.conses.as_flattened_mut().fill(NONE);
-        self.apps.as_flattened_mut().fill(NONE);
-        self.projs.as_flattened_mut().fill(NONE);
+        self.conses_dirty.clear(&mut self.conses, [NONE; 3]);
+        self.apps_dirty.clear(&mut self.apps, [NONE; 4]);
+        self.projs_dirty.clear(&mut self.projs, [NONE; 4]);
         for f in self.fars.iter() {
             f.set([NONE; 3]);
         }
@@ -491,6 +532,7 @@ impl Arena {
         }
         let v = self.mk(val);
         self.heads[i] = (a, b, v);
+        self.heads_dirty.mark(i);
         v
     }
 
@@ -508,6 +550,7 @@ impl Arena {
     #[inline]
     pub fn set_thunk_slot(&mut self, i: usize, e: ExprId, env: Env, ls: Ls, v: V) {
         self.thunks[i] = [e.0, env.0, ls.0, v.0];
+        self.thunks_dirty.mark(i);
     }
 
     pub fn mk(&mut self, val: Val) -> V {
@@ -674,6 +717,7 @@ impl Arena {
         }
         let r = self.neutral(head, xs);
         self.apps[i] = [f.0, x0, x1, r.0];
+        self.apps_dirty.mark(i);
         r
     }
 
@@ -692,6 +736,7 @@ impl Arena {
         let sp = self.snoc(sp, Elim::Proj(s, i));
         let r = self.mk(with_sp(head, sp));
         self.projs[j] = [v.0, s.0, i, r.0];
+        self.projs_dirty.mark(j);
         r
     }
 
@@ -932,6 +977,7 @@ impl Arena {
         let h = env_hash(env, v);
         let r = self.cons_find(env, v, h32(h));
         self.conses[i] = [env.0, v.0, r.0];
+        self.conses_dirty.mark(i);
         r
     }
 

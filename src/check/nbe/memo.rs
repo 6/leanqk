@@ -261,6 +261,7 @@ impl Nbe<'_> {
         }
         let t = self.read_tuple_in_place(env, n, holes);
         self.tuple_slots[si] = [env.0, n, holes as u32, (holes >> 32) as u32, t];
+        self.tuple_slots_dirty.mark(si);
         t
     }
 

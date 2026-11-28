@@ -1386,6 +1386,7 @@ impl Nbe<'_> {
                 e[..7].copy_from_slice(&key);
                 e[7] = r as u32;
                 self.syn_t[i] = e;
+                self.syn_t_dirty.mark(i);
             }
             return r;
         }
@@ -1672,6 +1673,7 @@ impl Nbe<'_> {
             entry[..7].copy_from_slice(&key);
             entry[7] = u32::from(equal);
             self.syn_t[i] = entry;
+            self.syn_t_dirty.mark(i);
         }
         equal
     }

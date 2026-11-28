@@ -120,6 +120,7 @@ impl Nbe<'_> {
         }
         let v = self.eval_binder_new(e, env, ls);
         self.binder_slots[si] = [e.0, env.0, ls.0, v.0];
+        self.binder_slots_dirty.mark(si);
         v
     }
 
@@ -265,6 +266,7 @@ impl Nbe<'_> {
         }
         let v = self.eval(e, env, ls);
         self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+        self.eager_slots_dirty.mark(si);
         v
     }
 
@@ -300,9 +302,11 @@ impl Nbe<'_> {
                 let v = self.eval(e, env, ls);
                 self.eager_depth -= 1;
                 self.eager_direct[di] = [ke, kls, kt, v.0];
+                self.eager_direct_dirty.mark(di);
                 v
             };
             self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+            self.eager_slots_dirty.mark(si);
             return v;
         }
         let (i, found) = Self::memo_find_or_add(
@@ -322,6 +326,7 @@ impl Nbe<'_> {
             v
         };
         self.eager_slots[si] = [e.0, env.0, ls.0, v.0];
+        self.eager_slots_dirty.mark(si);
         v
     }
 

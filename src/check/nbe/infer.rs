@@ -491,6 +491,7 @@ impl Nbe<'_> {
                 if ty != NONE && (infer_only || self.infer_memo_checked(words[1])) {
                     if !infer_only && !has_level_param {
                         self.infer_slots[slot] = [e.0, key_env.0, NONE, ty];
+                        self.infer_slots_dirty.mark(slot);
                     }
                     return Ok(V(ty));
                 }
@@ -521,6 +522,7 @@ impl Nbe<'_> {
             let key = self.infer_key(e, d, key_env, key_ls);
             if let IKey::Memo(i) = key {
                 self.infer_slots[slot] = [e.0, key_env.0, key_ls.0, i as u32];
+                self.infer_slots_dirty.mark(slot);
             }
             key
         };
@@ -529,6 +531,7 @@ impl Nbe<'_> {
             // This check survives declaration changes. The tagged slot
             // can return the type directly on subsequent exact hits.
             self.infer_slots[slot] = [e.0, key_env.0, NONE, ty.0];
+            self.infer_slots_dirty.mark(slot);
         }
         Ok(ty)
     }
@@ -637,6 +640,7 @@ impl Nbe<'_> {
             self.checked_closed.insert(e.0 as u64);
         }
         self.infer_slots[i] = [e.0, NONE, u32::from(!infer_only), ty.0];
+        self.infer_slots_dirty.mark(i);
         Ok(ty)
     }
 
@@ -781,6 +785,7 @@ impl Nbe<'_> {
         if !self.st.list_has_param(levels) {
             let ty = self.infer_constant(n, levels, infer_only)?;
             self.infer_slots[i] = [e.0, NONE, u32::from(!infer_only), ty.0];
+            self.infer_slots_dirty.mark(i);
             return Ok(ty);
         }
         let levels = self.inst_list(levels, ls);
@@ -790,6 +795,7 @@ impl Nbe<'_> {
             && let Ok(params) = u32::try_from(self.lparams_key())
         {
             self.infer_slots[i] = [e.0, self.limit, params, ty.0];
+            self.infer_slots_dirty.mark(i);
         }
         Ok(ty)
     }
