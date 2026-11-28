@@ -13,7 +13,8 @@
 #    PMU's are multiplexed and scaled; perf prints the share of time each
 #    was counted. Beside each run, the most memory in transparent huge
 #    pages (AnonHugePages, summed over the checker's processes), sampled
-#    every 2 seconds.
+#    every 2 seconds, and how much of nitrolean's direct-mapped tables
+#    (the mappings named `nitrolean-tables`) is.
 # 2. perf record -e cycles:u -e instructions:u, one sample every 1000003
 #    events, for nitrolean -j1 and gruszka alone at 1 worker; by symbol,
 #    with each symbol's cycles, instructions and their ratio (IPC), and by
@@ -58,17 +59,27 @@ for e in "${candidates[@]}"; do
 done
 events=$(IFS=,; echo "${evs[*]}")
 
-# The most AnonHugePages (KiB) of the processes named $1, until $2 exits.
+# The most AnonHugePages (KiB) of the processes named $1, until $2 exits;
+# then, tab-separated, the most mappings named `nitrolean-tables` (the
+# checkers' direct-mapped tables) seen at once, and their AnonHugePages
+# (KiB) then.
 thp_watch() {
-  local name=$1 pid=$2 max=0 n
+  local name=$1 pid=$2 max=0 n tmax=0 thp=0 t
   while kill -0 "$pid" 2>/dev/null; do
     n=$(for p in $(pgrep -x "$name"); do
           awk '/^AnonHugePages:/ {print $2}' "/proc/$p/smaps_rollup" 2>/dev/null
         done | awk '{s += $1} END {print s + 0}')
     [ "$n" -gt "$max" ] && max=$n
+    t=$(for p in $(pgrep -x "$name"); do cat "/proc/$p/smaps" 2>/dev/null; done |
+        awk '/^[0-9a-f]+-[0-9a-f]+ / {in_t = /\[anon:nitrolean-tables\]/; c += in_t}
+             in_t && /^AnonHugePages:/ {h += $2}
+             END {print c + 0, h + 0}')
+    if [ "${t% *}" -gt "$tmax" ] || { [ "${t% *}" -eq "$tmax" ] && [ "${t#* }" -gt "$thp" ]; }; then
+      tmax=${t% *}; thp=${t#* }
+    fi
     sleep 2
   done
-  echo "$max"
+  printf '%s\t%s\t%s\n' "$max" "$tmax" "$thp"
 }
 
 # count_run NAME PROCESS DIR CMD: one run under perf stat, from DIR.
@@ -165,8 +176,12 @@ by_symbol() {
   echo "One run each under \`perf stat\`. Events this machine's perf counts: \`$events\`."
   echo "THP: \`$(cat /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null)\`, defrag \`$(cat /sys/kernel/mm/transparent_hugepage/defrag 2>/dev/null)\`."
   echo
-  while IFS=$'\t' read -r name status thp f; do
+  while IFS=$'\t' read -r name status thp tables tables_thp f; do
     echo "#### $name (exit $status, at most $((thp / 1024)) MiB in huge pages)"
+    if [ "$tables" -gt 0 ]; then
+      echo
+      echo "Direct-mapped tables: $tables mappings of 2 MiB, $((tables_thp / 1024)) MiB of them in huge pages."
+    fi
     echo
     echo "| event | count | counted % |"
     echo "|---|--:|--:|"

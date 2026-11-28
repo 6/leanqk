@@ -1375,7 +1375,7 @@ impl Nbe<'_> {
                     ^ d as u64,
             );
             let i = (h >> 52) as usize & (super::SYN_T - 1);
-            let s = self.syn_t[i];
+            let s = self.f.syn_t[i];
             if s[..7] == key {
                 return s[7] != 0;
             }
@@ -1385,7 +1385,7 @@ impl Nbe<'_> {
                 let mut e = [0; 8];
                 e[..7].copy_from_slice(&key);
                 e[7] = r as u32;
-                self.syn_t[i] = e;
+                self.f.syn_t[i] = e;
             }
             return r;
         }
@@ -1660,7 +1660,7 @@ impl Nbe<'_> {
             (u64::from(e.0) << 32 | u64::from(l.0)) ^ u64::from(k),
         );
         let i = (h >> 52) as usize & (super::SYN_T - 1);
-        let entry = self.syn_t[i];
+        let entry = self.f.syn_t[i];
         if entry[..7] == key {
             return entry[7] != 0;
         }
@@ -1671,7 +1671,7 @@ impl Nbe<'_> {
             let mut entry = [0; 8];
             entry[..7].copy_from_slice(&key);
             entry[7] = u32::from(equal);
-            self.syn_t[i] = entry;
+            self.f.syn_t[i] = entry;
         }
         equal
     }

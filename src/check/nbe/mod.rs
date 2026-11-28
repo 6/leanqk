@@ -17,6 +17,8 @@ mod cases;
 mod closed;
 mod conv;
 mod eval;
+#[allow(unsafe_code)]
+mod fixed;
 mod infer;
 mod lsub;
 mod memo;
@@ -70,23 +72,23 @@ const KEEP_VALUES: usize = 1 << 16;
 /// not read (`prune`).
 const PRUNE: bool = true;
 
-/// Slots of the direct-mapped structural comparison memo `Nbe::syn_t`.
+/// Slots of the structural comparison memo `fixed::Tables::syn_t`.
 const SYN_T: usize = 1 << 12;
 const SYN_BVARS: usize = 1 << 10;
 
-/// Slots of `Nbe::eager_slots`.
+/// Slots of `fixed::Tables::eager_slots`.
 pub(super) const EAGER_SLOTS: usize = 1 << 14;
 
-/// Slots of `Nbe::infer_slots`.
+/// Slots of `fixed::Tables::infer_slots`.
 pub(super) const INFER_SLOTS: usize = 1 << 14;
 
-/// Slots of `Nbe::binder_slots`.
+/// Slots of `fixed::Tables::binder_slots`.
 pub(super) const BINDER_SLOTS: usize = 1 << 14;
 
-/// Slots of `Nbe::eager_direct`.
+/// Slots of `fixed::Tables::eager_direct`.
 pub(super) const EAGER_DIRECT_SLOTS: usize = 1 << 15;
 
-/// Slots of `Nbe::prunes`.
+/// Slots of `fixed::Tables::prunes`.
 const PRUNES: usize = 1 << 12;
 
 /// Closed terms remembered as checked (`checked_closed`) before they are
@@ -103,6 +105,8 @@ const READ_KEEP: usize = 1 << 20;
 pub struct Nbe<'e> {
     pub st: Store<'e>,
     pub ext: &'e Ext,
+    /// The direct-mapped tables.
+    f: fixed::Fixed,
     pub a: Arena,
     /// Only declarations before this index of `env.decls` are visible.
     pub limit: u32,
@@ -112,26 +116,12 @@ pub struct Nbe<'e> {
     pub fvars: Vec<FVarInfo>,
     bigs: Vec<BigUint>,
     big_table: HashTable<u32>,
-    /// A direct-mapped front of `eager_memo`: (term, environment,
-    /// substitution, value).
-    pub(super) eager_slots: Box<[[u32; 4]; EAGER_SLOTS]>,
     /// Values of terms evaluated by `thunk` at once (`eager`).
     pub(super) eager_memo: memo::EnvMemo<1>,
-    /// `eager`'s direct-mapped memo: (term, substitution, values read,
-    /// value).
-    pub(super) eager_direct: Box<[[u32; 4]; EAGER_DIRECT_SLOTS]>,
-    /// λ and Π values by term, environment and substitution (`eval_binder`).
-    pub(super) binder_slots: Box<[[u32; 4]; BINDER_SLOTS]>,
     /// Lists of values read from environments (`read_tuple`).
     tuples: memo::TupleMemo,
-    /// A direct-mapped front of `tuples`: (environment, range, holes (two
-    /// words), id).
-    pub(super) tuple_slots: Box<[[u32; 5]; memo::TUPLE_SLOTS]>,
     /// Types of terms (`infer_term`): the type, and whether checked.
     infer_memo: memo::InferMemo,
-    /// A direct-mapped front of `infer_memo`: (term, environment,
-    /// substitution, entry).
-    pub(super) infer_slots: Box<[[u32; 4]; INFER_SLOTS]>,
     level_cache: lsub::Lsub<LevelId>,
     list_cache: lsub::Lsub<LevelList>,
     /// Universe parameter lists by their names (see `lsub::ParamClasses`).
@@ -147,8 +137,6 @@ pub struct Nbe<'e> {
     /// Terms with universe parameters marked checked in this declaration.
     level_checked: Vec<V>,
     fresh: bool,
-    /// Structural comparisons of term pairs and value–term pairs.
-    syn_t: Box<[[u32; 8]; SYN_T]>,
     /// Pairs of environment lookups that resolve to the same value.
     syn_bvars: Box<[u64; SYN_BVARS]>,
     level_eq: IdMap<(LevelId, LevelId), bool>,
@@ -158,8 +146,6 @@ pub struct Nbe<'e> {
     /// `unused_positions` of definitions.
     unused_pos: IdMap<NameId, u64>,
     open_count: IdMap<(V, V), u32>,
-    /// `trim_long` (direct-mapped): (environment, length, result).
-    trim_cache: Box<[[u32; 3]; PRUNES]>,
     canon_fvar: IdMap<(V, V, u32), u32>,
     elims: Vec<Vec<val::Elim>>,
     terms: Vec<ExprId>,
@@ -184,11 +170,6 @@ pub struct Nbe<'e> {
     names: IdMap<V, ExprId>,
     /// Definitional equality of terms named so.
     name_eq: IdMap<(ExprId, ExprId), bool>,
-    /// `prune` by environment and holes (direct-mapped): (environment,
-    /// holes, pruned environment).
-    prunes: Box<[[u32; 3]; PRUNES]>,
-    /// `trim_holes` (direct-mapped): (environment, holes, length, result).
-    trim_holes_memo: Box<[[u32; 4]; PRUNES]>,
     /// `surely_not_proof` by constant and number of arguments.
     not_proof: IdMap<(NameId, u32), bool>,
     /// Terms added to `st` for names: they do not count towards its size
@@ -296,6 +277,7 @@ impl<'e> Nbe<'e> {
         Nbe {
             st,
             ext,
+            f: fixed::Fixed::new(),
             a: Arena::new(),
             limit: 0,
             lparams: Vec::new(),
@@ -303,14 +285,9 @@ impl<'e> Nbe<'e> {
             fvars: Vec::new(),
             bigs: Vec::new(),
             big_table: HashTable::new(),
-            eager_slots: val::table(val::NONE),
             eager_memo: Default::default(),
-            eager_direct: val::table(val::NONE),
-            binder_slots: val::table(val::NONE),
             tuples: Default::default(),
-            tuple_slots: val::table(val::NONE),
             infer_memo: Default::default(),
-            infer_slots: val::table(val::NONE),
             level_cache: Default::default(),
             list_cache: Default::default(),
             param_classes: Default::default(),
@@ -322,14 +299,12 @@ impl<'e> Nbe<'e> {
             stable_queries: None,
             level_checked: Vec::new(),
             fresh: true,
-            syn_t: val::table(val::NONE),
             syn_bvars: vec![0; SYN_BVARS].into_boxed_slice().try_into().unwrap(),
             level_eq: IdMap::default(),
             major_induct: IdMap::default(),
             prop_pos: IdMap::default(),
             unused_pos: IdMap::default(),
             open_count: IdMap::default(),
-            trim_cache: val::table(val::NONE),
             canon_fvar: IdMap::default(),
             elims: Vec::new(),
             terms: Vec::new(),
@@ -348,8 +323,6 @@ impl<'e> Nbe<'e> {
             ev_used: false,
             names: IdMap::default(),
             name_eq: IdMap::default(),
-            prunes: val::table(val::NONE),
-            trim_holes_memo: val::table(val::NONE),
             not_proof: IdMap::default(),
             name_exprs: 0,
             checked_closed: Default::default(),
@@ -575,7 +548,6 @@ impl<'e> Nbe<'e> {
         self.vargs.clear();
         self.eager_depth = 0;
         shrink(&mut self.open_count);
-        self.trim_cache.as_flattened_mut().fill(val::NONE);
         shrink(&mut self.key_envs);
         shrink(&mut self.canon_fvar);
         shrink(&mut self.level_checked);
@@ -584,16 +556,9 @@ impl<'e> Nbe<'e> {
         if let Some(cache) = &mut self.stable_queries {
             cache.reset();
         }
-        self.prunes.as_flattened_mut().fill(val::NONE);
-        self.trim_holes_memo.as_flattened_mut().fill(val::NONE);
-        self.eager_slots.as_flattened_mut().fill(val::NONE);
         self.eager_memo.clear();
-        self.eager_direct.as_flattened_mut().fill(val::NONE);
-        self.binder_slots.as_flattened_mut().fill(val::NONE);
         self.tuples.clear();
-        self.tuple_slots.as_flattened_mut().fill(val::NONE);
         self.infer_memo.clear();
-        self.infer_slots.as_flattened_mut().fill(val::NONE);
         if self.st.local_exprs() > KEEP_VALUES {
             self.st.clear();
             self.name_exprs = 0;
@@ -613,7 +578,7 @@ impl<'e> Nbe<'e> {
         shrink(&mut self.const_type);
         shrink(&mut self.const_value);
         self.pairs.clear();
-        self.syn_t.as_flattened_mut().fill(val::NONE);
+        self.f.clear();
         self.syn_bvars.fill(0);
         shrink(&mut self.level_eq);
         shrink(&mut self.major_induct);
@@ -951,7 +916,7 @@ impl<'e> Nbe<'e> {
         let i = (crate::hash::hash_front(env.0 as u64 | (n as u64) << 32, holes as u64) >> 52)
             as usize
             & (PRUNES - 1);
-        let s = self.trim_holes_memo[i];
+        let s = self.f.trim_holes_memo[i];
         if s[0] == env.0 && s[1] == holes && s[2] == n {
             return val::Env(s[3]);
         }
@@ -972,7 +937,7 @@ impl<'e> Nbe<'e> {
             r = self.a.cons(r, v);
         }
         self.vargs.truncate(base);
-        self.trim_holes_memo[i] = [env.0, holes, n, r.0];
+        self.f.trim_holes_memo[i] = [env.0, holes, n, r.0];
         r
     }
 
@@ -980,7 +945,7 @@ impl<'e> Nbe<'e> {
     #[inline(never)]
     fn prune_holes(&mut self, env: val::Env, holes: u32) -> val::Env {
         let i = (crate::hash::hash_front(env.0 as u64, holes as u64) >> 52) as usize & (PRUNES - 1);
-        let s = self.prunes[i];
+        let s = self.f.prunes[i];
         if s[0] == env.0 && s[1] == holes {
             return val::Env(s[2]);
         }
@@ -1008,7 +973,7 @@ impl<'e> Nbe<'e> {
             }
         }
         self.vargs.truncate(base);
-        self.prunes[i] = [env.0, holes, r.0];
+        self.f.prunes[i] = [env.0, holes, r.0];
         r
     }
 
@@ -1016,7 +981,7 @@ impl<'e> Nbe<'e> {
     #[inline(never)]
     fn trim_long(&mut self, env: val::Env, n: u32) -> val::Env {
         let i = (crate::hash::hash_front(env.0 as u64, n as u64) >> 52) as usize & (PRUNES - 1);
-        let s = self.trim_cache[i];
+        let s = self.f.trim_cache[i];
         if s[0] == env.0 && s[1] == n {
             return val::Env(s[2]);
         }
@@ -1031,7 +996,7 @@ impl<'e> Nbe<'e> {
             r = self.a.cons(r, *val::at(&self.vargs, k));
         }
         self.vargs.truncate(base);
-        self.trim_cache[i] = [env.0, n, r.0];
+        self.f.trim_cache[i] = [env.0, n, r.0];
         r
     }
 
