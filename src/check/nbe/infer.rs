@@ -28,7 +28,13 @@ const INFER_MEMO_RANGE: u32 = 32;
 /// A key of `infer_term`'s memo.
 #[derive(Clone, Copy)]
 enum IKey {
-    Memo(usize),
+    /// An index of `infer_memo`, its key's tuple, and `infer_memo.moves`
+    /// when the index was taken (see `ikey_fresh`).
+    Memo {
+        i: usize,
+        tuple: u32,
+        moves: u32,
+    },
     Thunk(V),
 }
 
@@ -515,11 +521,15 @@ impl Nbe<'_> {
         let key_env = if d.has_loose_bvars() { env } else { Env::NIL };
         let has_level_param = d.has_level_param();
         let key = if let Some(i) = memo {
-            IKey::Memo(i)
+            IKey::Memo {
+                i,
+                tuple: self.infer_memo.tuple(i),
+                moves: self.infer_memo.moves,
+            }
         } else {
             let key_ls = if has_level_param { ls } else { Ls::ID };
             let key = self.infer_key(e, d, key_env, key_ls);
-            if let IKey::Memo(i) = key {
+            if let IKey::Memo { i, .. } = key {
                 self.infer_slots[slot] = [e.0, key_env.0, key_ls.0, i as u32];
             }
             key
@@ -580,9 +590,10 @@ impl Nbe<'_> {
                 } else {
                     // The memo key is already available.
                     let ty = self.infer_complex(e, node, env, ls, true)?;
-                    self.ikey_set_ty(key, ty);
+                    self.ikey_set_ty(self.ikey_fresh(key, e, d, ls), ty);
                     ty
                 };
+                let key = self.ikey_fresh(key, e, d, ls);
                 self.ikey_set_checked(key, d.has_level_param());
                 return Ok(r);
             }
@@ -591,6 +602,7 @@ impl Nbe<'_> {
             None
         };
         let r = self.infer_complex(e, node, env, ls, infer_only)?;
+        let key = self.ikey_fresh(key, e, d, ls);
         if c == NONE {
             self.ikey_set_ty(key, r);
         }
@@ -677,7 +689,16 @@ impl Nbe<'_> {
                 !self.used_bvars(e)
             } & ((1u64 << n) - 1);
             let tuple = self.memo_tuple(env, range, n, holes);
-            return IKey::Memo(self.infer_memo.find_or_add(e, ls, tuple));
+            let moves = self.infer_memo.moves;
+            let i = self.infer_memo.find_or_add(e, ls, tuple);
+            if self.infer_memo.moves != moves {
+                self.forget_memo_slots();
+            }
+            return IKey::Memo {
+                i,
+                tuple,
+                moves: self.infer_memo.moves,
+            };
         }
         IKey::Thunk(if trim {
             // The key is the term's thunk, likely made already.
@@ -688,23 +709,53 @@ impl Nbe<'_> {
         })
     }
 
+    /// `k` after inference that may have grown `infer_memo`, which moves
+    /// its entries: then found again by its key (`e` under `ls`, its
+    /// tuple).
+    #[inline]
+    fn ikey_fresh(&self, k: IKey, e: ExprId, d: ExprData, ls: Ls) -> IKey {
+        match k {
+            IKey::Memo { tuple, moves, .. } if moves != self.infer_memo.moves => {
+                let ls = if d.has_level_param() { ls } else { Ls::ID };
+                IKey::Memo {
+                    i: self.infer_memo.refind(e, ls, tuple),
+                    tuple,
+                    moves: self.infer_memo.moves,
+                }
+            }
+            _ => k,
+        }
+    }
+
+    /// Drop the slots of `infer_slots` that may hold an index of
+    /// `infer_memo`, after it grew (with some slots of other kinds).
+    #[cold]
+    #[inline(never)]
+    fn forget_memo_slots(&mut self) {
+        for s in self.infer_slots.iter_mut() {
+            if s[1] != NONE && s[2] != NONE {
+                *s = [NONE; 4];
+            }
+        }
+    }
+
     fn ikey_ty(&self, k: IKey) -> u32 {
         match k {
-            IKey::Memo(i) => self.infer_memo.get(i)[0],
+            IKey::Memo { i, .. } => self.infer_memo.get(i)[0],
             IKey::Thunk(t) => self.a.r(t).ty,
         }
     }
 
     fn ikey_set_ty(&mut self, k: IKey, ty: V) {
         match k {
-            IKey::Memo(i) => self.infer_memo.set(i, 0, ty.0),
+            IKey::Memo { i, .. } => self.infer_memo.set(i, 0, ty.0),
             IKey::Thunk(t) => self.a.rm(t).ty = ty.0,
         }
     }
 
     fn ikey_checked(&mut self, k: IKey) -> bool {
         match k {
-            IKey::Memo(i) => self.infer_memo_checked(self.infer_memo.get(i)[1]),
+            IKey::Memo { i, .. } => self.infer_memo_checked(self.infer_memo.get(i)[1]),
             IKey::Thunk(t) => self.a.checked(t),
         }
     }
@@ -718,7 +769,7 @@ impl Nbe<'_> {
     /// if `levels`.
     fn ikey_set_checked(&mut self, k: IKey, levels: bool) {
         match k {
-            IKey::Memo(i) => {
+            IKey::Memo { i, .. } => {
                 let scope = if levels {
                     let key = self.lparams_key();
                     if key >= u64::from(u32::MAX) {

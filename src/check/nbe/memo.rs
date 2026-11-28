@@ -93,65 +93,139 @@ impl<const WORDS: usize> EnvMemo<WORDS> {
 }
 
 /// Inference keys use a tuple id and hold the inferred type and check scope.
-#[derive(Default)]
+/// Each entry sits in its slot of an open-addressed table, so that the load
+/// of the slot decides a lookup. Indices are slots: growth moves entries and
+/// bumps `moves`, after which an index held from before is found again by its
+/// key (`refind`).
 pub(super) struct InferMemo {
-    table: Table,
-    entries: Vec<InferEntry>,
+    /// Term, substitution, tuple, then the type and its check scope: zero
+    /// for unchecked, or `u32::MAX` when the check is independent of the
+    /// universe parameter list. The term is `NONE` in an empty slot.
+    slots: Box<[[u32; 5]]>,
+    /// `32 - log2(slots.len())`.
+    shift: u32,
+    len: usize,
+    /// Growths so far.
+    pub(super) moves: u32,
 }
 
-struct InferEntry {
-    key: [u32; 3],
-    /// The type and its check scope: zero for unchecked, or `u32::MAX`
-    /// when the check is independent of the universe parameter list.
-    result: [u32; 2],
+/// Slots of a new table.
+const INFER_MIN_SLOTS: usize = 16;
+
+impl Default for InferMemo {
+    fn default() -> Self {
+        InferMemo::with_slots(INFER_MIN_SLOTS, 0)
+    }
 }
 
 impl InferMemo {
-    /// Bytes held: the table's 8-byte slots and the entries.
-    pub fn heap_bytes(&self) -> usize {
-        self.table.capacity() * size_of::<u64>() + self.entries.capacity() * size_of::<InferEntry>()
+    fn with_slots(n: usize, moves: u32) -> Self {
+        InferMemo {
+            slots: vec![[val::NONE; 5]; n].into_boxed_slice(),
+            shift: 32 - n.trailing_zeros(),
+            len: 0,
+            moves,
+        }
     }
 
+    /// Bytes held: the table's 20-byte slots.
+    pub fn heap_bytes(&self) -> usize {
+        self.slots.len() * size_of::<[u32; 5]>()
+    }
+
+    #[inline(always)]
+    fn start(&self, e: ExprId, ls: Ls, tuple: u32) -> usize {
+        (fold32(hash_front(e.0 as u64 | (ls.0 as u64) << 32, tuple as u64)) >> self.shift) as usize
+    }
+
+    /// The index of the key, added (with no type, unchecked) if missing.
     #[inline]
     pub(super) fn find_or_add(&mut self, e: ExprId, ls: Ls, tuple: u32) -> usize {
-        let key = [e.0, ls.0, tuple];
-        let hash = fold32(hash_front(e.0 as u64 | (ls.0 as u64) << 32, tuple as u64));
-        let slot = match self
-            .table
-            .find_or_slot(hash, |i| val::at(&self.entries, i as usize).key == key)
-        {
-            Ok(i) => return i as usize,
-            Err(slot) => slot,
-        };
-        let i = self.entries.len();
-        assert!(
-            i < val::NONE as usize,
-            "nitrolean: resource limit: memo too large"
-        );
-        self.entries.push(InferEntry {
-            key,
-            result: [val::NONE, 0],
-        });
-        self.table.insert_at(slot, hash, i as u32);
+        let mask = self.slots.len() - 1;
+        let mut i = self.start(e, ls, tuple);
+        loop {
+            let s = val::at(&self.slots, i);
+            if s[0] == e.0 && s[1] == ls.0 && s[2] == tuple {
+                return i;
+            }
+            if s[0] == val::NONE {
+                break;
+            }
+            i = (i + 1) & mask;
+        }
+        self.slots[i] = [e.0, ls.0, tuple, val::NONE, 0];
+        self.len += 1;
+        // Grow once more than half full, so that a probe always meets an
+        // empty slot.
+        if self.len * 2 > self.slots.len() {
+            self.grow();
+            return self.refind(e, ls, tuple);
+        }
         i
     }
 
+    /// The index of a key known to be present.
+    pub(super) fn refind(&self, e: ExprId, ls: Ls, tuple: u32) -> usize {
+        let mask = self.slots.len() - 1;
+        let mut i = self.start(e, ls, tuple);
+        loop {
+            let s = val::at(&self.slots, i);
+            if s[0] == e.0 && s[1] == ls.0 && s[2] == tuple {
+                return i;
+            }
+            assert!(s[0] != val::NONE, "nitrolean: infer memo key lost");
+            i = (i + 1) & mask;
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow(&mut self) {
+        assert!(
+            self.slots.len() < 1 << 31,
+            "nitrolean: resource limit: memo too large"
+        );
+        let old = std::mem::replace(
+            self,
+            InferMemo::with_slots(self.slots.len() * 2, self.moves.wrapping_add(1)),
+        );
+        let mask = self.slots.len() - 1;
+        for s in old.slots.iter() {
+            if s[0] != val::NONE {
+                let mut i = self.start(ExprId(s[0]), Ls(s[1]), s[2]);
+                while self.slots[i][0] != val::NONE {
+                    i = (i + 1) & mask;
+                }
+                self.slots[i] = *s;
+            }
+        }
+        self.len = old.len;
+    }
+
+    /// The tuple of the key at `i`.
     #[inline]
-    pub(super) fn get(&self, i: usize) -> &[u32; 2] {
-        &val::at(&self.entries, i).result
+    pub(super) fn tuple(&self, i: usize) -> u32 {
+        val::at(&self.slots, i)[2]
+    }
+
+    /// The type and check scope at `i`.
+    #[inline]
+    pub(super) fn get(&self, i: usize) -> [u32; 2] {
+        let s = val::at(&self.slots, i);
+        [s[3], s[4]]
     }
 
     #[inline]
     pub(super) fn set(&mut self, i: usize, w: usize, v: u32) {
-        self.entries[i].result[w] = v;
+        self.slots[i][3 + w] = v;
     }
 
     pub(super) fn clear(&mut self) {
-        if self.table.capacity() > 1 << 17 {
-            *self = Self::default();
-        } else {
-            self.table.clear();
-            self.entries.clear();
+        if self.slots.len() > 1 << 17 {
+            *self = Self::with_slots(INFER_MIN_SLOTS, self.moves.wrapping_add(1));
+        } else if self.len != 0 {
+            self.slots.fill([val::NONE; 5]);
+            self.len = 0;
         }
     }
 }
