@@ -49,7 +49,7 @@ impl Default for PairCache {
 }
 
 impl PairCache {
-    const SLOTS: usize = 1 << 15;
+    const SLOTS: usize = 1 << 14;
 
     #[inline]
     fn index(key: u64) -> usize {
