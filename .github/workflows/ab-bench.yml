@@ -13,7 +13,10 @@ name: A/B benchmark
 # - build-x86 and build-arm build each distinct commit once per architecture as the
 #   Mathlib benchmark builds nitrolean: profile-guided, trained on the
 #   repository's exports (`cargo xtask pgo --repo`), with the Rust
-#   toolchain that ref's mise.toml names. The Mathlib benchmark builds for
+#   toolchain that ref's mise.toml names. With `candidate_bolt`, B's build
+#   also lays out its code with BOLT (`cargo xtask pgo --repo --bolt`,
+#   LLVM 21's llvm-bolt from apt.llvm.org), and is made even when both refs
+#   are the same commit. The Mathlib benchmark builds for
 #   its own machine (target-cpu=native); here one binary runs on every
 #   machine, so x86_64 builds for `x86_cpu` (x86-64-v3 by default, which
 #   both the Intel and the AMD runners have) and aarch64 for the default
@@ -87,13 +90,17 @@ on:
       reps:
         description: Quadruples (A/B/B/A or B/A/A/B) per machine, slice and thread count
         default: "1"
+      candidate_bolt:
+        description: Also lay out the candidate's code with BOLT (cargo xtask pgo --bolt)
+        type: boolean
+        default: false
       x86_cpu:
         description: rustc target-cpu for the x86_64 builds (one binary for every machine)
         type: choice
         options: [x86-64-v3, x86-64-v4, x86-64-v2]
         default: x86-64-v3
 
-run-name: "A/B: ${{ inputs.base }} vs ${{ inputs.candidate }} ${{ inputs.candidate_flags }} (${{ inputs.slice }}, ${{ inputs.arch }}, ${{ inputs.jobs }} jobs)"
+run-name: "A/B: ${{ inputs.base }} vs ${{ inputs.candidate }}${{ inputs.candidate_bolt && ' +BOLT' || '' }} ${{ inputs.candidate_flags }} (${{ inputs.slice }}, ${{ inputs.arch }}, ${{ inputs.jobs }} jobs)"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.run_id }}
@@ -118,6 +125,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      # Whether one build serves both sides (same commit, same build).
+      same: ${{ steps.s.outputs.same }}
       base_sha: ${{ steps.s.outputs.base_sha }}
       candidate_sha: ${{ steps.s.outputs.candidate_sha }}
       jobs: ${{ steps.s.outputs.jobs }}
@@ -134,6 +143,7 @@ jobs:
         env:
           BASE: ${{ inputs.base }}
           CANDIDATE: ${{ inputs.candidate }}
+          BOLT: ${{ inputs.candidate_bolt }}
           SLICES: ${{ inputs.slice }}
           JOBS: ${{ inputs.jobs }}
           THREADS: ${{ inputs.threads }}
@@ -158,7 +168,10 @@ jobs:
             esac
           done
           [ -n "$slices" ] || { echo "::error::no slice"; exit 1; }
+          same=false
+          [ "$base" = "$cand" ] && [ "$BOLT" != true ] && same=true
           {
+            echo "same=$same"
             echo "base_sha=$base"
             echo "candidate_sha=$cand"
             echo "jobs=$(seq "$JOBS" | jq -cs .)"
@@ -251,14 +264,15 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
-        side: ${{ fromJSON(needs.setup.outputs.base_sha == needs.setup.outputs.candidate_sha && '["A"]' || '["A","B"]') }}
+        side: ${{ fromJSON(needs.setup.outputs.same == 'true' && '["A"]' || '["A","B"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/ab-build
         with:
           sha: ${{ matrix.side == 'A' && needs.setup.outputs.base_sha || needs.setup.outputs.candidate_sha }}
           side: ${{ matrix.side }}
-          both_sides: ${{ needs.setup.outputs.base_sha == needs.setup.outputs.candidate_sha }}
+          both_sides: ${{ needs.setup.outputs.same }}
+          bolt: ${{ matrix.side == 'B' && inputs.candidate_bolt }}
           target_cpu: ${{ inputs.x86_cpu }}
 
   build-arm:
@@ -268,14 +282,15 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
-        side: ${{ fromJSON(needs.setup.outputs.base_sha == needs.setup.outputs.candidate_sha && '["A"]' || '["A","B"]') }}
+        side: ${{ fromJSON(needs.setup.outputs.same == 'true' && '["A"]' || '["A","B"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/ab-build
         with:
           sha: ${{ matrix.side == 'A' && needs.setup.outputs.base_sha || needs.setup.outputs.candidate_sha }}
           side: ${{ matrix.side }}
-          both_sides: ${{ needs.setup.outputs.base_sha == needs.setup.outputs.candidate_sha }}
+          both_sides: ${{ needs.setup.outputs.same }}
+          bolt: ${{ matrix.side == 'B' && inputs.candidate_bolt }}
 
   measure-x86:
     needs: [setup, export, build-x86]
@@ -348,6 +363,7 @@ jobs:
           JOBS: ${{ inputs.jobs }}
           ARCH: ${{ inputs.arch }}
           X86_CPU: ${{ inputs.x86_cpu }}
+          BOLT: ${{ inputs.candidate_bolt }}
           MEASURE: "x86: ${{ needs.measure-x86.result }}, arm: ${{ needs.measure-arm.result }}"
         run: |
           mkdir -p out
@@ -370,7 +386,7 @@ jobs:
             --arg candidate_flags "$FLAGS" --arg slices "$SLICES" --arg threads "$THREADS" \
             --arg reps "$REPS" --arg jobs_requested "$jr" \
             --arg time_to_result "$((secs / 60)) min $((secs % 60)) s" \
-            --arg build_note "cargo xtask pgo --repo; x86_64 target-cpu $X86_CPU, aarch64 default; measuring jobs: $MEASURE; at most $peak measuring jobs ran at once" \
+            --arg build_note "cargo xtask pgo --repo$([ "$BOLT" = true ] && echo ', candidate with --bolt'); x86_64 target-cpu $X86_CPU, aarch64 default; measuring jobs: $MEASURE; at most $peak measuring jobs ran at once" \
             --argjson binaries "$bins" '$ARGS.named' > out/build.json
           cargo xtask ab-summary out/build.json out/summary.md out/results.json rows/*.tsv > /dev/null
           awk 'FNR > 1 || NR == 1' rows/*.tsv > out/rows.tsv

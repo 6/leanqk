@@ -1,7 +1,8 @@
 name: A/B benchmark build
 description: >-
   Builds nitrolean at one commit as the Mathlib benchmark builds it
-  (profile-guided, trained on the repository's exports) and uploads the
+  (profile-guided, trained on the repository's exports; with bolt, also
+  laid out by BOLT) and uploads the
   binary; see .github/workflows/ab-bench.yml.
 
 inputs:
@@ -17,6 +18,9 @@ inputs:
   target_cpu:
     description: rustc's -C target-cpu (empty for the default)
     default: ""
+  bolt:
+    description: Also lay out the code with BOLT (cargo xtask pgo --bolt)
+    default: "false"
 
 runs:
   using: composite
@@ -42,13 +46,29 @@ runs:
         rustup toolchain install "$v" --profile minimal -c llvm-tools
         echo "RUSTUP_TOOLCHAIN=$v" >> "$GITHUB_ENV"
 
+    # LLVM 21's BOLT, from LLVM's own Ubuntu packages.
+    - name: Install BOLT
+      if: ${{ inputs.bolt == 'true' }}
+      shell: bash
+      run: |
+        . /etc/os-release
+        curl -sSfL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+        echo "deb http://apt.llvm.org/$VERSION_CODENAME/ llvm-toolchain-$VERSION_CODENAME-21 main" |
+          sudo tee /etc/apt/sources.list.d/llvm-21.list > /dev/null
+        sudo apt-get update -q
+        sudo apt-get install -y -q bolt-21
+        /usr/lib/llvm-21/bin/llvm-bolt --version | head -3
+
     - name: Build
       shell: bash
       working-directory: tgt
       env:
         CPU: ${{ inputs.target_cpu }}
+        BOLT: ${{ inputs.bolt }}
       run: |
-        cargo xtask pgo --repo --rustflags "${CPU:+-C target-cpu=$CPU}"
+        bolt=()
+        [ "$BOLT" = true ] && bolt=(--bolt --bolt-dir /usr/lib/llvm-21/bin)
+        cargo xtask pgo --repo "${bolt[@]}" --rustflags "${CPU:+-C target-cpu=$CPU}"
         mkdir -p "$RUNNER_TEMP/bin"
         cp target/release/nitrolean "$RUNNER_TEMP/bin/nitrolean"
         "$RUNNER_TEMP/bin/nitrolean" --version
